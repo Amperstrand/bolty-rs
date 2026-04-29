@@ -1,9 +1,13 @@
 #![no_std]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use ntag424::{
-    File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Transport, Uid,
+    File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Session, SessionError, Transport, Uid,
+    Version,
     key_diversification::diversify_ntag424,
-    sdm::{SdmUrlOptions, sdm_url_config},
+    sdm::{SdmUrlOptions, SdmVerification, Verifier, sdm_url_config},
     types::{ResponseStatus, file_settings::CryptoMode},
 };
 
@@ -38,6 +42,15 @@ pub struct BurnResult {
 #[derive(Debug)]
 pub struct WipeResult {
     pub uid: [u8; 7],
+}
+
+#[derive(Debug)]
+pub struct SafeInspectResult {
+    pub uid: [u8; 7],
+    pub version: Option<Version>,
+    pub file_settings: Option<FileSettingsView>,
+    pub ndef_bytes: Option<Vec<u8>>,
+    pub sdm_verification: Option<SdmVerification>,
 }
 
 #[derive(Debug)]
@@ -87,6 +100,41 @@ pub async fn read_uid<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error<
     Ok(uid_to_fixed(&uid))
 }
 
+pub async fn safe_inspect<T: Transport>(
+    transport: &mut T,
+    k1: Option<&[u8; 16]>,
+    k2: Option<&[u8; 16]>,
+) -> Result<SafeInspectResult, Error<T::Error>> {
+    let mut session = Session::default();
+    let uid = uid_to_fixed(&session.get_selected_uid(transport).await?);
+
+    let version = session.get_version(transport).await.ok();
+    let file_settings = session.get_file_settings(transport, File::Ndef).await.ok();
+
+    let mut buf = [0u8; 256];
+    let ndef_bytes = session
+        .read_file_unauthenticated(transport, File::Ndef, 0, &mut buf)
+        .await
+        .ok()
+        .map(|len| Vec::from(&buf[..len]));
+
+    let sdm_verification = match (&file_settings, &ndef_bytes, k1, k2) {
+        (Some(file_settings), Some(ndef_bytes), Some(k1), Some(k2)) => file_settings
+            .sdm
+            .and_then(|sdm| Verifier::try_new(sdm, CryptoMode::Aes).ok())
+            .and_then(|verifier| verifier.verify_with_meta_key(ndef_bytes, k2, k1).ok()),
+        _ => None,
+    };
+
+    Ok(SafeInspectResult {
+        uid,
+        version,
+        file_settings,
+        ndef_bytes,
+        sdm_verification,
+    })
+}
+
 pub async fn burn<T: Transport>(
     transport: &mut T,
     params: &BurnParams<'_>,
@@ -94,7 +142,7 @@ pub async fn burn<T: Transport>(
 ) -> Result<BurnResult, Error<T::Error>> {
     let plan = sdm_url_config(params.lnurl, CryptoMode::Aes, SdmUrlOptions::new())?;
 
-    let mut session = Session::default();
+    let session = Session::default();
 
     let uid = session.get_selected_uid(transport).await?;
     let uid_fixed = uid_to_fixed(&uid);

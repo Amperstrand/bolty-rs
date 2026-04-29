@@ -78,6 +78,7 @@ mod firmware {
     use esp_idf_sys as _;
     use heapless::String;
     use log::info;
+    use ntag424::{CommMode, FileSettingsView, KeyNumber, types::file_settings::Access};
 
     use crate::block_on;
     #[cfg(feature = "display-st7789")]
@@ -106,6 +107,28 @@ mod firmware {
     const MAIN_LOOP_DELAY_MS: u32 = 10;
     #[cfg(feature = "rest")]
     const REST_PORT: u16 = 80;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum DiagnoseState {
+        Blank,
+        Provisioned,
+        AuthDelay,
+        Inconsistent,
+    }
+
+    struct PiccResult {
+        inspect: bolty_ntag::SafeInspectResult,
+        keys_loaded: bool,
+        keys_confirmed: bool,
+        uid_match: Option<bool>,
+    }
+
+    struct DiagnoseResult {
+        inspect: bolty_ntag::SafeInspectResult,
+        zero_key_attempted: bool,
+        zero_key_auth_ok: bool,
+        state: DiagnoseState,
+    }
 
     pub fn main() {
         esp_idf_sys::link_patches();
@@ -331,6 +354,118 @@ mod firmware {
                 (Some(current_uid), Some(last_uid), Some(key)) if current_uid == last_uid => key,
                 _ => bolty_ntag::FACTORY_KEY,
             }
+        }
+
+        fn picc(&mut self) -> Result<PiccResult, WorkflowResult> {
+            let keys = self.keys.clone();
+            let keys_loaded = keys.is_some();
+            let k1 = keys.as_ref().map(|keys| keys.k1.as_bytes());
+            let k2 = keys.as_ref().map(|keys| keys.k2.as_bytes());
+            let k0 = keys.as_ref().map(|keys| *keys.k0.as_bytes());
+
+            let mut transport = self.activate_transport()?;
+            let inspect = block_on(bolty_ntag::safe_inspect(&mut transport, k1, k2))
+                .map_err(|err| map_ntag_error(&err))?;
+
+            let uid_match = inspect
+                .sdm_verification
+                .as_ref()
+                .and_then(|verification| verification.uid.map(|uid| uid == inspect.uid));
+            let keys_confirmed = inspect.sdm_verification.is_some() && keys_loaded;
+
+            self.status.last_uid = Some(inspect.uid);
+            self.status.nfc_ready = true;
+            self.last_card = CardAssessment {
+                state: if keys_confirmed {
+                    CardState::Provisioned(0)
+                } else {
+                    CardState::Unknown
+                },
+                present: true,
+                uid: uid_storage_from_fixed(&inspect.uid),
+                uid_len: 7,
+                has_ndef: inspect.ndef_bytes.is_some(),
+                ..CardAssessment::default()
+            };
+
+            if let Some(k0) = k0.filter(|_| keys_confirmed) {
+                self.authenticated_key0 = Some(k0);
+            }
+
+            Ok(PiccResult {
+                inspect,
+                keys_loaded,
+                keys_confirmed,
+                uid_match,
+            })
+        }
+
+        fn diagnose(&mut self) -> Result<DiagnoseResult, WorkflowResult> {
+            let mut transport = self.activate_transport()?;
+            let inspect = block_on(bolty_ntag::safe_inspect(&mut transport, None, None))
+                .map_err(|err| map_ntag_error(&err))?;
+
+            let factory_like = looks_factory_default(inspect.file_settings.as_ref());
+            let mut zero_key_attempted = false;
+            let mut zero_key_auth_ok = false;
+            let mut state = if inspect
+                .file_settings
+                .as_ref()
+                .and_then(|settings| settings.sdm)
+                .is_some()
+            {
+                DiagnoseState::Provisioned
+            } else {
+                DiagnoseState::Inconsistent
+            };
+
+            if factory_like {
+                zero_key_attempted = true;
+                match block_on(ntag424::Session::default().authenticate_aes(
+                    &mut transport,
+                    KeyNumber::Key0,
+                    &bolty_ntag::FACTORY_KEY,
+                    RND_A,
+                )) {
+                    Ok(_) => {
+                        zero_key_auth_ok = true;
+                        state = DiagnoseState::Blank;
+                    }
+                    Err(ntag424::SessionError::ErrorResponse(
+                        ntag424::types::ResponseStatus::AuthenticationDelay,
+                    )) => {
+                        state = DiagnoseState::AuthDelay;
+                    }
+                    Err(_) => {
+                        state = DiagnoseState::Inconsistent;
+                    }
+                }
+            } else if inspect.file_settings.is_some() || inspect.ndef_bytes.is_some() {
+                state = DiagnoseState::Provisioned;
+            }
+
+            self.status.last_uid = Some(inspect.uid);
+            self.status.nfc_ready = true;
+            self.last_card = CardAssessment {
+                state: match state {
+                    DiagnoseState::Blank => CardState::Blank,
+                    DiagnoseState::Provisioned => CardState::Provisioned(0),
+                    DiagnoseState::AuthDelay | DiagnoseState::Inconsistent => CardState::Unknown,
+                },
+                present: true,
+                uid: uid_storage_from_fixed(&inspect.uid),
+                uid_len: 7,
+                has_ndef: inspect.ndef_bytes.is_some(),
+                zero_key_auth_ok,
+                ..CardAssessment::default()
+            };
+
+            Ok(DiagnoseResult {
+                inspect,
+                zero_key_attempted,
+                zero_key_auth_ok,
+                state,
+            })
         }
     }
 
@@ -644,6 +779,19 @@ mod firmware {
                 return;
             }
         };
+
+        match &command {
+            Command::Picc => {
+                print_picc(serial, &mut service);
+                return;
+            }
+            Command::Diagnose => {
+                print_diagnose(serial, &mut service);
+                return;
+            }
+            _ => {}
+        }
+
         let result = dispatch_command(command, &mut *service, &mut config);
         service.sync_from(&config);
 
@@ -684,11 +832,114 @@ mod firmware {
     }
 
     fn print_help(serial: &mut SerialConsole) {
-        serial.line("Commands: help status uid keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect check");
+        serial.line("Commands: help status uid keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
         #[cfg(feature = "wifi")]
         serial.line("WiFi: wifi <ssid> <password> | wifi off");
         #[cfg(feature = "ota")]
         serial.line("OTA: ota <url>");
+    }
+
+    fn print_picc<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)
+    where
+        I2C: embedded_hal::i2c::I2c,
+        I2C::Error: core::fmt::Debug,
+    {
+        match service.picc() {
+            Ok(result) => {
+                let mut uid = String::<32>::new();
+                let _ = push_uid_hex(&mut uid, &result.inspect.uid);
+                let mut uid_line = String::<96>::new();
+                let _ = write!(uid_line, "uid={}", uid.as_str());
+                serial.ok(uid_line.as_str());
+
+                match result.inspect.ndef_bytes.as_deref() {
+                    Some(bytes) => {
+                        let ascii = ndef_ascii(bytes);
+                        let mut line = String::<MAX_LINE_LEN>::new();
+                        let _ = write!(line, "ndef={}", ascii.as_str());
+                        serial.line(line.as_str());
+                    }
+                    None => serial.line("ndef=unavailable"),
+                }
+
+                match result.inspect.sdm_verification.as_ref() {
+                    Some(verification) => {
+                        let mut line = String::<160>::new();
+                        let read_ctr = match verification.read_ctr {
+                            Some(read_ctr) => CounterDisplay::Value(read_ctr),
+                            None => CounterDisplay::None,
+                        };
+                        let _ = write!(
+                            line,
+                            "sdm=ok uid_match={} read_ctr={}",
+                            result.uid_match.unwrap_or(false),
+                            read_ctr
+                        );
+                        serial.line(line.as_str());
+                    }
+                    None => serial.line("sdm=unverified"),
+                }
+
+                let mut line = String::<96>::new();
+                let _ = write!(
+                    line,
+                    "keys_loaded={} keys_confirmed={}",
+                    result.keys_loaded,
+                    result.keys_confirmed
+                );
+                serial.line(line.as_str());
+                serial.ok("picc complete");
+            }
+            Err(err) => print_workflow_result(serial, err),
+        }
+    }
+
+    fn print_diagnose<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)
+    where
+        I2C: embedded_hal::i2c::I2c,
+        I2C::Error: core::fmt::Debug,
+    {
+        match service.diagnose() {
+            Ok(result) => {
+                let mut uid = String::<32>::new();
+                let _ = push_uid_hex(&mut uid, &result.inspect.uid);
+                let mut line = String::<96>::new();
+                let _ = write!(line, "uid={}", uid.as_str());
+                serial.ok(line.as_str());
+
+                if let Some(version) = result.inspect.version.as_ref() {
+                    let mut version_line = String::<96>::new();
+                    let _ = write!(
+                        version_line,
+                        "version=hw {}.{} sw {}.{}",
+                        version.hw_major_version(),
+                        version.hw_minor_version(),
+                        version.sw_major_version(),
+                        version.sw_minor_version()
+                    );
+                    serial.line(version_line.as_str());
+                } else {
+                    serial.line("version=unavailable");
+                }
+
+                let mut fs_line = String::<128>::new();
+                let _ = write!(
+                    fs_line,
+                    "file_settings={} ndef={} zero_key_attempted={} zero_key_auth_ok={}",
+                    result.inspect.file_settings.is_some(),
+                    result.inspect.ndef_bytes.is_some(),
+                    result.zero_key_attempted,
+                    result.zero_key_auth_ok
+                );
+                serial.line(fs_line.as_str());
+
+                let mut state_line = String::<64>::new();
+                let _ = write!(state_line, "classification={}", diagnose_state_label(result.state));
+                serial.line(state_line.as_str());
+                serial.ok("diagnose complete");
+            }
+            Err(err) => print_workflow_result(serial, err),
+        }
     }
 
     #[cfg(feature = "wifi")]
@@ -942,6 +1193,35 @@ mod firmware {
         Some(out)
     }
 
+    fn looks_factory_default(file_settings: Option<&FileSettingsView>) -> bool {
+        let Some(file_settings) = file_settings else {
+            return false;
+        };
+
+        file_settings.file_size == 256
+            && matches!(file_settings.comm_mode, CommMode::Plain)
+            && file_settings.sdm.is_none()
+            && matches!(file_settings.access_rights.read, Access::Free)
+            && matches!(file_settings.access_rights.write, Access::Free)
+            && matches!(file_settings.access_rights.read_write, Access::Free)
+            && matches!(file_settings.access_rights.change, Access::Key(KeyNumber::Key0))
+    }
+
+    fn ndef_ascii(bytes: &[u8]) -> String<MAX_LINE_LEN> {
+        let mut out = String::<MAX_LINE_LEN>::new();
+        for &byte in bytes {
+            let ch = if (0x20..=0x7E).contains(&byte) {
+                byte as char
+            } else {
+                '.'
+            };
+            if out.push(ch).is_err() {
+                break;
+            }
+        }
+        out
+    }
+
     fn push_uid_hex<const N: usize>(out: &mut String<N>, uid: &[u8]) -> core::fmt::Result {
         for byte in uid {
             write!(out, "{byte:02X}")?;
@@ -955,6 +1235,29 @@ mod firmware {
             CardState::Provisioned(_) => "provisioned",
             CardState::Foreign => "foreign",
             CardState::Unknown => "unknown",
+        }
+    }
+
+    fn diagnose_state_label(state: DiagnoseState) -> &'static str {
+        match state {
+            DiagnoseState::Blank => "BLANK",
+            DiagnoseState::Provisioned => "PROVISIONED",
+            DiagnoseState::AuthDelay => "AUTH_DELAY",
+            DiagnoseState::Inconsistent => "INCONSISTENT",
+        }
+    }
+
+    enum CounterDisplay {
+        Value(u32),
+        None,
+    }
+
+    impl core::fmt::Display for CounterDisplay {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                CounterDisplay::Value(value) => write!(f, "{value}"),
+                CounterDisplay::None => f.write_str("none"),
+            }
         }
     }
 

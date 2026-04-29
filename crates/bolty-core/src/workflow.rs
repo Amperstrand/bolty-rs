@@ -22,6 +22,7 @@ pub fn dispatch_command<S: BoltyService>(
         | Command::KeyVer
         | Command::DummyBurn
         | Command::Reset
+        | Command::Picc
         | Command::Diagnose
         | Command::DeriveKeys
         | Command::Issuer => WorkflowResult::Success,
@@ -230,6 +231,7 @@ mod tests {
             Command::KeyVer,
             Command::DummyBurn,
             Command::Reset,
+            Command::Picc,
             Command::Diagnose,
             Command::DeriveKeys,
             Command::Issuer,

@@ -28,6 +28,7 @@ pub enum Command {
     DummyBurn,
     Reset,
     Inspect,
+    Picc,
     Diagnose,
     DeriveKeys,
     Issuer,
@@ -109,6 +110,10 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     if command.eq_ignore_ascii_case("inspect") {
         expect_no_args(parts)?;
         return Ok(Command::Inspect);
+    }
+    if command.eq_ignore_ascii_case("picc") {
+        expect_no_args(parts)?;
+        return Ok(Command::Picc);
     }
     if command.eq_ignore_ascii_case("diagnose") {
         expect_no_args(parts)?;
