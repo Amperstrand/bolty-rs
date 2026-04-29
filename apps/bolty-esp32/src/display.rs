@@ -1,5 +1,4 @@
 use core::fmt::Write as _;
-use std::sync::Mutex;
 
 use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
@@ -8,7 +7,7 @@ use embedded_graphics::{
     text::{Baseline, Text},
 };
 use esp_idf_hal::{
-    delay::Ets,
+    delay::{FreeRtos, BLOCK},
     gpio::{Gpio12, Gpio13, Gpio15, Gpio18, Gpio21, Gpio22, Gpio23, Gpio27, Gpio5, Output, PinDriver},
     i2c::{I2cConfig, I2cDriver},
     spi::{
@@ -17,8 +16,8 @@ use esp_idf_hal::{
     },
     units::FromValueType,
 };
-use log::info;
-use mipidsi::{models::ST7789, options::ColorInversion, Builder};
+use log::{info, warn};
+use mipidsi::{models::ST7789, options::ColorInversion, Builder, NoResetPin};
 
 const LCD_H_RES: u16 = 135;
 const LCD_V_RES: u16 = 240;
@@ -29,12 +28,12 @@ const SPI_BUFFER_SIZE: usize = 512;
 const EVENT_LEN: usize = 22;
 
 type LcdDisplay = mipidsi::Display<
-    mipidsi::interface::SpiInterface<
+    mipidsi::interface::SpiInterface<'static,
         SpiDeviceDriver<'static, SpiDriver<'static>>,
-        PinDriver<'static, Gpio23, Output>,
+        PinDriver<'static, Output>,
     >,
     ST7789,
-    PinDriver<'static, Gpio18, Output>,
+    NoResetPin,
 >;
 
 struct Screen {
@@ -69,74 +68,121 @@ static mut SPI_BUFFER: [u8; SPI_BUFFER_SIZE] = [0u8; SPI_BUFFER_SIZE];
 
 static SCREEN: std::sync::Mutex<Option<Screen>> = std::sync::Mutex::new(None);
 
-fn init_axp192(i2c: &mut I2cDriver) {
-    i2c.write(AXP192_ADDRESS, &[0x28, 0xCC]).ok(); // LDO2=3.0V (backlight), LDO3=3.0V (display)
+fn axp192_write_reg(
+    i2c: &mut I2cDriver<'_>,
+    reg: u8,
+    val: u8,
+    label: &str,
+) -> Result<(), &'static str> {
+    i2c.write(AXP192_ADDRESS, &[reg, val], BLOCK).map_err(|e| {
+        warn!("AXP192 write reg 0x{reg:02X} ({label}) failed: {e:?}");
+        "axp192 i2c write failed"
+    })
+}
+
+fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
+    info!("AXP192: beginning power sequencing...");
+    axp192_write_reg(i2c, 0x28, 0xCC, "LDO2/LDO3 voltage")?; // LDO2=3.0V (backlight), LDO3=3.0V (display)
+
     let mut buf = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut buf).ok(); // read power control
-    i2c.write(AXP192_ADDRESS, &[0x12, buf[0] | 0x4D]).ok(); // enable DCDC1, LDO2, LDO3, EXTEN
-    i2c.write(AXP192_ADDRESS, &[0x82, 0xFF]).ok(); // ADC all enabled
-    i2c.write(AXP192_ADDRESS, &[0x33, 0xC0]).ok(); // charge 4.2V, 100mA
-    i2c.write(AXP192_ADDRESS, &[0x36, 0x0C]).ok(); // 128ms poweron, 4s poweroff
-    i2c.write(AXP192_ADDRESS, &[0x91, 0xF0]).ok(); // RTC 3.3V
-    i2c.write(AXP192_ADDRESS, &[0x90, 0x02]).ok(); // GPIO0 → LDO mode
-    info!("AXP192 PMU initialized");
+    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut buf, BLOCK).map_err(|e| {
+        warn!("AXP192 read reg 0x12 failed: {e:?}");
+        "axp192 i2c read failed"
+    })?;
+    info!("AXP192: power ctrl was 0x{:02X}, enabling DCDC1+LDO2+LDO3+EXTEN", buf[0]);
+    axp192_write_reg(i2c, 0x12, buf[0] | 0x4D, "power ctrl DCDC1+LDO2+LDO3")?;
+
+    axp192_write_reg(i2c, 0x82, 0xFF, "ADC all enabled")?;
+    axp192_write_reg(i2c, 0x33, 0xC0, "charge 4.2V/100mA")?;
+    axp192_write_reg(i2c, 0x36, 0x0C, "poweron/off timing")?;
+    axp192_write_reg(i2c, 0x91, 0xF0, "RTC 3.3V")?;
+    axp192_write_reg(i2c, 0x90, 0x02, "GPIO0 LDO mode")?;
+
+    let mut verify = [0u8; 1];
+    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut verify, BLOCK).map_err(|e| {
+        warn!("AXP192 verify read failed: {e:?}");
+        "axp192 verify failed"
+    })?;
+    if verify[0] & 0x4D != 0x4D {
+        warn!("AXP192: power ctrl verify mismatch, got 0x{:02X}, expected 0x4D bits set", verify[0]);
+        return Err("axp192 power enable verify failed");
+    }
+
+    info!("AXP192: PMU initialized OK (reg 0x12 = 0x{:02X})", verify[0]);
+    Ok(())
 }
 
 /// # Safety: call exactly once at startup. SPI_BUFFER is handed to the display driver permanently.
 pub unsafe fn init(
     i2c1: esp_idf_hal::i2c::I2C1<'static>,
     spi2: esp_idf_hal::spi::SPI2<'static>,
-    pin_sda: Gpio21,
-    pin_scl: Gpio22,
-    pin_sclk: Gpio13,
-    pin_mosi: Gpio15,
-    pin_dc: Gpio23,
-    pin_rst: Gpio18,
-    pin_bl: Gpio27,
+    pin_sda: Gpio21<'static>,
+    pin_scl: Gpio22<'static>,
+    pin_sclk: Gpio13<'static>,
+    pin_mosi: Gpio15<'static>,
+    pin_dc: Gpio23<'static>,
+    pin_rst: Gpio18<'static>,
+    pin_bl: Gpio27<'static>,
     board: &'static str,
 ) -> Result<(), &'static str> {
-    let mut axp = I2cDriver::new(i2c1, pin_sda, pin_scl, &I2cConfig::new().baudrate(400.kHz().Hz()))
+    info!("Display init: starting AXP192 I2C1 on GPIO21/GPIO22...");
+    let mut axp = I2cDriver::new(i2c1, pin_sda, pin_scl, &I2cConfig::new().baudrate(400_000.Hz()))
         .map_err(|e| { log::error!("AXP192 I2C1 init failed: {e:?}"); "axp192 i2c failed" })?;
-    init_axp192(&mut axp);
-    Ets.delay_ms(100);
+    init_axp192(&mut axp)?;
+    info!("Display init: AXP192 done, waiting 200ms for power rails...");
+    FreeRtos::delay_ms(200);
     drop(axp);
 
+    info!("Display init: configuring SPI2 (10MHz, Mode0)...");
     let spi_driver = SpiDriver::new(spi2, pin_sclk, pin_mosi, None::<Gpio12>, &DriverConfig::new())
-        .map_err(|e| { log::error!("SPI2 init failed: {e:?}"); "spi2 failed" })?;
+        .map_err(|e| { log::error!("SPI2 driver failed: {e:?}"); "spi2 driver failed" })?;
 
     let spi_device = SpiDeviceDriver::new(
         spi_driver,
         None::<Gpio5>,
-        &Config::new().baudrate(20.MHz().into()),
+        &Config::new().baudrate(10.MHz().into()),
     )
     .map_err(|e| { log::error!("SPI2 device failed: {e:?}"); "spi2 device failed" })?;
 
     let dc = PinDriver::output(pin_dc)
         .map_err(|e| { log::error!("DC pin failed: {e:?}"); "dc pin failed" })?;
-    let rst = PinDriver::output(pin_rst)
+    let mut rst = PinDriver::output(pin_rst)
         .map_err(|e| { log::error!("RST pin failed: {e:?}"); "rst pin failed" })?;
     let mut backlight = PinDriver::output(pin_bl)
         .map_err(|e| { log::error!("BL pin failed: {e:?}"); "bl pin failed" })?;
 
-    let buffer = &mut SPI_BUFFER;
+    info!("Display init: manual HW reset of ST7789...");
+    rst.set_high().map_err(|e| { log::error!("RST high failed: {e:?}"); "rst failed" })?;
+    FreeRtos::delay_ms(10);
+    rst.set_low().map_err(|e| { log::error!("RST low failed: {e:?}"); "rst failed" })?;
+    FreeRtos::delay_ms(20);
+    rst.set_high().map_err(|e| { log::error!("RST high failed: {e:?}"); "rst failed" })?;
+    FreeRtos::delay_ms(150);
+    info!("Display init: HW reset complete, calling mipidsi init...");
+
+    let buffer: &'static mut [u8; SPI_BUFFER_SIZE] = unsafe { &mut *core::ptr::addr_of_mut!(SPI_BUFFER) };
     let di = mipidsi::interface::SpiInterface::new(spi_device, dc, buffer);
+    let mut delay = FreeRtos;
 
     let mut display = Builder::new(ST7789, di)
         .display_size(LCD_H_RES, LCD_V_RES)
         .display_offset(DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y)
         .invert_colors(ColorInversion::Inverted)
-        .reset_pin(rst)
-        .init(&mut Ets)
-        .map_err(|e| { log::error!("Display init failed: {e:?}"); "display init failed" })?;
+        .init(&mut delay)
+        .map_err(|e| { log::error!("mipidsi init failed: {e:?}"); "display init failed" })?;
 
+    info!("Display init: mipidsi OK, clearing screen...");
     display.clear(Rgb565::BLACK).map_err(|e| {
         log::error!("Display clear failed: {e:?}"); "clear failed"
     })?;
+    FreeRtos::delay_ms(50);
+
+    info!("Display init: enabling backlight...");
     backlight.set_high().map_err(|e| {
         log::error!("Backlight failed: {e:?}"); "backlight failed"
     })?;
 
-    info!("ST7789 display initialized ({}x{})", LCD_H_RES, LCD_V_RES);
+    info!("ST7789 display initialized ({}x{}) on {board}", LCD_H_RES, LCD_V_RES);
 
     *SCREEN.lock().unwrap() = Some(Screen {
         display,

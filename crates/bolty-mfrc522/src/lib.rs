@@ -111,13 +111,7 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
 
         let response = match frame {
             Frame::Short(data) => {
-                log::debug!("TX Short({}): {:02X?}", data.len(), data.as_slice());
                 let fifo = self.mfrc522.transceive::<2>(data.as_slice(), 7, 0)?;
-                log::debug!(
-                    "RX Short: valid_bytes={}, valid_bits={}",
-                    fifo.valid_bytes,
-                    fifo.valid_bits
-                );
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
@@ -125,33 +119,16 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
             }
             Frame::BitOriented(data) => {
                 let tx_last_bits = data.get(1).copied().unwrap_or_default() & 0x07;
-                log::debug!(
-                    "TX Bit({}B, last_bits={}): {:02X?}",
-                    data.len(),
-                    tx_last_bits,
-                    data.as_slice()
-                );
                 let fifo =
                     self.mfrc522
                         .transceive::<5>(data.as_slice(), tx_last_bits, tx_last_bits)?;
-                log::debug!(
-                    "RX Bit: valid_bytes={}, valid_bits={}",
-                    fifo.valid_bytes,
-                    fifo.valid_bits
-                );
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
                 fifo.buffer[..fifo.valid_bytes].to_vec()
             }
             Frame::Standard(data) => {
-                log::debug!("TX Standard({}): {:02X?}", data.len(), data);
                 let fifo = self.mfrc522.transceive::<64>(data.as_slice(), 0, 0)?;
-                log::debug!(
-                    "RX Standard: valid_bytes={}, valid_bits={}",
-                    fifo.valid_bytes,
-                    fifo.valid_bits
-                );
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }

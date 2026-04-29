@@ -98,7 +98,7 @@ mod firmware {
     const BOARD_NAME: &str = "M5StickC Plus";
 
     const RND_A: [u8; 16] = [0u8; 16];
-    const I2C_BAUDRATE_HZ: u32 = 50_000;
+    const I2C_BAUDRATE_HZ: u32 = 400_000;
     const MAX_LINE_LEN: usize = 512;
     const SERIAL_FD_IN: i32 = 0;
     const SERIAL_FD_OUT: i32 = 1;
@@ -123,6 +123,38 @@ mod firmware {
     #[cfg(feature = "wifi")]
     let modem = peripherals.modem;
 
+        #[cfg(feature = "board-m5atom")]
+        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
+        #[cfg(feature = "board-m5stick")]
+        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
+
+        FreeRtos::delay_ms(50);
+
+        let i2c = match I2cDriver::new(
+            peripherals.i2c0,
+            i2c_sda,
+            i2c_scl,
+            &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
+        ) {
+            Ok(i2c) => i2c,
+            Err(e) => {
+                log::error!("FATAL: I2C0 init failed: {e:?}");
+                loop {}
+            }
+        };
+        log::info!("I2C0 initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
+
+        let xcvr = match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
+            Ok(xcvr) => xcvr,
+            Err(e) => {
+                log::error!("MFRC522 init failed: {e:?}");
+                loop {
+                    FreeRtos::delay_ms(1000);
+                }
+            }
+        };
+        log::info!("MFRC522 initialized at 0x{:02X}", DEFAULT_I2C_ADDRESS);
+
         #[cfg(feature = "display-st7789")]
         {
             let result = unsafe {
@@ -143,36 +175,6 @@ mod firmware {
                 log::error!("Display init failed: {e}");
             }
         }
-
-        #[cfg(feature = "board-m5atom")]
-        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
-        #[cfg(feature = "board-m5stick")]
-        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
-
-        let i2c = match I2cDriver::new(
-            peripherals.i2c0,
-            i2c_sda,
-            i2c_scl,
-            &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
-        ) {
-            Ok(i2c) => i2c,
-            Err(e) => {
-                log::error!("FATAL: I2C init failed: {e:?}");
-                loop {}
-            }
-        };
-        log::info!("I2C initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
-
-        let xcvr = match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
-            Ok(xcvr) => xcvr,
-            Err(e) => {
-                log::error!("MFRC522 init failed: {e:?}");
-                loop {
-                    FreeRtos::delay_ms(1000);
-                }
-            }
-        };
-        log::info!("MFRC522 initialized at 0x{:02X}", DEFAULT_I2C_ADDRESS);
 
         let mut serial = SerialConsole::new();
         let initial_config = BoltyConfig::default();
