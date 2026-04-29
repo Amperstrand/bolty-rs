@@ -1,0 +1,12 @@
+[package]
+name = "bolty-mfrc522"
+version = "0.1.0"
+edition = "2024"
+description = "MFRC522 NFC transport for ntag424"
+
+[dependencies]
+ntag424 = { workspace = true }
+mfrc522 = { path = "../../vendor/mfrc522" }
+iso14443 = { path = "../../vendor/iso14443", features = ["alloc"] }
+embedded-hal = "1"
+log = "0.4"

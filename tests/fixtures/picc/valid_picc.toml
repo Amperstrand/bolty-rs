@@ -1,0 +1,37 @@
+# Behavioral truth extracted from Bolty C++ PiccData.h and card_key_matching.h.
+# These vectors use the hardware-proven UID and K1/K2 values for issuer key ...01 / version 1.
+# They are deterministic synthetic fixtures, not captured live URLs.
+
+[metadata]
+source = "Bolty/src/PiccData.h"
+uid = "0425607A8F6980"
+k1 = "55DA174C9608993DC27BB3F30A4A7314"
+k2 = "2AB74ABC1273FB43CAE97553A36D4D08"
+picc_format_byte = "C7"
+sv2_header = "3CC300010080"
+c_truncation = "odd bytes of full 16-byte AES-CMAC(session_mac_key, empty_payload)"
+p_algorithm = "AES-128-CBC encrypt/decrypt with zero IV"
+
+[[fixtures]]
+description = "Recovered card synthetic SDM vector, read counter 0"
+url = "https://example.com/bolt?p=E61CB056F52D34F9368F079D1814D2CF&c=FCC9A22201EA2298"
+p = "E61CB056F52D34F9368F079D1814D2CF"
+c = "FCC9A22201EA2298"
+decrypted_p = "C70425607A8F69800000000000000000"
+uid = "0425607A8F6980"
+counter = 0
+sv2 = "3CC3000100800425607A8F6980000000"
+derived_mac_key = "85F6155E3414E60874534940A44703A2"
+full_cmac = "90FC61C953A2C922E50129EAE4221998"
+
+[[fixtures]]
+description = "Recovered card synthetic SDM vector, read counter 1"
+url = "https://example.com/bolt?p=D798D011FA0BF5BD5ECE6F42265B02D5&c=B49D12860DA69E54"
+p = "D798D011FA0BF5BD5ECE6F42265B02D5"
+c = "B49D12860DA69E54"
+decrypted_p = "C70425607A8F69800100000000000000"
+uid = "0425607A8F6980"
+counter = 1
+sv2 = "3CC3000100800425607A8F6980010000"
+derived_mac_key = "E201CED0A166872A8D1746305D979EDB"
+full_cmac = "DCB46B9D83123F86420D63A69F9ED254"

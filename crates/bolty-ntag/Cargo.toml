@@ -1,0 +1,12 @@
+[package]
+name = "bolty-ntag"
+version = "0.1.0"
+edition = "2024"
+description = "Bolt card NTAG424 operations: burn, wipe, verify, key derivation"
+
+[dependencies]
+ntag424 = { workspace = true }
+
+[dev-dependencies]
+aes = "0.9"
+cmac = "0.8"

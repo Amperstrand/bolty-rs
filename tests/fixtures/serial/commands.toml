@@ -1,0 +1,205 @@
+# Behavioral truth extracted from serial_commands.h handle_serial_command().
+# expected_command names are fixture labels for the routed handler, not C++ enum names.
+
+[metadata]
+source = "Bolty/src/serial_commands.h"
+trim_whitespace = true
+dispatch_is_order_sensitive = true
+
+[[valid]]
+input = "help"
+expected_command = "Help"
+
+[[valid]]
+input = "uid"
+expected_command = "Uid"
+
+[[valid]]
+input = "status"
+expected_command = "Status"
+
+[[valid]]
+input = "auth"
+expected_command = "Auth"
+
+[[valid]]
+input = "ndef"
+expected_command = "Ndef"
+
+[[valid]]
+input = "picc"
+expected_command = "Picc"
+
+[[valid]]
+input = "decodebolt11 lnbc1testinvoicepayload"
+expected_command = "DecodeBolt11"
+
+[[valid]]
+input = "inspect"
+expected_command = "Inspect"
+
+[[valid]]
+input = "derivekeys"
+expected_command = "DeriveKeys"
+
+[[valid]]
+input = "ver"
+expected_command = "Ver"
+
+[[valid]]
+input = "issuer"
+expected_command = "ShowIssuer"
+
+[[valid]]
+input = "issuer 00000000000000000000000000000001"
+expected_command = "SetIssuer"
+
+[[valid]]
+input = "keys 11111111111111111111111111111111 22222222222222222222222222222222 33333333333333333333333333333333 44444444444444444444444444444444 55555555555555555555555555555555"
+expected_command = "SetKeys"
+
+[[valid]]
+input = "url lnurlw://example.com/withdraw"
+expected_command = "SetUrl"
+
+[[valid]]
+input = "mode pos"
+expected_command = "ModePos"
+
+[[valid]]
+input = "mode 2fa"
+expected_command = "Mode2fa"
+
+[[valid]]
+input = "mode withdraw"
+expected_command = "ModeWithdraw"
+
+[[valid]]
+input = "reseturl https://example.com/reset"
+expected_command = "SetResetUrl"
+
+[[valid]]
+input = "wifissid ExampleSSID"
+expected_command = "SetWifiSsid"
+
+[[valid]]
+input = "wifipass ExamplePassword"
+expected_command = "SetWifiPass"
+
+[[valid]]
+input = "wifi ExampleSSID ExamplePassword"
+expected_command = "WifiConnect"
+gated_by = "HAS_WEB_LOOKUP"
+
+[[valid]]
+input = "wifi"
+expected_command = "WifiStatus"
+gated_by = "HAS_WEB_LOOKUP"
+
+[[valid]]
+input = "wifi off"
+expected_command = "WifiConnect"
+expected_args = ["off"]
+gated_by = "HAS_WEB_LOOKUP"
+note = "Order-dependent behavior: strncmp(cmd, \"wifi \", 5) matches before exact \"wifi off\"."
+
+[[valid]]
+input = "keyserver https://keys.example.com"
+expected_command = "SetKeyserver"
+gated_by = "HAS_WEB_LOOKUP"
+
+[[valid]]
+input = "probe on"
+expected_command = "ProbeOn"
+
+[[valid]]
+input = "probe off"
+expected_command = "ProbeOff"
+
+[[valid]]
+input = "probe"
+expected_command = "Probe"
+
+[[valid]]
+input = "burn"
+expected_command = "Burn"
+
+[[valid]]
+input = "wipe"
+expected_command = "Wipe"
+
+[[valid]]
+input = "keyver"
+expected_command = "KeyVersion"
+
+[[valid]]
+input = "check"
+expected_command = "Check"
+
+[[valid]]
+input = "dummyburn"
+expected_command = "DummyBurn"
+
+[[valid]]
+input = "reset"
+expected_command = "Reset"
+
+[[valid]]
+input = "diagnose"
+expected_command = "Diagnose"
+
+[[valid]]
+input = "recoverkey 4 0123456789ABCDEFFEDCBA9876543210"
+expected_command = "RecoverKey"
+
+[[valid]]
+input = "recoverkey 4 0123456789ABCDEFFEDCBA9876543210 00000000000000000000000000000000"
+expected_command = "RecoverKey"
+
+[[valid]]
+input = "testck"
+expected_command = "TestChangeKey"
+
+[[valid]]
+input = "ota"
+expected_command = "Ota"
+gated_by = "BOLTY_OTA_ENABLED"
+
+[[valid]]
+input = "  burn  \r\n"
+expected_command = "Burn"
+note = "strtrim() removes leading/trailing ASCII whitespace before dispatch"
+
+[[invalid]]
+input = "notacommand"
+expected_error = "UnknownCommand"
+
+[[invalid]]
+input = "keys"
+expected_error = "UnknownCommand"
+note = "Dispatcher only matches strncmp(cmd, \"keys \", 5); bare keys never reaches handle_keys()."
+
+[[invalid]]
+input = "keys tooshort"
+expected_error = "InvalidArgs"
+
+[[invalid]]
+input = "issuer xyz"
+expected_error = "InvalidArgs"
+
+[[invalid]]
+input = "decodebolt11"
+expected_error = "UnknownCommand"
+note = "Dispatcher only matches the spaced prefix 'decodebolt11 '."
+
+[[invalid]]
+input = "url"
+expected_error = "UnknownCommand"
+
+[[invalid]]
+input = "recoverkey 9 0123456789ABCDEFFEDCBA9876543210"
+expected_error = "InvalidArgs"
+
+[[invalid]]
+input = "probe on now"
+expected_error = "UnknownCommand"

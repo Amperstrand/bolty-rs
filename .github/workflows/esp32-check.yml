@@ -1,0 +1,19 @@
+name: ESP32 Check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  esp32-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ESP32 cross-check
+        run: |
+          echo "ESP32 cross-check requires esp toolchain."
+          echo "Run locally:"
+          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf"
+          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features wifi"
+          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features rest"
+          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features ota"
+          echo "See docs/architecture.md for setup instructions."

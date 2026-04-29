@@ -1,0 +1,82 @@
+# Behavioral truth extracted from card_types.h, card_assessment.h, serial_commands.h, and bolt.h.
+# expected_kind is the higher-level fixture scenario label; cpp_idle_kind is the literal IdleCardKind outcome.
+
+[metadata]
+source = [
+  "Bolty/src/card_types.h",
+  "Bolty/src/card_assessment.h",
+  "Bolty/src/serial_commands.h",
+  "Bolty/src/bolt.h",
+]
+
+[[scenarios]]
+description = "Blank factory card: all key versions 0x00 and zero-key auth succeeds"
+card_uid = "041065FA967380"
+key_versions = [0x00, 0x00, 0x00, 0x00, 0x00]
+zero_key_auth_succeeds = true
+issuer_match = "none"
+looks_like_boltcard = false
+deterministic_k1_match = false
+deterministic_full_match = false
+expected_kind = "Blank"
+cpp_idle_kind = "blank"
+diagnose_state = "BLANK"
+reset_eligible = true
+
+[[scenarios]]
+description = "Provisioned card with known issuer: K1 decrypt and K2 CMAC both match"
+card_uid = "0425607A8F6980"
+key_versions = [0x01, 0x01, 0x01, 0x01, 0x01]
+zero_key_auth_succeeds = false
+issuer_match = "full"
+looks_like_boltcard = true
+deterministic_k1_match = true
+deterministic_full_match = true
+expected_kind = "Provisioned"
+cpp_idle_kind = "programmed"
+diagnose_state = "PROVISIONED"
+reset_eligible = true
+
+[[scenarios]]
+description = "Provisioned card with unknown issuer: no deterministic match, but boltcard-like URI still classifies as programmed"
+card_uid = "0425607A8F6980"
+key_versions = [0x01, 0x01, 0x01, 0x01, 0x01]
+zero_key_auth_succeeds = false
+issuer_match = "none"
+looks_like_boltcard = true
+deterministic_k1_match = false
+deterministic_full_match = false
+expected_kind = "Provisioned"
+cpp_idle_kind = "programmed"
+diagnose_state = "PROVISIONED"
+reset_eligible = false
+
+[[scenarios]]
+description = "Inconsistent mixed-state card: some keys factory, some changed; inspect flags inconsistent, assess_current_card falls back to unknown unless URI evidence exists"
+card_uid = "041065FA967380"
+key_versions = [0x00, 0x01, 0x00, 0x01, 0x00]
+zero_key_auth_succeeds = false
+issuer_match = "none"
+looks_like_boltcard = false
+deterministic_k1_match = false
+deterministic_full_match = false
+expected_kind = "Inconsistent"
+cpp_idle_kind = "unknown"
+inspect_key_versions_inconsistent = true
+diagnose_state = "PROVISIONED"
+reset_eligible = false
+
+[[scenarios]]
+description = "All key versions read as factory but zero-key auth fails: diagnose path calls this inconsistent"
+card_uid = "041065FA967380"
+key_versions = [0x00, 0x00, 0x00, 0x00, 0x00]
+zero_key_auth_succeeds = false
+issuer_match = "none"
+looks_like_boltcard = false
+deterministic_k1_match = false
+deterministic_full_match = false
+expected_kind = "Inconsistent"
+cpp_idle_kind = "unknown"
+inspect_key_versions_inconsistent = false
+diagnose_state = "INCONSISTENT"
+reset_eligible = false

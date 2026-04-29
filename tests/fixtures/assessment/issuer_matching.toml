@@ -1,0 +1,22 @@
+# Pure issuer matching vectors for bolty-core issuer.rs.
+
+[[vectors]]
+description = "blank card with factory key versions"
+uid = "041065FA967380"
+key_versions = [0x00, 0x00, 0x00, 0x00, 0x00]
+expected_state = "Blank"
+expected_issuer = "none"
+
+[[vectors]]
+description = "known issuer key version matches deterministic issuer slot"
+uid = "0425607A8F6980"
+key_versions = [0x42, 0x42, 0x42, 0x42, 0x42]
+expected_state = "Provisioned"
+expected_issuer = "1"
+
+[[vectors]]
+description = "unknown key versions classify as foreign"
+uid = "04A1B2C3D4E5F6"
+key_versions = [0x99, 0x99, 0x99, 0x99, 0x99]
+expected_state = "Foreign"
+expected_issuer = "none"

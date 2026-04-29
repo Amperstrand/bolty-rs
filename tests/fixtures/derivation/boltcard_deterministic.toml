@@ -1,0 +1,45 @@
+# Behavioral truth extracted from Bolty C++ KeyDerivation.h.
+# PRF = AES-128-CMAC.
+
+[metadata]
+source = "Bolty/src/KeyDerivation.h"
+version_candidates = [1, 0, 2, 3]
+card_key_tag = "2D003F75"
+k0_tag = "2D003F76"
+k1_tag = "2D003F77"
+k2_tag = "2D003F78"
+k3_tag = "2D003F79"
+k4_tag = "2D003F7A"
+card_id_tag = "2D003F7B"
+card_key_message = "CMAC(issuer_key, tag_card_key || uid[7] || version_u32_le)"
+k0_message = "CMAC(card_key, tag_k0)"
+k1_message = "CMAC(issuer_key, tag_k1)"
+k2_message = "CMAC(card_key, tag_k2)"
+k3_message = "CMAC(card_key, tag_k3)"
+k4_message = "CMAC(card_key, tag_k4)"
+
+[[vectors]]
+description = "Vector 1: zero issuer key, blank test UID, version 1 candidate"
+issuer_key = "00000000000000000000000000000000"
+uid = "041065FA967380"
+version = 1
+card_key = "1A3888508F11BA44942BDA56B928CC4B"
+k0 = "24D449C0C1D166827C05B8BB4A5798DA"
+k1 = "DFEA2649F9CE19D0556D0C04CEF56FA2"
+k2 = "D41A0289DEB7D573B700B135965CD1EA"
+k3 = "FC5D413A564A0B415E3FD410FD19BC55"
+k4 = "F4801A4D53D8784090AA44BBD7C89E95"
+card_id = "6110DEA4C91ED081C43DAAD898A28548"
+
+[[vectors]]
+description = "Vector 2: hardware-proven recovered card UID with issuer key ...01, version 1 gives the proven K1/K2 pair"
+issuer_key = "00000000000000000000000000000001"
+uid = "0425607A8F6980"
+version = 1
+card_key = "6A4A300223FD4EF3CEA6CE75B5D641F5"
+k0 = "BA2574FB30759CBA205A4FB42B980F62"
+k1 = "55DA174C9608993DC27BB3F30A4A7314"
+k2 = "2AB74ABC1273FB43CAE97553A36D4D08"
+k3 = "F39B252DCC04856181523D6B4FB189C3"
+k4 = "12B9FCF24A9D14BC93D3D69C07551E2C"
+card_id = "FB6D820A31C4DC891B989444A7C3DAD4"
