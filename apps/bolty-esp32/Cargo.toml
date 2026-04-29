@@ -12,7 +12,7 @@ path = "src/main.rs"
 default = []
 nfc-mfrc522 = []
 led-matrix = []
-display-st7789 = []
+display-st7789 = ["dep:mipidsi", "dep:embedded-graphics"]
 board-m5atom = ["nfc-mfrc522", "led-matrix"]
 board-m5stick = ["nfc-mfrc522", "display-st7789"]
 wifi = []
@@ -29,6 +29,8 @@ heapless = { version = "=0.9.2", default-features = false }
 ntag424 = { workspace = true }
 iso14443 = { path = "../../vendor/iso14443" }
 log = "=0.4.29"
+mipidsi = { version = "=0.9.0", optional = true }
+embedded-graphics = { version = "=0.8.2", optional = true }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 esp-idf-sys = { version = "=0.37.2", features = ["binstart"] }

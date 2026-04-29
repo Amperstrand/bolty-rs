@@ -27,6 +27,9 @@ mod rest;
 #[cfg(feature = "ota")]
 mod ota;
 
+#[cfg(all(target_arch = "xtensa", feature = "display-st7789"))]
+mod display;
+
 #[cfg(all(target_arch = "xtensa", feature = "board-m5atom", feature = "board-m5stick"))]
 compile_error!("Enable exactly one board feature: `board-m5atom` or `board-m5stick`.");
 
@@ -77,6 +80,8 @@ mod firmware {
     use log::info;
 
     use crate::block_on;
+    #[cfg(feature = "display-st7789")]
+    use crate::display;
     #[cfg(feature = "rest")]
     use crate::rest::{RestBoltyService, RestServer};
     #[cfg(feature = "ota")]
@@ -115,8 +120,29 @@ mod firmware {
         #[cfg(feature = "led-matrix")]
         neopixel_off(peripherals.pins.gpio27);
 
-        #[cfg(feature = "wifi")]
-        let modem = peripherals.modem;
+    #[cfg(feature = "wifi")]
+    let modem = peripherals.modem;
+
+        #[cfg(feature = "display-st7789")]
+        {
+            let result = unsafe {
+                display::init(
+                    peripherals.i2c1,
+                    peripherals.spi2,
+                    peripherals.pins.gpio21,
+                    peripherals.pins.gpio22,
+                    peripherals.pins.gpio13,
+                    peripherals.pins.gpio15,
+                    peripherals.pins.gpio23,
+                    peripherals.pins.gpio18,
+                    peripherals.pins.gpio27,
+                    BOARD_NAME,
+                )
+            };
+            if let Err(e) = result {
+                log::error!("Display init failed: {e}");
+            }
+        }
 
         #[cfg(feature = "board-m5atom")]
         let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
@@ -152,6 +178,9 @@ mod firmware {
         let initial_config = BoltyConfig::default();
         let config = Arc::new(Mutex::new(initial_config.clone()));
         let service = Arc::new(Mutex::new(Esp32BoltyService::new(xcvr, initial_config)));
+
+        #[cfg(feature = "display-st7789")]
+        display::set_nfc_ready(true);
         #[cfg(feature = "wifi")]
         let mut wifi_manager = match WifiManager::new(modem) {
             Ok(manager) => Some(manager),
@@ -170,6 +199,9 @@ mod firmware {
 
         info!("=== Bolty Ready ===");
         print_boot_banner(&mut serial);
+
+        #[cfg(feature = "display-st7789")]
+        display::set_event("ready");
 
         loop {
             while let Some(byte) = serial.read_byte_nonblocking() {
@@ -499,6 +531,10 @@ mod firmware {
                 match manager.connect(ssid, password) {
                     Ok(()) => {
                         serial.ok("wifi connected");
+                        #[cfg(feature = "display-st7789")]
+                        if let Some(ip) = wifi_ip_string() {
+                            display::set_wifi(ip.as_str());
+                        }
                         #[cfg(feature = "rest")]
                         {
                             if rest_server.is_none() {
@@ -535,6 +571,8 @@ mod firmware {
                         if let Some(server) = rest_server.take() {
                             server.stop();
                         }
+                        #[cfg(feature = "display-st7789")]
+                        display::clear_wifi();
                         serial.ok("wifi disconnected");
                     }
                     Err(err) => serial.fail(wifi_error_message(&err).as_str()),
@@ -597,8 +635,27 @@ mod firmware {
             }
             Command::Status => print_status(serial, &service),
             Command::Uid => print_uid(serial, &service),
-            Command::Inspect => print_inspect(serial, &service, result),
-            _ => print_command_result(serial, &service, &command_copy, result),
+            Command::Inspect => {
+                let success = matches!(&result, WorkflowResult::Success);
+                print_inspect(serial, &service, result);
+                #[cfg(feature = "display-st7789")]
+                if success {
+                    display::set_event("inspect complete");
+                }
+            }
+            _ => {
+                let success = matches!(&result, WorkflowResult::Success);
+                print_command_result(serial, &service, &command_copy, result);
+                #[cfg(feature = "display-st7789")]
+                if success {
+                    match &command_copy {
+                        Command::Burn => display::set_event("burn complete"),
+                        Command::Wipe => display::set_event("wipe complete"),
+                        Command::Check => display::set_event("card is blank"),
+                        _ => {}
+                    }
+                }
+            }
         }
     }
 
@@ -727,20 +784,70 @@ mod firmware {
         match service.check_blank() {
             WorkflowResult::CardNotPresent => {
                 *card_announced = false;
+                #[cfg(feature = "display-st7789")]
+                display::clear_card();
             }
             WorkflowResult::Success | WorkflowResult::Error(_) => {
                 if !*card_announced && service.last_card.present {
                     serial.card(&service.last_card);
                     *card_announced = true;
+                    #[cfg(feature = "display-st7789")]
+                    {
+                        let mut uid_hex = heapless::String::<16>::new();
+                        if let Some(uid) = service.last_card.uid.as_ref() {
+                            let _ = push_uid_hex(
+                                &mut uid_hex,
+                                &uid[..service.last_card.uid_len as usize],
+                            );
+                        }
+                        display::set_card(
+                            uid_hex.as_str(),
+                            card_state_label(service.last_card.state),
+                        );
+                    }
                 }
             }
             WorkflowResult::AuthFailed | WorkflowResult::WipeRefused => {
                 if !*card_announced && service.last_card.present {
                     serial.card(&service.last_card);
                     *card_announced = true;
+                    #[cfg(feature = "display-st7789")]
+                    {
+                        let mut uid_hex = heapless::String::<16>::new();
+                        if let Some(uid) = service.last_card.uid.as_ref() {
+                            let _ = push_uid_hex(
+                                &mut uid_hex,
+                                &uid[..service.last_card.uid_len as usize],
+                            );
+                        }
+                        display::set_card(
+                            uid_hex.as_str(),
+                            card_state_label(service.last_card.state),
+                        );
+                    }
                 }
             }
         }
+    }
+
+    #[cfg(all(feature = "display-st7789", feature = "wifi"))]
+    fn wifi_ip_string() -> Option<String<16>> {
+        let key = b"WIFI_STA_DEF\0";
+        let handle = unsafe { esp_idf_sys::esp_netif_get_handle_from_ifkey(key.as_ptr().cast()) };
+        if handle.is_null() {
+            return None;
+        }
+
+        let mut ip_info: esp_idf_sys::esp_netif_ip_info_t = Default::default();
+        let rc = unsafe { esp_idf_sys::esp_netif_get_ip_info(handle, &mut ip_info) };
+        if rc != 0 {
+            return None;
+        }
+
+        let mut out = String::<16>::new();
+        let [a, b, c, d] = ip_info.ip.addr.to_le_bytes();
+        write!(out, "{a}.{b}.{c}.{d}").ok()?;
+        Some(out)
     }
 
     fn command_error_message(error: CommandError) -> &'static str {
