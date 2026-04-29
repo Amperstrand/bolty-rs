@@ -82,14 +82,39 @@ mod firmware {
             loop {}
         });
 
-        let _neopixel = peripherals.pins.gpio27;
+        #[cfg(feature = "board-m5atom")]
+        neopixel_off(peripherals.pins.gpio27);
 
         #[cfg(feature = "wifi")]
         let modem = peripherals.modem;
+
+        let i2c_sda;
+        let i2c_scl;
+        let board_name;
+
+        #[cfg(feature = "board-m5atom")]
+        {
+            i2c_sda = peripherals.pins.gpio26;
+            i2c_scl = peripherals.pins.gpio32;
+            board_name = "M5Atom";
+        }
+        #[cfg(feature = "board-m5stick")]
+        {
+            i2c_sda = peripherals.pins.gpio32;
+            i2c_scl = peripherals.pins.gpio33;
+            board_name = "M5StickC Plus";
+        }
+        #[cfg(not(any(feature = "board-m5atom", feature = "board-m5stick")))]
+        {
+            i2c_sda = peripherals.pins.gpio32;
+            i2c_scl = peripherals.pins.gpio33;
+            board_name = "unknown";
+        }
+
         let mut i2c = match I2cDriver::new(
             peripherals.i2c0,
-            peripherals.pins.gpio26,
-            peripherals.pins.gpio32,
+            i2c_sda,
+            i2c_scl,
             &I2cConfig::new().baudrate(50_000u32.Hz()),
         ) {
             Ok(i2c) => i2c,
@@ -98,15 +123,12 @@ mod firmware {
                 loop {}
             }
         };
-        log::info!("I2C initialized on G26/G32 (M5Atom) @ 50kHz");
+        log::info!("I2C initialized ({board_name}) @ 50kHz");
 
         let xcvr = match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
             Ok(xcvr) => xcvr,
             Err(e) => {
                 log::error!("MFRC522 init failed: {e:?}");
-                let mut serial = SerialConsole::new();
-                serial.line("=== Bolty (no NFC) ===");
-                serial.fail("MFRC522 not found on G26/G32");
                 loop {
                     FreeRtos::delay_ms(1000);
                 }
@@ -773,6 +795,50 @@ mod firmware {
 
     fn millis() -> u64 {
         unsafe { esp_idf_sys::esp_timer_get_time() as u64 / 1000 }
+    }
+
+    fn neopixel_off(pin: esp_idf_hal::gpio::Gpio27) {
+        use core::time::Duration;
+        use esp_idf_hal::rmt::config::{TxChannelConfig, TransmitConfig};
+        use esp_idf_hal::rmt::encoder::{BytesEncoder, BytesEncoderConfig};
+        use esp_idf_hal::rmt::{PinState, Pulse, Symbol, TxChannelDriver};
+        use esp_idf_hal::units::FromValueType as _;
+
+        let config = TxChannelConfig {
+            resolution: 10.MHz().into(),
+            ..Default::default()
+        };
+
+        let mut tx = match TxChannelDriver::new(pin, &config) {
+            Ok(tx) => tx,
+            Err(e) => {
+                log::warn!("NeoPixel RMT init failed: {e:?}");
+                return;
+            }
+        };
+
+        let t0h = Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(350))
+            .expect("t0h");
+        let t0l = Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(800))
+            .expect("t0l");
+        let t1h = Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(700))
+            .expect("t1h");
+        let t1l = Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(600))
+            .expect("t1l");
+
+        let encoder_config = BytesEncoderConfig {
+            bit0: Symbol::new(t0h, t0l),
+            bit1: Symbol::new(t1h, t1l),
+            msb_first: true,
+            ..Default::default()
+        };
+
+        let encoder = BytesEncoder::with_config(&encoder_config).expect("encoder");
+
+        let black: [u8; 75] = [0u8; 75];
+        if let Err(e) = tx.send_and_wait(encoder, &black, &TransmitConfig::default()) {
+            log::warn!("NeoPixel write failed: {e:?}");
+        }
     }
 }
 
