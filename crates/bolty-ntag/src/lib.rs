@@ -4,7 +4,7 @@ use ntag424::{
     File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Transport, Uid,
     key_diversification::diversify_ntag424,
     sdm::{SdmUrlOptions, sdm_url_config},
-    types::file_settings::CryptoMode,
+    types::{ResponseStatus, file_settings::CryptoMode},
 };
 
 pub const FACTORY_KEY: [u8; 16] = [0u8; 16];
@@ -27,6 +27,7 @@ pub struct BurnParams<'a> {
     pub lnurl: &'a str,
     pub keys: KeySet,
     pub key_version: u8,
+    pub current_key: [u8; 16],
 }
 
 #[derive(Debug)]
@@ -44,11 +45,17 @@ pub enum Error<T: core::error::Error + core::fmt::Debug> {
     Transport(T),
     SdmUrl(ntag424::sdm::SdmUrlError),
     Session(SessionError<T>),
+    AuthenticationDelay,
 }
 
 impl<T: core::error::Error + core::fmt::Debug> From<SessionError<T>> for Error<T> {
     fn from(e: SessionError<T>) -> Self {
-        Error::Session(e)
+        match e {
+            SessionError::ErrorResponse(ResponseStatus::AuthenticationDelay) => {
+                Error::AuthenticationDelay
+            }
+            other => Error::Session(other),
+        }
     }
 }
 
@@ -56,6 +63,16 @@ impl<T: core::error::Error + core::fmt::Debug> From<ntag424::sdm::SdmUrlError> f
     fn from(e: ntag424::sdm::SdmUrlError) -> Self {
         Error::SdmUrl(e)
     }
+}
+
+pub fn is_authentication_delay<T: core::error::Error + core::fmt::Debug>(err: &Error<T>) -> bool {
+    matches!(
+        err,
+        Error::AuthenticationDelay
+            | Error::Session(SessionError::ErrorResponse(
+                ResponseStatus::AuthenticationDelay,
+            ))
+    )
 }
 
 fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
@@ -82,12 +99,12 @@ pub async fn burn<T: Transport>(
     let uid = session.get_selected_uid(transport).await?;
     let uid_fixed = uid_to_fixed(&uid);
 
-    session
-        .write_file_unauthenticated(transport, File::Ndef, 0, &plan.ndef_bytes)
+    let mut session = session
+        .authenticate_aes(transport, KeyNumber::Key0, &params.current_key, rnd_a)
         .await?;
 
-    let session = session
-        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+    session
+        .write_file_plain(transport, File::Ndef, 0, &plan.ndef_bytes)
         .await?;
 
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
@@ -160,15 +177,9 @@ pub async fn wipe<T: Transport>(
         .change_file_settings(transport, File::Ndef, &update)
         .await?;
 
-    let mut ndef_buf = [0u8; 256];
-    let bytes_read = session
-        .read_file_plain(transport, File::Ndef, 0, 0, &mut ndef_buf)
-        .await?;
-    for b in &mut ndef_buf[..bytes_read] {
-        *b = 0;
-    }
+    let empty_ndef = [0u8; 8];
     session
-        .write_file_plain(transport, File::Ndef, 0, &ndef_buf[..bytes_read])
+        .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
         .await?;
 
     let session = session

@@ -250,6 +250,7 @@ mod firmware {
         transceiver: Mfrc522Transceiver<I2C>,
         current_config: BoltyConfig,
         keys: Option<CardKeys>,
+        authenticated_key0: Option<[u8; 16]>,
         last_card: CardAssessment,
         status: ServiceStatus,
     }
@@ -264,6 +265,7 @@ mod firmware {
                 transceiver,
                 current_config,
                 keys: None,
+                authenticated_key0: None,
                 last_card: CardAssessment::default(),
                 status: ServiceStatus {
                     last_uid: None,
@@ -316,11 +318,19 @@ mod firmware {
                 .unwrap_or(&[]);
 
             let assessment = assess_card(&uid, key_versions, issuers);
+            self.authenticated_key0 = Some(*key);
             self.last_card = assessment.clone();
             self.status.last_uid = Some(uid);
             self.status.nfc_ready = true;
 
             Ok(assessment)
+        }
+
+        fn current_burn_key(&self, uid: Option<[u8; 7]>) -> [u8; 16] {
+            match (uid, self.status.last_uid, self.authenticated_key0) {
+                (Some(current_uid), Some(last_uid), Some(key)) if current_uid == last_uid => key,
+                _ => bolty_ntag::FACTORY_KEY,
+            }
         }
     }
 
@@ -337,6 +347,9 @@ mod firmware {
                 .map(|_| IssuerConfig::default().key_version)
                 .unwrap_or(IssuerConfig::default().key_version);
 
+            // Must compute key before activate_transport() — borrow checker constraint.
+            let current_key = self.current_burn_key(None);
+
             let mut transport = match self.activate_transport() {
                 Ok(transport) => transport,
                 Err(err) => return err,
@@ -346,6 +359,7 @@ mod firmware {
                 lnurl,
                 keys: card_keys_to_keyset(keys),
                 key_version,
+                current_key,
             };
 
             match block_on(bolty_ntag::burn(&mut transport, &params, RND_A)) {
@@ -353,12 +367,13 @@ mod firmware {
                     self.status.last_uid = Some(result.uid);
                     self.status.nfc_ready = true;
                     self.keys = Some(keys.clone());
+                    self.authenticated_key0 = Some(*keys.k0.as_bytes());
                     self.current_config.pending_keys = Some(keys.clone());
                     self.current_config.lnurl = copy_lnurl(lnurl);
                     self.sync_config();
                     WorkflowResult::Success
                 }
-                Err(err) => workflow_error_debug(&err),
+                Err(err) => map_ntag_error(&err),
             }
         }
 
@@ -377,6 +392,7 @@ mod firmware {
                     self.status.last_uid = Some(result.uid);
                     self.status.nfc_ready = true;
                     self.keys = None;
+                    self.authenticated_key0 = Some(bolty_ntag::FACTORY_KEY);
                     self.last_card = CardAssessment {
                         state: CardState::Blank,
                         present: true,
@@ -386,7 +402,7 @@ mod firmware {
                     };
                     WorkflowResult::Success
                 }
-                Err(err) => workflow_error_debug(&err),
+                Err(err) => map_ntag_error(&err),
             }
         }
 
@@ -395,6 +411,7 @@ mod firmware {
                 match self.inspect_with_key(keys.k0.as_bytes()) {
                     Ok(assessment) => return Ok(assessment),
                     Err(WorkflowResult::AuthFailed) | Err(WorkflowResult::CardNotPresent) => {}
+                    Err(WorkflowResult::AuthDelay) => return Err(WorkflowResult::AuthDelay),
                     Err(err) => return Err(err),
                 }
             }
@@ -765,6 +782,11 @@ mod firmware {
             WorkflowResult::Success => serial.ok("success"),
             WorkflowResult::CardNotPresent => serial.fail("card not present"),
             WorkflowResult::AuthFailed => serial.fail("authentication failed"),
+            WorkflowResult::AuthDelay => {
+                serial.fail("AUTH DELAY (0x91AD): Card authentication failure counter triggered.");
+                serial.line("Remove card from reader field for several seconds and retry.");
+                serial.line("Ensure you are using the correct key.");
+            }
             WorkflowResult::WipeRefused => serial.fail("wipe refused"),
             WorkflowResult::Error(message) => serial.fail(message.as_str()),
         }
@@ -809,7 +831,7 @@ mod firmware {
                     }
                 }
             }
-            WorkflowResult::AuthFailed | WorkflowResult::WipeRefused => {
+            WorkflowResult::AuthFailed | WorkflowResult::AuthDelay | WorkflowResult::WipeRefused => {
                 if !*card_announced && service.last_card.present {
                     serial.card(&service.last_card);
                     *card_announced = true;
@@ -881,6 +903,7 @@ mod firmware {
         T: core::error::Error + core::fmt::Debug,
     {
         match error {
+            err if bolty_ntag::is_authentication_delay(err) => WorkflowResult::AuthDelay,
             bolty_ntag::Error::Session(ntag424::SessionError::ErrorResponse(_)) => {
                 WorkflowResult::AuthFailed
             }

@@ -11,6 +11,7 @@ pub enum WorkflowResult {
     Success,
     CardNotPresent,
     AuthFailed,
+    AuthDelay,
     WipeRefused,
     Error(MessageString),
 }

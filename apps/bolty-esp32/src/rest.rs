@@ -429,6 +429,7 @@ fn workflow_error_message(result: &WorkflowResult) -> &str {
         WorkflowResult::Success => "success",
         WorkflowResult::CardNotPresent => "card not present",
         WorkflowResult::AuthFailed => "authentication failed",
+        WorkflowResult::AuthDelay => "authentication delay; remove card from field, wait, and retry with the correct key",
         WorkflowResult::WipeRefused => "wipe refused",
         WorkflowResult::Error(message) => message.as_str(),
     }

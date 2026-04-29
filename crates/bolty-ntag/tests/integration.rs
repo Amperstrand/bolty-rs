@@ -35,6 +35,7 @@ fn burn_programs_ndef_sdm_and_keys() {
         lnurl: burn_lnurl(),
         keys,
         key_version: 0x42,
+        current_key: FACTORY_KEY,
     };
     let plan = sdm_url_config(burn_lnurl(), CryptoMode::Aes, SdmUrlOptions::new()).unwrap();
     let mut transport = MockTransport::new();
