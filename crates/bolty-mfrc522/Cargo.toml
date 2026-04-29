@@ -8,5 +8,5 @@ description = "MFRC522 NFC transport for ntag424"
 ntag424 = { workspace = true }
 mfrc522 = { path = "../../vendor/mfrc522" }
 iso14443 = { path = "../../vendor/iso14443", features = ["alloc"] }
-embedded-hal = "1"
-log = "0.4"
+embedded-hal = "=1.0.0"
+log = "=0.4.29"

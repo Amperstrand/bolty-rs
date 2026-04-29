@@ -1,10 +1,14 @@
 # Build artifacts
 /target
-Cargo.lock
 **/*.rs.bk
+*.swp
+*.tmp
+*.log
+
+# Reproducible firmware builds keep the lockfile under version control.
 
 # ESP-IDF build environment (hundreds of MB, not for publishing)
-.embuild
+.embuild/
 
 # IDE / editor
 .vscode/.browse.c_cpp.db*
@@ -12,6 +16,8 @@ Cargo.lock
 .vscode/launch.json
 .vscode/ipch
 .pio
+.idea/
+.DS_Store
 
 # Python
 *.pyc
@@ -22,4 +28,8 @@ __pycache__
 .sdkconfig.old
 
 # Internal working files
-.sisyphus
+.sisyphus/
+.env
+.env.*
+.direnv/
+.envrc

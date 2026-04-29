@@ -8,5 +8,5 @@ description = "Bolt card NTAG424 operations: burn, wipe, verify, key derivation"
 ntag424 = { workspace = true }
 
 [dev-dependencies]
-aes = "0.9"
-cmac = "0.8"
+aes = "=0.9.0"
+cmac = "=0.8.0"

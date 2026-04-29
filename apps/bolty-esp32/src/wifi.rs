@@ -14,6 +14,15 @@ use log::info;
 use esp_idf_svc::mdns::EspMdns;
 
 const MDNS_HOSTNAME: &str = "bolty";
+const MDNS_INSTANCE_NAME: &str = "Bolty";
+#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+const MDNS_HTTP_SERVICE_NAME: &str = "Bolty HTTP";
+#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+const MDNS_HTTP_SERVICE_TYPE: &str = "_http";
+#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+const MDNS_HTTP_SERVICE_PROTO: &str = "_tcp";
+#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+const MDNS_HTTP_STATUS_PATH: &str = "/api/status";
 
 #[derive(Debug)]
 pub enum WifiError {
@@ -40,22 +49,18 @@ impl From<EspError> for WifiError {
 
 pub struct WifiManager {
     wifi: BlockingWifi<EspWifi<'static>>,
-    ssid: Option<WifiSsidString>,
-    password: Option<WifiPasswordString>,
     #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
     mdns: Option<EspMdns>,
 }
 
 impl WifiManager {
-    pub fn new(modem: Modem) -> Result<Self, WifiError> {
+    pub fn new(modem: Modem<'static>) -> Result<Self, WifiError> {
         let sys_loop = EspSystemEventLoop::take()?;
         let nvs = EspDefaultNvsPartition::take()?;
         let wifi = BlockingWifi::wrap(EspWifi::new(modem, sys_loop.clone(), Some(nvs))?, sys_loop)?;
 
         Ok(Self {
             wifi,
-            ssid: None,
-            password: None,
             #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
             mdns: None,
         })
@@ -78,12 +83,12 @@ impl WifiManager {
             self.wifi.stop()?;
         }
 
-        self.ssid = Some(copy_ssid(ssid.as_str())?);
-        self.password = Some(copy_password(password.as_str())?);
+        let wifi_ssid = copy_ssid(ssid.as_str())?;
+        let wifi_password = copy_password(password.as_str())?;
 
         let wifi_configuration = Configuration::Client(ClientConfiguration {
-            ssid: self.ssid.clone().ok_or(WifiError::SsidTooLong)?,
-            password: self.password.clone().ok_or(WifiError::PasswordTooLong)?,
+            ssid: wifi_ssid,
+            password: wifi_password,
             auth_method: AuthMethod::WPA2Personal,
             bssid: None,
             channel: None,
@@ -117,11 +122,35 @@ impl WifiManager {
             self.wifi.stop()?;
         }
 
-        self.ssid = None;
-        self.password = None;
-
         info!("WiFi shutdown complete");
 
+        Ok(())
+    }
+
+    #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+    pub fn advertise_http_service(&mut self, port: u16) -> Result<(), WifiError> {
+        let Some(mdns) = self.mdns.as_mut() else {
+            return Ok(());
+        };
+
+        mdns.add_service(
+            Some(MDNS_HTTP_SERVICE_NAME),
+            MDNS_HTTP_SERVICE_TYPE,
+            MDNS_HTTP_SERVICE_PROTO,
+            port,
+            &[
+                ("path", MDNS_HTTP_STATUS_PATH),
+                ("fw", env!("CARGO_PKG_VERSION")),
+            ],
+        )?;
+
+        info!("mDNS advertising active: {}.local:{}", MDNS_HOSTNAME, port);
+
+        Ok(())
+    }
+
+    #[cfg(not(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled)))]
+    pub fn advertise_http_service(&mut self, _port: u16) -> Result<(), WifiError> {
         Ok(())
     }
 
@@ -129,7 +158,7 @@ impl WifiManager {
     fn start_mdns(&mut self) -> Result<(), WifiError> {
         let mut mdns = EspMdns::take()?;
         mdns.set_hostname(MDNS_HOSTNAME)?;
-        mdns.set_instance_name(MDNS_HOSTNAME)?;
+        mdns.set_instance_name(MDNS_INSTANCE_NAME)?;
         self.mdns = Some(mdns);
         Ok(())
     }

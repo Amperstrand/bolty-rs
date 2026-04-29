@@ -27,6 +27,28 @@ mod rest;
 #[cfg(feature = "ota")]
 mod ota;
 
+#[cfg(all(target_arch = "xtensa", feature = "board-m5atom", feature = "board-m5stick"))]
+compile_error!("Enable exactly one board feature: `board-m5atom` or `board-m5stick`.");
+
+#[cfg(all(
+    target_arch = "xtensa",
+    not(any(feature = "board-m5atom", feature = "board-m5stick"))
+))]
+compile_error!("Enable one board feature: `board-m5atom` or `board-m5stick`.");
+
+#[cfg(all(target_arch = "xtensa", not(feature = "nfc-mfrc522")))]
+compile_error!("The current firmware requires the `nfc-mfrc522` feature.");
+
+#[cfg(all(target_arch = "xtensa", feature = "led-matrix", not(feature = "board-m5atom")))]
+compile_error!("`led-matrix` is only supported on `board-m5atom`.");
+
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "display-st7789",
+    not(feature = "board-m5stick")
+))]
+compile_error!("`display-st7789` is only supported on `board-m5stick`.");
+
 #[cfg(target_arch = "xtensa")]
 mod firmware {
     use core::fmt::Write as _;
@@ -65,10 +87,18 @@ mod firmware {
     #[cfg(not(feature = "wifi"))]
     struct WifiManager;
 
+    #[cfg(feature = "board-m5atom")]
+    const BOARD_NAME: &str = "M5Atom";
+    #[cfg(feature = "board-m5stick")]
+    const BOARD_NAME: &str = "M5StickC Plus";
+
     const RND_A: [u8; 16] = [0u8; 16];
+    const I2C_BAUDRATE_HZ: u32 = 50_000;
     const MAX_LINE_LEN: usize = 512;
     const SERIAL_FD_IN: i32 = 0;
     const SERIAL_FD_OUT: i32 = 1;
+    const CARD_POLL_INTERVAL_MS: u64 = 500;
+    const MAIN_LOOP_DELAY_MS: u32 = 10;
     #[cfg(feature = "rest")]
     const REST_PORT: u16 = 80;
 
@@ -82,40 +112,22 @@ mod firmware {
             loop {}
         });
 
-        #[cfg(feature = "board-m5atom")]
+        #[cfg(feature = "led-matrix")]
         neopixel_off(peripherals.pins.gpio27);
 
         #[cfg(feature = "wifi")]
         let modem = peripherals.modem;
 
-        let i2c_sda;
-        let i2c_scl;
-        let board_name;
-
         #[cfg(feature = "board-m5atom")]
-        {
-            i2c_sda = peripherals.pins.gpio26;
-            i2c_scl = peripherals.pins.gpio32;
-            board_name = "M5Atom";
-        }
+        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
         #[cfg(feature = "board-m5stick")]
-        {
-            i2c_sda = peripherals.pins.gpio32;
-            i2c_scl = peripherals.pins.gpio33;
-            board_name = "M5StickC Plus";
-        }
-        #[cfg(not(any(feature = "board-m5atom", feature = "board-m5stick")))]
-        {
-            i2c_sda = peripherals.pins.gpio32;
-            i2c_scl = peripherals.pins.gpio33;
-            board_name = "unknown";
-        }
+        let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
 
-        let mut i2c = match I2cDriver::new(
+        let i2c = match I2cDriver::new(
             peripherals.i2c0,
             i2c_sda,
             i2c_scl,
-            &I2cConfig::new().baudrate(50_000u32.Hz()),
+            &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
         ) {
             Ok(i2c) => i2c,
             Err(e) => {
@@ -123,7 +135,7 @@ mod firmware {
                 loop {}
             }
         };
-        log::info!("I2C initialized ({board_name}) @ 50kHz");
+        log::info!("I2C initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
 
         let xcvr = match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
             Ok(xcvr) => xcvr,
@@ -190,10 +202,10 @@ mod firmware {
             let now = millis();
             if now >= next_poll_at {
                 poll_card(&mut serial, &service, &mut card_announced);
-                next_poll_at = now.saturating_add(500);
+                next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
             }
 
-            FreeRtos::delay_ms(10);
+            FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
         }
     }
 
@@ -384,8 +396,15 @@ mod firmware {
 
     impl SerialConsole {
         fn new() -> Self {
-            unsafe {
-                esp_idf_sys::fcntl(SERIAL_FD_IN, esp_idf_sys::F_SETFL as i32, esp_idf_sys::O_NONBLOCK as i32);
+            let rc = unsafe {
+                esp_idf_sys::fcntl(
+                    SERIAL_FD_IN,
+                    esp_idf_sys::F_SETFL as i32,
+                    esp_idf_sys::O_NONBLOCK as i32,
+                )
+            };
+            if rc < 0 {
+                log::warn!("failed to set stdin non-blocking: rc={rc}");
             }
             Self
         }
@@ -481,13 +500,23 @@ mod firmware {
                     Ok(()) => {
                         serial.ok("wifi connected");
                         #[cfg(feature = "rest")]
-                        if rest_server.is_none() {
-                            match RestServer::start(REST_PORT, Arc::clone(config), Arc::clone(service)) {
-                                Ok(server) => {
-                                    *rest_server = Some(server);
-                                    serial.ok("rest server started");
+                        {
+                            if rest_server.is_none() {
+                                match RestServer::start(REST_PORT, Arc::clone(config), Arc::clone(service)) {
+                                    Ok(server) => {
+                                        *rest_server = Some(server);
+                                        serial.ok("rest server started");
+                                    }
+                                    Err(err) => {
+                                        serial.fail(rest_error_message(&err).as_str());
+                                        return;
+                                    }
                                 }
-                                Err(err) => serial.fail(rest_error_message(&err).as_str()),
+                            }
+
+                            match manager.advertise_http_service(REST_PORT) {
+                                Ok(()) => serial.ok("mdns bolty.local active"),
+                                Err(err) => serial.fail(wifi_error_message(&err).as_str()),
                             }
                         }
                     }
@@ -724,13 +753,17 @@ mod firmware {
 
     fn workflow_error(message: &str) -> WorkflowResult {
         let mut out = MessageString::new();
-        let _ = out.push_str(message);
+        if out.push_str(message).is_err() {
+            let _ = out.push_str("workflow error");
+        }
         WorkflowResult::Error(out)
     }
 
     fn workflow_error_debug<T: core::fmt::Debug>(error: &T) -> WorkflowResult {
         let mut out = MessageString::new();
-        let _ = write!(out, "{error:?}");
+        if write!(out, "{error:?}").is_err() {
+            let _ = out.push_str("debug formatting overflow");
+        }
         WorkflowResult::Error(out)
     }
 
@@ -794,9 +827,15 @@ mod firmware {
     }
 
     fn millis() -> u64 {
-        unsafe { esp_idf_sys::esp_timer_get_time() as u64 / 1000 }
+        let micros = unsafe { esp_idf_sys::esp_timer_get_time() };
+        if micros <= 0 {
+            0
+        } else {
+            micros as u64 / 1000
+        }
     }
 
+    #[cfg(feature = "led-matrix")]
     fn neopixel_off(pin: esp_idf_hal::gpio::Gpio27) {
         use core::time::Duration;
         use esp_idf_hal::rmt::config::{TxChannelConfig, TransmitConfig};
@@ -817,14 +856,30 @@ mod firmware {
             }
         };
 
-        let t0h = Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(350))
-            .expect("t0h");
-        let t0l = Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(800))
-            .expect("t0l");
-        let t1h = Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(700))
-            .expect("t1h");
-        let t1l = Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(600))
-            .expect("t1l");
+        let Ok(t0h) =
+            Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(350))
+        else {
+            log::warn!("NeoPixel pulse config failed: t0h");
+            return;
+        };
+        let Ok(t0l) =
+            Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(800))
+        else {
+            log::warn!("NeoPixel pulse config failed: t0l");
+            return;
+        };
+        let Ok(t1h) =
+            Pulse::new_with_duration(10.MHz().into(), PinState::High, Duration::from_nanos(700))
+        else {
+            log::warn!("NeoPixel pulse config failed: t1h");
+            return;
+        };
+        let Ok(t1l) =
+            Pulse::new_with_duration(10.MHz().into(), PinState::Low, Duration::from_nanos(600))
+        else {
+            log::warn!("NeoPixel pulse config failed: t1l");
+            return;
+        };
 
         let encoder_config = BytesEncoderConfig {
             bit0: Symbol::new(t0h, t0l),
@@ -833,7 +888,13 @@ mod firmware {
             ..Default::default()
         };
 
-        let encoder = BytesEncoder::with_config(&encoder_config).expect("encoder");
+        let encoder = match BytesEncoder::with_config(&encoder_config) {
+            Ok(encoder) => encoder,
+            Err(e) => {
+                log::warn!("NeoPixel encoder init failed: {e:?}");
+                return;
+            }
+        };
 
         let black: [u8; 75] = [0u8; 75];
         if let Err(e) = tx.send_and_wait(encoder, &black, &TransmitConfig::default()) {

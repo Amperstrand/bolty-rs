@@ -34,10 +34,8 @@ where
     S: RestBoltyService + Send + 'static,
 {
     server: EspHttpServer<'static>,
-    #[allow(dead_code)]
-    config: SharedConfig,
-    #[allow(dead_code)]
-    service: SharedService<S>,
+    _config: SharedConfig,
+    _service: SharedService<S>,
 }
 
 impl<S> RestServer<S>
@@ -114,8 +112,8 @@ where
 
         Ok(Self {
             server,
-            config,
-            service,
+            _config: config,
+            _service: service,
         })
     }
 

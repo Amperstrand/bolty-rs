@@ -6,4 +6,7 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { version = "0.1.0-beta1", features = ["sdm", "key_diversification", "alloc"] }
+ntag424 = { version = "=0.1.0-beta1", features = ["sdm", "key_diversification", "alloc"] }
+
+[profile.release]
+opt-level = "s"

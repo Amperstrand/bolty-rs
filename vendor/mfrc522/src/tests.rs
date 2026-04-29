@@ -57,7 +57,9 @@ mod test_eh02_spi {
         let spi = SpiInterface::new(spi);
 
         assert_eq!(
-            Mfrc522::new(spi).transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa),
+            Mfrc522::new(spi)
+                .init()
+                .and_then(|mut mfrc| mfrc.transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa)),
             Ok(crate::FifoData {
                 buffer: [0x98, 0x76, 0x52, 0x2b],
                 valid_bytes: 4,
@@ -125,7 +127,9 @@ mod test_eh02_i2c {
         let i2c = I2cInterface::new(i2c, 0x2c);
 
         assert_eq!(
-            Mfrc522::new(i2c).transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa),
+            Mfrc522::new(i2c)
+                .init()
+                .and_then(|mut mfrc| mfrc.transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa)),
             Ok(crate::FifoData {
                 buffer: [0x98, 0x76, 0x52, 0x2b],
                 valid_bytes: 4,
@@ -198,6 +202,45 @@ mod test_eh1_spi {
     pub fn test_transceive() {
         let expectations = [
             SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x02, 0x0F].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::transfer_in_place([0x82, 0x00].to_vec(), [0x00, 0x00].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x24, 0x00].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x26, 0x00].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x48, 0x26].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x54, 0x80].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x56, 0xA9].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x58, 0x0F].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x5A, 0xA0].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x2A, 0x40].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x22, 0x3D].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::transfer_in_place([0xA8, 0x00].to_vec(), [0x00, 0x00].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
+            SpiTransaction::write_vec([0x28, 0x03].to_vec()),
+            SpiTransaction::transaction_end(),
+            SpiTransaction::transaction_start(),
             SpiTransaction::write_vec([0x02, 0x00].to_vec()),
             SpiTransaction::transaction_end(),
             SpiTransaction::transaction_start(),
@@ -245,7 +288,9 @@ mod test_eh1_spi {
         let spi = SpiInterface::new(spi);
 
         assert_eq!(
-            Mfrc522::new(spi).transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa),
+            Mfrc522::new(spi)
+                .init()
+                .and_then(|mut mfrc| mfrc.transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa)),
             Ok(crate::FifoData {
                 buffer: [0x98, 0x76, 0x52, 0x2b],
                 valid_bytes: 4,
@@ -297,6 +342,19 @@ mod test_eh1_i2c {
     #[test]
     pub fn test_transceive() {
         let expectations = [
+            I2cTransaction::write(0x2C, [0x01, 0x0F].to_vec()),
+            I2cTransaction::write_read(0x2C, [0x01].to_vec(), [0x00].to_vec()),
+            I2cTransaction::write(0x2C, [0x12, 0x00].to_vec()),
+            I2cTransaction::write(0x2C, [0x13, 0x00].to_vec()),
+            I2cTransaction::write(0x2C, [0x24, 0x26].to_vec()),
+            I2cTransaction::write(0x2C, [0x2A, 0x80].to_vec()),
+            I2cTransaction::write(0x2C, [0x2B, 0xA9].to_vec()),
+            I2cTransaction::write(0x2C, [0x2C, 0x0F].to_vec()),
+            I2cTransaction::write(0x2C, [0x2D, 0xA0].to_vec()),
+            I2cTransaction::write(0x2C, [0x15, 0x40].to_vec()),
+            I2cTransaction::write(0x2C, [0x11, 0x3D].to_vec()),
+            I2cTransaction::write_read(0x2C, [0x14].to_vec(), [0x00].to_vec()),
+            I2cTransaction::write(0x2C, [0x14, 0x03].to_vec()),
             I2cTransaction::write(0x2C, [0x01, 0x00].to_vec()),
             I2cTransaction::write(0x2C, [0x04, 0x7f].to_vec()),
             I2cTransaction::write(0x2C, [0x0A, 0x80].to_vec()),
@@ -319,7 +377,9 @@ mod test_eh1_i2c {
         let i2c = I2cInterface::new(i2c, 0x2c);
 
         assert_eq!(
-            Mfrc522::new(i2c).transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa),
+            Mfrc522::new(i2c)
+                .init()
+                .and_then(|mut mfrc| mfrc.transceive::<4>(&[0xfe, 0xed], 0xf9, 0xfa)),
             Ok(crate::FifoData {
                 buffer: [0x98, 0x76, 0x52, 0x2b],
                 valid_bytes: 4,
