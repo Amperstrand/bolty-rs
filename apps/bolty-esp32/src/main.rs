@@ -55,7 +55,7 @@ compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 #[cfg(target_arch = "xtensa")]
 mod firmware {
     use core::fmt::Write as _;
-    use std::sync::{Arc, Mutex};
+    use std::{sync::{Arc, Mutex}, vec::Vec};
 
     use bolty_core::{
         assessment::{CardAssessment, CardState},
@@ -146,6 +146,28 @@ mod firmware {
     #[cfg(feature = "wifi")]
     let modem = peripherals.modem;
 
+        #[cfg(feature = "display-st7789")]
+        {
+            let result = unsafe {
+                display::init(
+                    peripherals.i2c1,
+                    peripherals.spi2,
+                    peripherals.pins.gpio21,
+                    peripherals.pins.gpio22,
+                    peripherals.pins.gpio13,
+                    peripherals.pins.gpio15,
+                    peripherals.pins.gpio5,
+                    peripherals.pins.gpio23,
+                    peripherals.pins.gpio18,
+                    peripherals.pins.gpio27,
+                    BOARD_NAME,
+                )
+            };
+            if let Err(e) = result {
+                log::error!("Display init failed: {e}");
+            }
+        }
+
         #[cfg(feature = "board-m5atom")]
         let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
         #[cfg(feature = "board-m5stick")]
@@ -153,7 +175,7 @@ mod firmware {
 
         FreeRtos::delay_ms(50);
 
-        let i2c = match I2cDriver::new(
+        let mut i2c = match I2cDriver::new(
             peripherals.i2c0,
             i2c_sda,
             i2c_scl,
@@ -167,45 +189,40 @@ mod firmware {
         };
         log::info!("I2C0 initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
 
-        let xcvr = match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
-            Ok(xcvr) => xcvr,
-            Err(e) => {
-                log::error!("MFRC522 init failed: {e:?}");
-                loop {
-                    FreeRtos::delay_ms(1000);
+        let initial_i2c_scan = scan_i2c_bus(&mut i2c);
+        let mfrc522_seen = initial_i2c_scan.iter().any(|&address| address == DEFAULT_I2C_ADDRESS);
+
+        let (xcvr, raw_i2c, nfc_ready) = if mfrc522_seen {
+            match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
+                Ok(xcvr) => {
+                    log::info!("MFRC522 initialized at 0x{:02X}", DEFAULT_I2C_ADDRESS);
+                    (Some(xcvr), None, true)
+                }
+                Err(e) => {
+                    log::warn!("MFRC522 init failed, continuing without NFC: {e:?}");
+                    (None, None, false)
                 }
             }
+        } else {
+            log::warn!(
+                "MFRC522 not detected at 0x{:02X}; continuing without NFC",
+                DEFAULT_I2C_ADDRESS
+            );
+            (None, Some(i2c), false)
         };
-        log::info!("MFRC522 initialized at 0x{:02X}", DEFAULT_I2C_ADDRESS);
-
-        #[cfg(feature = "display-st7789")]
-        {
-            let result = unsafe {
-                display::init(
-                    peripherals.i2c1,
-                    peripherals.spi2,
-                    peripherals.pins.gpio21,
-                    peripherals.pins.gpio22,
-                    peripherals.pins.gpio13,
-                    peripherals.pins.gpio15,
-                    peripherals.pins.gpio23,
-                    peripherals.pins.gpio18,
-                    peripherals.pins.gpio27,
-                    BOARD_NAME,
-                )
-            };
-            if let Err(e) = result {
-                log::error!("Display init failed: {e}");
-            }
-        }
 
         let mut serial = SerialConsole::new();
         let initial_config = BoltyConfig::default();
         let config = Arc::new(Mutex::new(initial_config.clone()));
-        let service = Arc::new(Mutex::new(Esp32BoltyService::new(xcvr, initial_config)));
+        let service = Arc::new(Mutex::new(Esp32BoltyService::new(
+            xcvr,
+            raw_i2c,
+            initial_i2c_scan,
+            initial_config,
+        )));
 
         #[cfg(feature = "display-st7789")]
-        display::set_nfc_ready(true);
+        display::set_nfc_ready(nfc_ready);
         #[cfg(feature = "wifi")]
         let mut wifi_manager = match WifiManager::new(modem) {
             Ok(manager) => Some(manager),
@@ -270,7 +287,9 @@ mod firmware {
     where
         I2C: embedded_hal::i2c::I2c,
     {
-        transceiver: Mfrc522Transceiver<I2C>,
+        transceiver: Option<Mfrc522Transceiver<I2C>>,
+        raw_i2c: Option<I2C>,
+        last_i2c_scan: Vec<u8>,
         current_config: BoltyConfig,
         keys: Option<CardKeys>,
         authenticated_key0: Option<[u8; 16]>,
@@ -283,16 +302,24 @@ mod firmware {
         I2C: embedded_hal::i2c::I2c,
         I2C::Error: core::fmt::Debug,
     {
-        fn new(transceiver: Mfrc522Transceiver<I2C>, current_config: BoltyConfig) -> Self {
+        fn new(
+            transceiver: Option<Mfrc522Transceiver<I2C>>,
+            raw_i2c: Option<I2C>,
+            last_i2c_scan: Vec<u8>,
+            current_config: BoltyConfig,
+        ) -> Self {
+            let nfc_ready = transceiver.is_some();
             let mut service = Self {
                 transceiver,
+                raw_i2c,
+                last_i2c_scan,
                 current_config,
                 keys: None,
                 authenticated_key0: None,
                 last_card: CardAssessment::default(),
                 status: ServiceStatus {
                     last_uid: None,
-                    nfc_ready: true,
+                    nfc_ready,
                     lnurl: None,
                 },
             };
@@ -307,13 +334,31 @@ mod firmware {
 
         fn sync_config(&mut self) {
             self.status.lnurl = self.current_config.lnurl.clone();
+            self.status.nfc_ready = self.transceiver.is_some();
             if self.keys.is_none() {
                 self.keys = self.current_config.pending_keys.clone();
             }
         }
 
+        fn nfc_available(&self) -> bool {
+            self.transceiver.is_some()
+        }
+
+        fn i2c_scan(&mut self) -> Vec<u8> {
+            if let Some(i2c) = self.raw_i2c.as_mut() {
+                self.last_i2c_scan = scan_i2c_bus(i2c);
+            }
+            self.last_i2c_scan.clone()
+        }
+
         fn activate_transport(&mut self) -> Result<Mfrc522Transport<'_, I2C>, WorkflowResult> {
-            Mfrc522Transport::activate(&mut self.transceiver).map_err(|_| {
+            let Some(transceiver) = self.transceiver.as_mut() else {
+                self.status.nfc_ready = false;
+                self.last_card = CardAssessment::default();
+                return Err(nfc_unavailable_result());
+            };
+
+            Mfrc522Transport::activate(transceiver).map_err(|_| {
                 self.status.nfc_ready = true;
                 self.last_card = CardAssessment::default();
                 WorkflowResult::CardNotPresent
@@ -513,16 +558,18 @@ mod firmware {
         }
 
         fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult {
-            let Some(keys) = expected_keys else {
-                return WorkflowResult::WipeRefused;
-            };
+             let Some(keys) = expected_keys else {
+                 return WorkflowResult::WipeRefused;
+             };
 
-            let mut transport = match self.activate_transport() {
-                Ok(transport) => transport,
-                Err(err) => return err,
-            };
+             log::info!("wipe: k0={:02X?}", keys.k0.as_bytes());
 
-            match block_on(bolty_ntag::wipe(&mut transport, &card_keys_to_keyset(keys), RND_A)) {
+             let mut transport = match self.activate_transport() {
+                 Ok(transport) => transport,
+                 Err(err) => return err,
+             };
+
+             match block_on(bolty_ntag::wipe(&mut transport, &card_keys_to_keyset(keys), RND_A)) {
                 Ok(result) => {
                     self.status.last_uid = Some(result.uid);
                     self.status.nfc_ready = true;
@@ -670,7 +717,9 @@ mod firmware {
         let command = match parse_command(line) {
             Ok(command) => command,
             Err(err) => {
-                serial.fail(command_error_message(err));
+                let message = command_error_message(err);
+                serial.fail(message);
+                set_display_fail(command_name_from_line(line), message);
                 return;
             }
         };
@@ -680,11 +729,13 @@ mod firmware {
             Command::SetWifi { ssid, password } => {
                 let Some(manager) = wifi_manager.as_mut() else {
                     serial.fail("wifi unavailable");
+                    set_display_fail("wifi", "wifi unavailable");
                     return;
                 };
                 match manager.connect(ssid, password) {
                     Ok(()) => {
                         serial.ok("wifi connected");
+                        set_display_ok("wifi", "wifi connected");
                         #[cfg(feature = "display-st7789")]
                         if let Some(ip) = wifi_ip_string() {
                             display::set_wifi(ip.as_str());
@@ -696,27 +747,42 @@ mod firmware {
                                     Ok(server) => {
                                         *rest_server = Some(server);
                                         serial.ok("rest server started");
+                                        set_display_ok("wifi", "rest server started");
                                     }
                                     Err(err) => {
-                                        serial.fail(rest_error_message(&err).as_str());
+                                        let message = rest_error_message(&err);
+                                        serial.fail(message.as_str());
+                                        set_display_fail("wifi", message.as_str());
                                         return;
                                     }
                                 }
                             }
 
                             match manager.advertise_http_service(REST_PORT) {
-                                Ok(()) => serial.ok("mdns bolty.local active"),
-                                Err(err) => serial.fail(wifi_error_message(&err).as_str()),
+                                Ok(()) => {
+                                    serial.ok("mdns bolty.local active");
+                                    set_display_ok("wifi", "mdns bolty.local active");
+                                }
+                                Err(err) => {
+                                    let message = wifi_error_message(&err);
+                                    serial.fail(message.as_str());
+                                    set_display_fail("wifi", message.as_str());
+                                }
                             }
                         }
                     }
-                    Err(err) => serial.fail(wifi_error_message(&err).as_str()),
+                    Err(err) => {
+                        let message = wifi_error_message(&err);
+                        serial.fail(message.as_str());
+                        set_display_fail("wifi", message.as_str());
+                    }
                 }
                 return;
             }
             Command::WifiOff => {
                 let Some(manager) = wifi_manager.as_mut() else {
                     serial.fail("wifi unavailable");
+                    set_display_fail("wifi off", "wifi unavailable");
                     return;
                 };
                 match manager.disconnect() {
@@ -728,8 +794,13 @@ mod firmware {
                         #[cfg(feature = "display-st7789")]
                         display::clear_wifi();
                         serial.ok("wifi disconnected");
+                        set_display_ok("wifi off", "wifi disconnected");
                     }
-                    Err(err) => serial.fail(wifi_error_message(&err).as_str()),
+                    Err(err) => {
+                        let message = wifi_error_message(&err);
+                        serial.fail(message.as_str());
+                        set_display_fail("wifi off", message.as_str());
+                    }
                 }
                 return;
             }
@@ -738,12 +809,14 @@ mod firmware {
                 match OtaUpdater::update(url.as_str()) {
                     Ok(()) => {
                         serial.ok("rebooting");
+                        set_display_ok("ota", "rebooting");
                         restart();
                     }
                     Err(err) => {
                         let mut message = String::<128>::new();
                         let _ = write!(message, "{err}");
                         serial.fail(message.as_str());
+                        set_display_fail("ota", message.as_str());
                     }
                 }
                 return;
@@ -754,6 +827,7 @@ mod firmware {
         #[cfg(all(feature = "wifi", not(feature = "ota")))]
         if matches!(&command, Command::Ota { .. }) {
             serial.fail("ota feature disabled");
+            set_display_fail("ota", "ota feature disabled");
             return;
         }
 
@@ -761,6 +835,7 @@ mod firmware {
         if matches!(&command, Command::SetWifi { .. } | Command::WifiOff | Command::Ota { .. }) {
             let _ = wifi_manager;
             serial.fail("wifi feature disabled");
+            set_display_fail(command_name(&command), "wifi feature disabled");
             return;
         }
 
@@ -781,6 +856,10 @@ mod firmware {
         };
 
         match &command {
+            Command::I2cScan => {
+                print_i2c_scan(serial, &mut service);
+                return;
+            }
             Command::Picc => {
                 print_picc(serial, &mut service);
                 return;
@@ -799,6 +878,7 @@ mod firmware {
             Command::Help => {
                 print_help(serial);
                 serial.ok("help");
+                set_display_ok("help", "help");
             }
             Command::Status => print_status(serial, &service),
             Command::Uid => print_uid(serial, &service),
@@ -832,11 +912,33 @@ mod firmware {
     }
 
     fn print_help(serial: &mut SerialConsole) {
-        serial.line("Commands: help status uid keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
+        serial.line("Commands: help status uid i2cscan keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
         #[cfg(feature = "wifi")]
         serial.line("WiFi: wifi <ssid> <password> | wifi off");
         #[cfg(feature = "ota")]
         serial.line("OTA: ota <url>");
+    }
+
+    fn print_i2c_scan<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)
+    where
+        I2C: embedded_hal::i2c::I2c,
+        I2C::Error: core::fmt::Debug,
+    {
+        let found = service.i2c_scan();
+        let mut line = String::<MAX_LINE_LEN>::new();
+        let _ = line.push_str("i2cscan: found ");
+        if found.is_empty() {
+            let _ = line.push_str("none");
+        } else {
+            for (index, address) in found.iter().enumerate() {
+                if index > 0 {
+                    let _ = line.push_str(", ");
+                }
+                let _ = write!(line, "0x{address:02X}");
+            }
+        }
+        serial.ok(line.as_str());
+        set_display_ok("i2cscan", line.as_str());
     }
 
     fn print_picc<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)
@@ -889,8 +991,12 @@ mod firmware {
                 );
                 serial.line(line.as_str());
                 serial.ok("picc complete");
+                set_display_ok("picc", "picc complete");
             }
-            Err(err) => print_workflow_result(serial, err),
+            Err(err) => {
+                set_display_workflow_result("picc", &err);
+                print_workflow_result(serial, err);
+            }
         }
     }
 
@@ -937,8 +1043,12 @@ mod firmware {
                 let _ = write!(state_line, "classification={}", diagnose_state_label(result.state));
                 serial.line(state_line.as_str());
                 serial.ok("diagnose complete");
+                set_display_ok("diagnose", "diagnose complete");
             }
-            Err(err) => print_workflow_result(serial, err),
+            Err(err) => {
+                set_display_workflow_result("diagnose", &err);
+                print_workflow_result(serial, err);
+            }
         }
     }
 
@@ -975,6 +1085,7 @@ mod firmware {
             status.lnurl.as_ref().map(LnurlString::as_str).unwrap_or("none")
         );
         serial.ok(line.as_str());
+        set_display_ok("status", line.as_str());
     }
 
     fn print_uid<I2C>(serial: &mut SerialConsole, service: &Esp32BoltyService<I2C>)
@@ -985,8 +1096,10 @@ mod firmware {
             let mut uid = String::<32>::new();
             let _ = push_uid_hex(&mut uid, &last_uid);
             serial.ok(uid.as_str());
+            set_display_ok("uid", uid.as_str());
         } else {
             serial.fail("no uid");
+            set_display_fail("uid", "no uid");
         }
     }
 
@@ -1001,8 +1114,12 @@ mod firmware {
             WorkflowResult::Success => {
                 serial.card(&service.last_card);
                 serial.ok("inspect complete");
+                set_display_ok("inspect", "inspect complete");
             }
-            other => print_workflow_result(serial, other),
+            other => {
+                set_display_workflow_result("inspect", &other);
+                print_workflow_result(serial, other);
+            }
         }
     }
 
@@ -1018,13 +1135,32 @@ mod firmware {
             (Command::Check, WorkflowResult::Success) => {
                 serial.card(&service.last_card);
                 serial.ok("card is blank");
+                set_display_ok(command_name(command), "card is blank");
             }
-            (Command::SetKeys(_), WorkflowResult::Success) => serial.ok("keys staged"),
-            (Command::SetIssuer(_), WorkflowResult::Success) => serial.ok("issuer staged"),
-            (Command::SetUrl(_), WorkflowResult::Success) => serial.ok("lnurl staged"),
-            (Command::Burn, WorkflowResult::Success) => serial.ok("burn complete"),
-            (Command::Wipe, WorkflowResult::Success) => serial.ok("wipe complete"),
-            (_, other) => print_workflow_result(serial, other),
+            (Command::SetKeys(_), WorkflowResult::Success) => {
+                serial.ok("keys staged");
+                set_display_ok(command_name(command), "keys staged");
+            }
+            (Command::SetIssuer(_), WorkflowResult::Success) => {
+                serial.ok("issuer staged");
+                set_display_ok(command_name(command), "issuer staged");
+            }
+            (Command::SetUrl(_), WorkflowResult::Success) => {
+                serial.ok("lnurl staged");
+                set_display_ok(command_name(command), "lnurl staged");
+            }
+            (Command::Burn, WorkflowResult::Success) => {
+                serial.ok("burn complete");
+                set_display_ok(command_name(command), "burn complete");
+            }
+            (Command::Wipe, WorkflowResult::Success) => {
+                serial.ok("wipe complete");
+                set_display_ok(command_name(command), "wipe complete");
+            }
+            (_, other) => {
+                set_display_workflow_result(command_name(command), &other);
+                print_workflow_result(serial, other);
+            }
         }
     }
 
@@ -1055,6 +1191,13 @@ mod firmware {
             Ok(service) => service,
             Err(_) => return,
         };
+
+        if !service.nfc_available() {
+            *card_announced = false;
+            #[cfg(feature = "display-st7789")]
+            display::clear_card();
+            return;
+        }
 
         match service.check_blank() {
             WorkflowResult::CardNotPresent => {
@@ -1133,12 +1276,79 @@ mod firmware {
         }
     }
 
+    fn command_name(command: &Command) -> &'static str {
+        match command {
+            Command::Help => "help",
+            Command::Status => "status",
+            Command::Uid => "uid",
+            Command::I2cScan => "i2cscan",
+            Command::SetKeys(_) => "keys",
+            Command::SetIssuer(_) | Command::Issuer => "issuer",
+            Command::SetUrl(_) => "url",
+            Command::Burn => "burn",
+            Command::Wipe => "wipe",
+            Command::Ndef => "ndef",
+            Command::Auth => "auth",
+            Command::Ver => "ver",
+            Command::KeyVer => "keyver",
+            Command::Inspect => "inspect",
+            Command::Picc => "picc",
+            Command::Diagnose => "diagnose",
+            Command::Check => "check",
+            Command::DummyBurn => "dummyburn",
+            Command::Reset => "reset",
+            Command::DeriveKeys => "derivekeys",
+            Command::SetWifi { .. } => "wifi",
+            Command::WifiOff => "wifi off",
+            Command::Ota { .. } => "ota",
+        }
+    }
+
+    fn command_name_from_line(line: &str) -> &str {
+        line.split_whitespace().next().unwrap_or("command")
+    }
+
+    fn set_display_ok(cmd_name: &str, message: &str) {
+        set_display_result(cmd_name, "OK", message);
+    }
+
+    fn set_display_fail(cmd_name: &str, message: &str) {
+        set_display_result(cmd_name, "FAIL", message);
+    }
+
+    fn set_display_result(cmd_name: &str, status: &str, message: &str) {
+        #[cfg(feature = "display-st7789")]
+        {
+            let mut result = String::<64>::new();
+            let _ = write!(result, "{status}: {message}");
+            display::set_command_result(cmd_name, result.as_str());
+        }
+
+        #[cfg(not(feature = "display-st7789"))]
+        let _ = (cmd_name, status, message);
+    }
+
+    fn set_display_workflow_result(cmd_name: &str, result: &WorkflowResult) {
+        match result {
+            WorkflowResult::Success => set_display_ok(cmd_name, "success"),
+            WorkflowResult::CardNotPresent => set_display_fail(cmd_name, "card not present"),
+            WorkflowResult::AuthFailed => set_display_fail(cmd_name, "authentication failed"),
+            WorkflowResult::AuthDelay => set_display_fail(cmd_name, "auth delay"),
+            WorkflowResult::WipeRefused => set_display_fail(cmd_name, "wipe refused"),
+            WorkflowResult::Error(message) => set_display_fail(cmd_name, message.as_str()),
+        }
+    }
+
     fn workflow_error(message: &str) -> WorkflowResult {
         let mut out = MessageString::new();
         if out.push_str(message).is_err() {
             let _ = out.push_str("workflow error");
         }
         WorkflowResult::Error(out)
+    }
+
+    fn nfc_unavailable_result() -> WorkflowResult {
+        workflow_error("nfc unavailable")
     }
 
     fn workflow_error_debug<T: core::fmt::Debug>(error: &T) -> WorkflowResult {
@@ -1155,9 +1365,10 @@ mod firmware {
     {
         match error {
             err if bolty_ntag::is_authentication_delay(err) => WorkflowResult::AuthDelay,
-            bolty_ntag::Error::Session(ntag424::SessionError::ErrorResponse(_)) => {
-                WorkflowResult::AuthFailed
-            }
+             bolty_ntag::Error::Session(ntag424::SessionError::ErrorResponse(status)) => {
+                 log::warn!("ntag424 auth error: {:?}", status);
+                 WorkflowResult::AuthFailed
+             }
             _ => workflow_error_debug(error),
         }
     }
@@ -1268,6 +1479,19 @@ mod firmware {
         } else {
             micros as u64 / 1000
         }
+    }
+
+    fn scan_i2c_bus<I2C>(i2c: &mut I2C) -> Vec<u8>
+    where
+        I2C: embedded_hal::i2c::I2c,
+    {
+        let mut found = Vec::new();
+        for address in 0x03..=0x77 {
+            if i2c.write(address, &[0x00]).is_ok() {
+                found.push(address);
+            }
+        }
+        found
     }
 
     #[cfg(feature = "led-matrix")]

@@ -6,7 +6,7 @@ description = "MFRC522 NFC transport for ntag424"
 
 [dependencies]
 ntag424 = { workspace = true }
-mfrc522 = { path = "../../vendor/mfrc522" }
-iso14443 = { path = "../../vendor/iso14443", features = ["alloc"] }
+mfrc522 = { workspace = true }
+iso14443 = { workspace = true }
 embedded-hal = "=1.0.0"
 log = "=0.4.29"

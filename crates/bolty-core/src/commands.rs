@@ -7,6 +7,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
+    I2cScan,
     Uid,
     Status,
     SetKeys(CardKeys),
@@ -55,6 +56,10 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     if command.eq_ignore_ascii_case("help") {
         expect_no_args(parts)?;
         return Ok(Command::Help);
+    }
+    if command.eq_ignore_ascii_case("i2cscan") {
+        expect_no_args(parts)?;
+        return Ok(Command::I2cScan);
     }
     if command.eq_ignore_ascii_case("uid") {
         expect_no_args(parts)?;
@@ -268,6 +273,7 @@ mod tests {
     #[test]
     fn parses_simple_commands_case_insensitively() {
         assert_eq!(parse_command("  HeLp  "), Ok(Command::Help));
+        assert_eq!(parse_command("I2CSCAN"), Ok(Command::I2cScan));
         assert_eq!(parse_command("STATUS"), Ok(Command::Status));
         assert_eq!(parse_command("derivekeys"), Ok(Command::DeriveKeys));
     }

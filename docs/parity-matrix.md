@@ -4,6 +4,14 @@ Living acceptance matrix extracted from the C++ firmware headers named in task 4
 
 Wave 1–5 status: T1–T21 complete as of Wave 5.
 
+## Hardware-Proven Features (tested on M5Atom + NTAG 424 DNA)
+
+The following features have been verified end-to-end on real hardware with card UID `041065FA967380`:
+- Full burn → inspect → wipe → check cycle
+- NTAG424 AES authentication (patched `LenCap=0x03` in ntag424 crate)
+- MFRC522 I2C transport at 400kHz
+- Card-on-reader workflow (no lift/retap needed)
+
 | C++ Feature | C++ File | Rust Target Crate | Rust Module | Status |
 |---|---|---|---|---|
 | Deterministic card key derivation (`CardKey = CMAC(issuer, 2D003F75 || uid || version_le)`) | KeyDerivation.h | bolty-core | derivation | ✅ DONE |
@@ -60,20 +68,20 @@ Wave 1–5 status: T1–T21 complete as of Wave 5.
 | `BoltcardKeys` parsing and LNbits fallback (`K3←K1`, `K4←K2`) | bolt.h | bolty-core | keyset | ✅ DONE |
 | Reader selection helpers (`selectNtagApplicationFiles`, `selectNdefFileOnly`) | bolt.h | bolty-ntag | lib | ✅ DONE |
 | NTAG424 scan-and-validate guard | bolt.h | bolty-ntag | lib | ✅ DONE |
-| K0 authentication helper with card-presence diagnostics | bolt.h | bolty-ntag | lib | ✅ DONE |
+| K0 authentication helper with card-presence diagnostics | bolt.h | bolty-ntag | lib | ✅ DONE — HW PROVEN |
 | `changeAllKeys` reverse-order semantics (`4→0`, abort on first failure) | bolt.h | bolty-ntag | key_mgmt | ✅ DONE |
 | Reader init / reinit logic | bolt.h | bolty-embedded | nfc | ✅ DONE |
-| Burn workflow | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE |
+| Burn workflow | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE — HW PROVEN |
 | Burn guard: key 1 must still be factory | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE |
-| NDEF construction with SDM placeholders | bolt.h | bolty-core + bolty-ntag | ndef | ✅ DONE |
+| NDEF construction with SDM placeholders | bolt.h | bolty-core + bolty-ntag | ndef | ✅ DONE — HW PROVEN |
 | SDM file-settings programming | bolt.h | bolty-core + bolty-ntag | ndef | ✅ DONE |
 | Burn post-write verification (new K0 auth + NDEF read) | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE |
 | Wipe preflight key verification | bolt.h | bolty-core + bolty-ntag | key_mgmt | ✅ DONE |
 | `verify_all_keys` probing (`K3=K1`, `K4=K2`, zero fallback) | bolt.h | bolty-core + bolty-ntag | key_mgmt | ✅ DONE |
-| Wipe workflow + safety gate | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE |
+| Wipe workflow + safety gate | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE — HW PROVEN |
 | Reset-NDEF-only workflow + safety gate | bolt.h | bolty-core + bolty-ntag | orchestration | ✅ DONE |
-| NTAG424 transport (MFRC522) | (Rust PoC) | bolty-mfrc522 | lib | ✅ DONE |
-| NTAG424 card ops (burn/wipe/check) | (Rust PoC) | bolty-ntag | lib | ✅ DONE |
+| NTAG424 transport (MFRC522) | (Rust PoC) | bolty-mfrc522 | lib | ✅ DONE — HW PROVEN |
+| NTAG424 card ops (burn/wipe/check) | (Rust PoC) | bolty-ntag | lib | ✅ DONE — HW PROVEN |
 | REST auth split (read token vs write token) | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST JSON helpers / request body handling | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST card wait loop | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |

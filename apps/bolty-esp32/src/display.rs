@@ -17,7 +17,7 @@ use esp_idf_hal::{
     units::FromValueType,
 };
 use log::{info, warn};
-use mipidsi::{models::ST7789, options::ColorInversion, Builder, NoResetPin};
+use mipidsi::{models::ST7789, options::ColorInversion, Builder};
 
 const LCD_H_RES: u16 = 135;
 const LCD_V_RES: u16 = 240;
@@ -33,7 +33,7 @@ type LcdDisplay = mipidsi::Display<
         PinDriver<'static, Output>,
     >,
     ST7789,
-    NoResetPin,
+    PinDriver<'static, Output>,
 >;
 
 struct Screen {
@@ -49,6 +49,8 @@ struct ScreenState {
     card_state: &'static str,
     wifi_ip: heapless::String<16>,
     event: heapless::String<EVENT_LEN>,
+    last_cmd: heapless::String<EVENT_LEN>,
+    last_result: heapless::String<EVENT_LEN>,
 }
 
 impl ScreenState {
@@ -60,6 +62,8 @@ impl ScreenState {
             card_state: "none",
             wifi_ip: heapless::String::new(),
             event: heapless::String::new(),
+            last_cmd: heapless::String::new(),
+            last_result: heapless::String::new(),
         }
     }
 }
@@ -98,6 +102,14 @@ fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
     axp192_write_reg(i2c, 0x91, 0xF0, "RTC 3.3V")?;
     axp192_write_reg(i2c, 0x90, 0x02, "GPIO0 LDO mode")?;
 
+    let mut grove_reg = [0u8; 1];
+    i2c.write_read(AXP192_ADDRESS, &[0x10], &mut grove_reg, BLOCK).map_err(|e| {
+        warn!("AXP192 read reg 0x10 failed: {e:?}");
+        "axp192 grove read failed"
+    })?;
+    let grove_val = grove_reg[0] | (1 << 2);
+    axp192_write_reg(i2c, 0x10, grove_val, "Grove 5V boost enable")?;
+
     let mut verify = [0u8; 1];
     i2c.write_read(AXP192_ADDRESS, &[0x12], &mut verify, BLOCK).map_err(|e| {
         warn!("AXP192 verify read failed: {e:?}");
@@ -120,6 +132,7 @@ pub unsafe fn init(
     pin_scl: Gpio22<'static>,
     pin_sclk: Gpio13<'static>,
     pin_mosi: Gpio15<'static>,
+    pin_cs: Gpio5<'static>,
     pin_dc: Gpio23<'static>,
     pin_rst: Gpio18<'static>,
     pin_bl: Gpio27<'static>,
@@ -133,38 +146,31 @@ pub unsafe fn init(
     FreeRtos::delay_ms(200);
     drop(axp);
 
-    info!("Display init: configuring SPI2 (10MHz, Mode0)...");
+    info!("Display init: configuring SPI2 (20MHz, Mode0)...");
     let spi_driver = SpiDriver::new(spi2, pin_sclk, pin_mosi, None::<Gpio12>, &DriverConfig::new())
         .map_err(|e| { log::error!("SPI2 driver failed: {e:?}"); "spi2 driver failed" })?;
 
     let spi_device = SpiDeviceDriver::new(
         spi_driver,
-        None::<Gpio5>,
-        &Config::new().baudrate(10.MHz().into()),
+        Some(pin_cs),
+        &Config::new().baudrate(20.MHz().into()),
     )
     .map_err(|e| { log::error!("SPI2 device failed: {e:?}"); "spi2 device failed" })?;
 
     let dc = PinDriver::output(pin_dc)
         .map_err(|e| { log::error!("DC pin failed: {e:?}"); "dc pin failed" })?;
-    let mut rst = PinDriver::output(pin_rst)
+    let rst = PinDriver::output(pin_rst)
         .map_err(|e| { log::error!("RST pin failed: {e:?}"); "rst pin failed" })?;
     let mut backlight = PinDriver::output(pin_bl)
         .map_err(|e| { log::error!("BL pin failed: {e:?}"); "bl pin failed" })?;
-
-    info!("Display init: manual HW reset of ST7789...");
-    rst.set_high().map_err(|e| { log::error!("RST high failed: {e:?}"); "rst failed" })?;
-    FreeRtos::delay_ms(10);
-    rst.set_low().map_err(|e| { log::error!("RST low failed: {e:?}"); "rst failed" })?;
-    FreeRtos::delay_ms(20);
-    rst.set_high().map_err(|e| { log::error!("RST high failed: {e:?}"); "rst failed" })?;
-    FreeRtos::delay_ms(150);
-    info!("Display init: HW reset complete, calling mipidsi init...");
 
     let buffer: &'static mut [u8; SPI_BUFFER_SIZE] = unsafe { &mut *core::ptr::addr_of_mut!(SPI_BUFFER) };
     let di = mipidsi::interface::SpiInterface::new(spi_device, dc, buffer);
     let mut delay = FreeRtos;
 
+    info!("Display init: calling mipidsi init (with HW reset via RST pin)...");
     let mut display = Builder::new(ST7789, di)
+        .reset_pin(rst)
         .display_size(LCD_H_RES, LCD_V_RES)
         .display_offset(DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y)
         .invert_colors(ColorInversion::Inverted)
@@ -209,9 +215,12 @@ fn redraw(screen: &mut Screen) {
     let gray = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::CSS_GRAY).build();
     let yellow = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::YELLOW).build();
     let red = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::RED).build();
+    let cyan = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::CYAN).build();
+    let white = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::WHITE).build();
 
     let lh = 12i32;
     let x = 2i32;
+    let max = (LCD_H_RES as usize) / 6;
 
     let mut l1 = heapless::String::<32>::new();
     let _ = write!(l1, "{} NFC:{}", state.board, if state.nfc_ready { "OK" } else { "--" });
@@ -245,9 +254,31 @@ fn redraw(screen: &mut Screen) {
     }
 
     if !state.event.is_empty() {
-        let max = (LCD_H_RES as usize) / 6;
         let txt = if state.event.len() > max { &state.event[..max] } else { state.event.as_str() };
         let _ = Text::with_baseline(txt, Point::new(x, 5 * lh), green, Baseline::Top).draw(display);
+    }
+
+    if !state.last_cmd.is_empty() {
+        let mut l6 = heapless::String::<24>::new();
+        let _ = write!(l6, "> {}", state.last_cmd);
+        let txt = if l6.len() > max { &l6[..max] } else { l6.as_str() };
+        let _ = Text::with_baseline(txt, Point::new(x, 6 * lh), cyan, Baseline::Top).draw(display);
+    }
+
+    if !state.last_result.is_empty() {
+        let txt = if state.last_result.len() > max {
+            &state.last_result[..max]
+        } else {
+            state.last_result.as_str()
+        };
+        let style = if state.last_result.starts_with("OK") {
+            green
+        } else if state.last_result.starts_with("FAIL") {
+            red
+        } else {
+            white
+        };
+        let _ = Text::with_baseline(txt, Point::new(x, 7 * lh), style, Baseline::Top).draw(display);
     }
 
     let mut footer = heapless::String::<24>::new();
@@ -295,6 +326,26 @@ pub fn set_event(event: &str) {
     with_screen(|s| {
         s.state.event.clear();
         let _ = s.state.event.push_str(event);
+        redraw(s);
+    });
+}
+
+pub fn set_command_result(cmd: &str, result: &str) {
+    with_screen(|s| {
+        s.state.last_cmd.clear();
+        for ch in cmd.chars() {
+            if s.state.last_cmd.push(ch).is_err() {
+                break;
+            }
+        }
+
+        s.state.last_result.clear();
+        for ch in result.chars() {
+            if s.state.last_result.push(ch).is_err() {
+                break;
+            }
+        }
+
         redraw(s);
     });
 }

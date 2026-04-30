@@ -6,7 +6,9 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { version = "=0.1.0-beta1", features = ["sdm", "key_diversification", "alloc"] }
+ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "17846aaf696908ae21b3309595d5bcc73e817422", features = ["sdm", "key_diversification", "alloc"] }
+mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "84f4f29bc56328676c7471f398204852ac1cc6cc" }
+iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "d8f891e87246cdba25258b149618c6df1f470542", features = ["alloc"] }
 
 [profile.release]
 opt-level = "s"

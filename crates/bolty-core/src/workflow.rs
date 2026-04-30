@@ -11,6 +11,7 @@ pub fn dispatch_command<S: BoltyService>(
 ) -> WorkflowResult {
     match cmd {
         Command::Help
+        | Command::I2cScan
         | Command::Status
         | Command::Uid
         | Command::SetWifi { .. }
@@ -215,6 +216,7 @@ mod tests {
 
         for command in [
             Command::Help,
+            Command::I2cScan,
             Command::Status,
             Command::Uid,
             Command::SetWifi {
