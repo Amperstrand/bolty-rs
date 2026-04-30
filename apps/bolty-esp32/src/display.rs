@@ -4,6 +4,7 @@ use embedded_graphics::{
     mono_font::{ascii::FONT_6X10, MonoTextStyleBuilder},
     pixelcolor::Rgb565,
     prelude::*,
+    primitives::Rectangle,
     text::{Baseline, Text},
 };
 use esp_idf_hal::{
@@ -39,6 +40,7 @@ type LcdDisplay = mipidsi::Display<
 struct Screen {
     display: LcdDisplay,
     state: ScreenState,
+    dirty: bool,
 }
 
 #[derive(Clone)]
@@ -193,6 +195,7 @@ pub unsafe fn init(
     *SCREEN.lock().unwrap() = Some(Screen {
         display,
         state: ScreenState::new(board),
+        dirty: true,
     });
 
     Ok(())
@@ -202,14 +205,23 @@ fn with_screen<F: FnOnce(&mut Screen)>(f: F) {
     if let Ok(mut guard) = SCREEN.lock() {
         if let Some(screen) = guard.as_mut() {
             f(screen);
+            if screen.dirty {
+                screen.dirty = false;
+                redraw(screen);
+            }
         }
     }
+}
+
+fn clear_line(display: &mut LcdDisplay, y: i32) {
+    let _ = Rectangle::new(Point::new(0, y), Size::new(LCD_H_RES as u32, 12))
+        .into_styled(embedded_graphics::primitives::PrimitiveStyleBuilder::new().fill_color(Rgb565::BLACK).build())
+        .draw(display);
 }
 
 fn redraw(screen: &mut Screen) {
     let state = &screen.state;
     let display = &mut screen.display;
-    let _ = display.clear(Rgb565::BLACK);
 
     let green = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::GREEN).build();
     let gray = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::CSS_GRAY).build();
@@ -222,10 +234,12 @@ fn redraw(screen: &mut Screen) {
     let x = 2i32;
     let max = (LCD_H_RES as usize) / 6;
 
+    clear_line(display, lh);
     let mut l1 = heapless::String::<32>::new();
     let _ = write!(l1, "{} NFC:{}", state.board, if state.nfc_ready { "OK" } else { "--" });
     let _ = Text::with_baseline(&l1, Point::new(x, lh), green, Baseline::Top).draw(display);
 
+    clear_line(display, 2 * lh);
     let mut l2 = heapless::String::<32>::new();
     if state.card_uid.is_empty() {
         let _ = write!(l2, "UID: ---");
@@ -235,6 +249,7 @@ fn redraw(screen: &mut Screen) {
         let _ = Text::with_baseline(&l2, Point::new(x, 2 * lh), yellow, Baseline::Top).draw(display);
     }
 
+    clear_line(display, 3 * lh);
     let mut l3 = heapless::String::<24>::new();
     let _ = write!(l3, "State: {}", state.card_state);
     let s3 = match state.card_state {
@@ -244,6 +259,7 @@ fn redraw(screen: &mut Screen) {
     };
     let _ = Text::with_baseline(&l3, Point::new(x, 3 * lh), s3, Baseline::Top).draw(display);
 
+    clear_line(display, 4 * lh);
     let mut l4 = heapless::String::<32>::new();
     if state.wifi_ip.is_empty() {
         let _ = write!(l4, "WiFi: ---");
@@ -253,11 +269,13 @@ fn redraw(screen: &mut Screen) {
         let _ = Text::with_baseline(&l4, Point::new(x, 4 * lh), yellow, Baseline::Top).draw(display);
     }
 
+    clear_line(display, 5 * lh);
     if !state.event.is_empty() {
         let txt = if state.event.len() > max { &state.event[..max] } else { state.event.as_str() };
         let _ = Text::with_baseline(txt, Point::new(x, 5 * lh), green, Baseline::Top).draw(display);
     }
 
+    clear_line(display, 6 * lh);
     if !state.last_cmd.is_empty() {
         let mut l6 = heapless::String::<24>::new();
         let _ = write!(l6, "> {}", state.last_cmd);
@@ -265,6 +283,7 @@ fn redraw(screen: &mut Screen) {
         let _ = Text::with_baseline(txt, Point::new(x, 6 * lh), cyan, Baseline::Top).draw(display);
     }
 
+    clear_line(display, 7 * lh);
     if !state.last_result.is_empty() {
         let txt = if state.last_result.len() > max {
             &state.last_result[..max]
@@ -281,13 +300,14 @@ fn redraw(screen: &mut Screen) {
         let _ = Text::with_baseline(txt, Point::new(x, 7 * lh), style, Baseline::Top).draw(display);
     }
 
+    clear_line(display, (LCD_V_RES as i32) - lh - 2);
     let mut footer = heapless::String::<24>::new();
     let _ = write!(footer, "bolty v{}", env!("CARGO_PKG_VERSION"));
     let _ = Text::with_baseline(&footer, Point::new(x, (LCD_V_RES as i32) - lh - 2), gray, Baseline::Top).draw(display);
 }
 
 pub fn set_nfc_ready(ready: bool) {
-    with_screen(|s| { s.state.nfc_ready = ready; redraw(s); });
+    with_screen(|s| { s.state.nfc_ready = ready; s.dirty = true; });
 }
 
 pub fn set_card(uid: &str, state: &'static str) {
@@ -295,15 +315,17 @@ pub fn set_card(uid: &str, state: &'static str) {
         s.state.card_uid.clear();
         let _ = s.state.card_uid.push_str(uid);
         s.state.card_state = state;
-        redraw(s);
+        s.dirty = true;
     });
 }
 
 pub fn clear_card() {
     with_screen(|s| {
-        s.state.card_uid.clear();
-        s.state.card_state = "none";
-        redraw(s);
+        if !s.state.card_uid.is_empty() || s.state.card_state != "none" {
+            s.state.card_uid.clear();
+            s.state.card_state = "none";
+            s.dirty = true;
+        }
     });
 }
 
@@ -311,14 +333,16 @@ pub fn set_wifi(ip: &str) {
     with_screen(|s| {
         s.state.wifi_ip.clear();
         let _ = s.state.wifi_ip.push_str(ip);
-        redraw(s);
+        s.dirty = true;
     });
 }
 
 pub fn clear_wifi() {
     with_screen(|s| {
-        s.state.wifi_ip.clear();
-        redraw(s);
+        if !s.state.wifi_ip.is_empty() {
+            s.state.wifi_ip.clear();
+            s.dirty = true;
+        }
     });
 }
 
@@ -326,7 +350,7 @@ pub fn set_event(event: &str) {
     with_screen(|s| {
         s.state.event.clear();
         let _ = s.state.event.push_str(event);
-        redraw(s);
+        s.dirty = true;
     });
 }
 
@@ -346,6 +370,6 @@ pub fn set_command_result(cmd: &str, result: &str) {
             }
         }
 
-        redraw(s);
+        s.dirty = true;
     });
 }
