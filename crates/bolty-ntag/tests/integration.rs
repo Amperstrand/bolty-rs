@@ -64,7 +64,6 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
     let keys = test_keys();
     let key_versions = [0x42; 5];
     let plan = sdm_url_config(burn_lnurl(), CryptoMode::Aes, SdmUrlOptions::new()).unwrap();
-    let original_len = plan.ndef_bytes.len();
     let mut transport = MockTransport::provisioned(
         keys,
         key_versions,
@@ -85,7 +84,7 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
     assert_eq!(result.uid, UID);
     assert_eq!(transport.keys(), &[[0u8; 16]; 5]);
     assert_eq!(transport.key_versions(), &[FACTORY_KEY_VERSION; 5]);
-    assert!(transport.ndef()[..original_len].iter().all(|b| *b == 0));
+    assert_eq!(&transport.ndef()[..2], &[0x00, 0x00], "NDEF should be empty (NLEN=0)");
     assert_eq!(transport.keys()[0], FACTORY_KEY);
 }
 

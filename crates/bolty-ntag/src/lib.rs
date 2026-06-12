@@ -4,8 +4,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use ntag424::{
-    File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Session, SessionError, Transport, Uid,
-    Version,
+    AuthenticatedSession, File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Session,
+    SessionError, Transport, Uid, Version,
     key_diversification::diversify_ntag424,
     sdm::{SdmUrlOptions, SdmVerification, Verifier, sdm_url_config},
     types::{ResponseStatus, file_settings::CryptoMode},
@@ -121,7 +121,7 @@ pub async fn safe_inspect<T: Transport>(
     let sdm_verification = match (&file_settings, &ndef_bytes, k1, k2) {
         (Some(file_settings), Some(ndef_bytes), Some(k1), Some(k2)) => file_settings
             .sdm
-            .and_then(|sdm| Verifier::try_new(sdm, CryptoMode::Aes).ok())
+            .and_then(|sdm| Verifier::try_new(&sdm, CryptoMode::Aes).ok())
             .and_then(|verifier| verifier.verify_with_meta_key(ndef_bytes, k2, k1).ok()),
         _ => None,
     };
@@ -225,7 +225,10 @@ pub async fn wipe<T: Transport>(
         .change_file_settings(transport, File::Ndef, &update)
         .await?;
 
-    let empty_ndef = [0u8; 8];
+    // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian length of NDEF
+    // message). NLEN=0 means empty NDEF — no records (NFC Forum NDEF Type 4
+    // Tag §4.1). This is the spec-correct way to mark the file as empty.
+    let empty_ndef = [0x00u8, 0x00];
     session
         .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
         .await?;
