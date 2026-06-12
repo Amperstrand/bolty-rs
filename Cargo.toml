@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "00562d5ead12836a5bdd392e3bc5331e44bd2aea", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
+ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "15d01c439492f6da5a0ce5cd273976cfeddf4ee5", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "84f4f29bc56328676c7471f398204852ac1cc6cc" }
 iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "d8f891e87246cdba25258b149618c6df1f470542", features = ["alloc"] }
 
