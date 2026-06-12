@@ -36,7 +36,7 @@ pub fn aes_cmac(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
 
     // -- Block layout -----------------------------------------------------
     let n = data.len().div_ceil(16).max(1);
-    let complete = !data.is_empty() && data.len() % 16 == 0;
+    let complete = !data.is_empty() && data.len().is_multiple_of(16);
 
     // -- AES-CBC-MAC ------------------------------------------------------
     let mut state = [0u8; 16]; // C_0 = 0^128

@@ -52,6 +52,12 @@ struct SessionState {
     cmd_counter: u16,
 }
 
+impl Default for MockTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockTransport {
     pub fn new() -> Self {
         Self::with_state(
