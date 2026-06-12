@@ -12,11 +12,6 @@ use crate::transport::PcscTransport;
 const FACTORY_KEY: [u8; 16] = [0u8; 16];
 const FACTORY_KEY_VERSION: u8 = 0x00;
 
-fn disabled_sdm() -> Sdm {
-    Sdm::try_new(PiccData::None, None, None, CryptoMode::Aes)
-        .expect("disabled SDM with PiccData::None is always valid")
-}
-
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
         picc_key: KeyNumber::Key1,
@@ -173,7 +168,7 @@ pub async fn cmd_burn(
     let mut session = session;
     if settings.sdm.is_some() {
         println!("  Clearing residual SDM from previous burn...");
-        let update = settings.into_update().with_sdm(disabled_sdm());
+        let update = settings.into_update().with_sdm(Sdm::disabled());
         session = session
             .change_file_settings(transport, File::Ndef, &update)
             .await
@@ -348,36 +343,34 @@ pub async fn cmd_wipe(
 
     // Probe card state: try factory K0 first, then derived K0
     let rnd_a = gen_rnd_a()?;
-    match Session::default()
+    // Factory K0 failure means card has derived keys — fall through to derived-K0 auth below.
+    if let Ok(session) = Session::default()
         .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
         .await
     {
-        Ok(session) => {
-            let (settings, mut session) = session
-                .get_file_settings(transport, File::Ndef)
-                .await
-                .context("failed to read file settings with factory K0")?;
+        let (settings, mut session) = session
+            .get_file_settings(transport, File::Ndef)
+            .await
+            .context("failed to read file settings with factory K0")?;
 
-            let has_sdm = settings.sdm.is_some();
-            let mut buf = [0u8; 256];
-            let len = session
-                .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
-                .await
-                .context("failed to read NDEF with factory K0")?;
-            let has_ndef = len > 2 || buf[..len] != [0x00, 0x00];
+        let has_sdm = settings.sdm.is_some();
+        let mut buf = [0u8; 256];
+        let len = session
+            .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
+            .await
+            .context("failed to read NDEF with factory K0")?;
+        let has_ndef = len >= 2 && (buf[0] != 0x00 || buf[1] != 0x00);
 
-            if !has_sdm && !has_ndef {
-                println!("Card already wiped (factory keys, no SDM, empty NDEF). Nothing to do.");
-                return Ok(());
-            }
-            anyhow::bail!(
-                "Factory K0 works but card has residual state (SDM={}, NDEF={} bytes).\n\
-                 Card may have been partially wiped. Use `burn` to re-burn first, then `wipe`.",
-                has_sdm,
-                if has_ndef { len } else { 0 }
-            );
+        if !has_sdm && !has_ndef {
+            println!("Card already wiped (factory keys, no SDM, empty NDEF). Nothing to do.");
+            return Ok(());
         }
-        Err(_) => {} // Factory K0 failed — card likely has derived keys, proceed
+        anyhow::bail!(
+            "Factory K0 works but card has residual state (SDM={}, NDEF={} bytes).\n\
+             Card may have been partially wiped. Use `burn` to re-burn first, then `wipe`.",
+            has_sdm,
+            if has_ndef { len } else { 0 }
+        );
     }
 
     println!("Authenticating with derived K0...");
@@ -411,7 +404,7 @@ pub async fn cmd_wipe(
         .get_file_settings(transport, File::Ndef)
         .await
         .context("failed to read file settings")?;
-    let update = settings.into_update().with_sdm(disabled_sdm());
+    let update = settings.into_update().with_sdm(Sdm::disabled());
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await
@@ -432,12 +425,29 @@ pub async fn cmd_wipe(
     ];
 
     let mut session = session;
-    for (key_no, new_key, old_key, label) in key_steps {
+    for (i, (key_no, new_key, old_key, label)) in key_steps.iter().enumerate() {
         println!("Resetting {label}...");
-        session = session
-            .change_key(transport, key_no, new_key, FACTORY_KEY_VERSION, old_key)
+        match session
+            .change_key(transport, *key_no, new_key, FACTORY_KEY_VERSION, old_key)
             .await
-            .with_context(|| format!("failed to reset {label}"))?;
+        {
+            Ok(s) => {
+                println!("  ✓ {label} reset to factory");
+                session = s;
+            }
+            Err(e) => {
+                let already_reset: Vec<&str> = key_steps[..i]
+                    .iter()
+                    .map(|(_, _, _, l)| *l)
+                    .collect();
+                anyhow::bail!(
+                    "Failed to reset {label}: {e:#}\n\
+                     Card state: partially wiped (reset: [{}])\n\
+                     Recovery: re-run burn, then wipe again",
+                    already_reset.join(", ")
+                );
+            }
+        }
     }
 
     println!("Resetting K0 (master key)...");
