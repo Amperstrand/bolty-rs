@@ -39,6 +39,21 @@ enum Cli {
         version: u8,
     },
 
+    /// Full burn → wipe → re-burn cycle with verification at each step
+    Cycle {
+        /// Issuer key as 32-char hex string (16 bytes)
+        #[arg(long)]
+        issuer_key: String,
+
+        /// SDM URL template (e.g. https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac})
+        #[arg(long)]
+        url: String,
+
+        /// Key version byte (default: 1)
+        #[arg(long, default_value = "1")]
+        version: u8,
+    },
+
     /// Compute and print derived keys (no card needed)
     DeriveKeys {
         /// Card UID as 14-char hex string (7 bytes)
@@ -128,6 +143,26 @@ async fn main() -> anyhow::Result<()> {
             println!("  K2:      {}", hex::encode(keys.k2));
             println!("  K3:      {}", hex::encode(keys.k3));
             println!("  K4:      {}", hex::encode(keys.k4));
+        }
+
+        Cli::Cycle {
+            issuer_key,
+            url,
+            version,
+        } => {
+            let issuer_key = parse_hex_16(&issuer_key)?;
+            let mut transport = connect_transport()?;
+
+            println!("═══ CYCLE: BURN ═══");
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version).await?;
+
+            println!("\n═══ CYCLE: WIPE ═══");
+            burn::cmd_wipe(&mut transport, &issuer_key, version).await?;
+
+            println!("\n═══ CYCLE: RE-BURN ═══");
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version).await?;
+
+            println!("\n🎉 Full cycle completed successfully!");
         }
     }
 
