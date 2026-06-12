@@ -167,8 +167,8 @@ mod tests {
         );
     }
 
-    fn parse_fixture_vectors() -> [FixtureVector; 2] {
-        let mut vectors = [FixtureVector::default(); 2];
+    fn parse_fixture_vectors() -> [FixtureVector; 3] {
+        let mut vectors = [FixtureVector::default(); 3];
         let mut current = FixtureVector::default();
         let mut vector_count = 0usize;
         let mut in_vector = false;
