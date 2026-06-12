@@ -3,22 +3,20 @@ use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use ntag424::{
     AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Uid,
     sdm::{SdmUrlOptions, sdm_url_config},
-    types::file_settings::CryptoMode,
+    types::file_settings::{CryptoMode, PiccData, Sdm},
 };
 use std::time::Duration;
 
 use crate::transport::PcscTransport;
 
-/// Factory default key (all zeros).
 const FACTORY_KEY: [u8; 16] = [0u8; 16];
 const FACTORY_KEY_VERSION: u8 = 0x00;
 
-/// Boltcard SDM options: K1 = PICC encryption, K2 = CMAC generation.
-///
-/// Per boltcard protocol: the worker decrypts `p=` with K1 (`decryptP(pHex, k1Keys)`)
-/// and verifies `c=` with K2 (`verifyCmac(uidBytes, ctr, cHex, k2Bytes)`).
-/// The `[[` template marker in the URL creates an empty MAC input window,
-/// which matches what `@ntag424/crypto` `verifyCmac()` expects (no file data in MAC).
+fn disabled_sdm() -> Sdm {
+    Sdm::try_new(PiccData::None, None, None, CryptoMode::Aes)
+        .expect("disabled SDM with PiccData::None is always valid")
+}
+
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
         picc_key: KeyNumber::Key1,
@@ -27,7 +25,6 @@ fn boltcard_sdm_opts() -> SdmUrlOptions {
     }
 }
 
-/// Extract a fixed 7-byte UID from the ntag424 Uid enum.
 fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
     match uid {
         Uid::Fixed(f) => *f,
@@ -35,7 +32,6 @@ fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
     }
 }
 
-/// Check if a session error is an authentication delay.
 fn is_auth_delay<T: std::error::Error + std::fmt::Debug>(err: &SessionError<T>) -> bool {
     matches!(
         err,
@@ -43,14 +39,12 @@ fn is_auth_delay<T: std::error::Error + std::fmt::Debug>(err: &SessionError<T>) 
     )
 }
 
-/// Generate random 16-byte nonce.
 fn gen_rnd_a() -> anyhow::Result<[u8; 16]> {
     let mut rnd_a = [0u8; 16];
     getrandom::fill(&mut rnd_a).map_err(|e| anyhow::anyhow!("RNG failed: {e}"))?;
     Ok(rnd_a)
 }
 
-/// Read and print card UID.
 pub async fn cmd_uid(transport: &mut PcscTransport) -> anyhow::Result<[u8; 7]> {
     let uid = Session::default()
         .get_selected_uid(transport)
@@ -61,7 +55,6 @@ pub async fn cmd_uid(transport: &mut PcscTransport) -> anyhow::Result<[u8; 7]> {
     Ok(uid_fixed)
 }
 
-/// Inspect card: UID, version, file settings, NDEF content (all unauthenticated).
 pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
     let mut session = Session::default();
 
@@ -105,7 +98,6 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
     {
         Ok(len) => {
             println!("NDEF content ({} bytes): {}", len, hex::encode(&buf[..len]));
-            // Try to display as UTF-8 for URLs
             if let Ok(s) = std::str::from_utf8(&buf[..len]) {
                 println!("NDEF (text): {s}");
             }
@@ -116,18 +108,15 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Burn a card: write SDM NDEF, enable SDM, install derived keys.
 pub async fn cmd_burn(
     transport: &mut PcscTransport,
     issuer_key: &[u8; 16],
     url: &str,
     version: u8,
 ) -> anyhow::Result<()> {
-    // Step 1: Build SDM NDEF config from URL
     let plan = sdm_url_config(url, CryptoMode::Aes, boltcard_sdm_opts())
         .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?;
 
-    // Step 2: Read UID
     let uid = Session::default()
         .get_selected_uid(transport)
         .await
@@ -135,116 +124,218 @@ pub async fn cmd_burn(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", hex::encode(uid_fixed));
 
-    // Step 3: Derive keys
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
     print_derived_keys(&keys, version);
 
-    // Step 4: Authenticate with factory K0 first — card may require auth for writes
-    println!("Authenticating with factory key...");
+    // --- Authenticate: factory K0 for fresh cards, derived K0 for re-burns ---
+    println!("[1/7] Authenticating...");
     let rnd_a = gen_rnd_a()?;
-
-    let mut session = match Session::default()
+    let (session, old_keys_are_factory) = match Session::default()
         .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
         .await
     {
-        Ok(s) => s,
-        Err(e) if is_auth_delay(&e) => {
-            println!("Authentication delay, waiting 1s...");
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            let rnd_a = gen_rnd_a()?;
-            Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
-                .await?
+        Ok(s) => {
+            println!("  Authenticated with factory K0");
+            (s, true)
         }
-        Err(e) => return Err(e).context("authentication failed"),
+        Err(_) => {
+            // Factory K0 failed — card may have derived keys from a previous burn
+            println!("  Factory K0 failed, trying derived K0...");
+            let rnd_a = gen_rnd_a()?;
+            match Session::default()
+                .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+                .await
+            {
+                Ok(s) => {
+                    println!("  Authenticated with derived K0 (re-burn)");
+                    (s, false)
+                }
+                Err(e) => {
+                    if is_auth_delay(&e) {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    return Err(e).context(
+                        "authentication failed with both factory and derived K0 — \
+                         card may use a different issuer key",
+                    );
+                }
+            }
+        }
     };
 
-    // Step 5: Write NDEF using authenticated session
-    println!("Writing NDEF template...");
+    // Clear any residual SDM from a previous burn before writing NDEF.
+    // SDM must be off when we write NDEF, otherwise the SDM engine processes
+    // the placeholder bytes on readback and the verification comparison fails.
+    let (settings, session) = session
+        .get_file_settings(transport, File::Ndef)
+        .await
+        .context("failed to read file settings")?;
+    let mut session = session;
+    if settings.sdm.is_some() {
+        println!("  Clearing residual SDM from previous burn...");
+        let update = settings.into_update().with_sdm(disabled_sdm());
+        session = session
+            .change_file_settings(transport, File::Ndef, &update)
+            .await
+            .context("failed to clear residual SDM")?;
+    }
+
+    // --- Write NDEF + verify prefix ---
+    println!("[2/7] Writing NDEF template ({} bytes)...", plan.ndef_bytes.len());
     session
         .write_file_plain(transport, File::Ndef, 0, &plan.ndef_bytes)
         .await
         .context("failed to write NDEF")?;
 
-    // Step 6: Enable SDM in file settings
-    println!("Configuring SDM file settings...");
+    let mut read_buf = [0u8; 256];
+    let read_len = session
+        .read_file_plain(transport, File::Ndef, 0, 0, &mut read_buf)
+        .await
+        .context("failed to read back NDEF for verification")?;
+
+    // NDEF file is typically 256 bytes; only compare the bytes we actually wrote
+    if read_len < plan.ndef_bytes.len()
+        || read_buf[..plan.ndef_bytes.len()] != plan.ndef_bytes[..]
+    {
+        anyhow::bail!(
+            "NDEF verification failed: wrote {} bytes, read back {} bytes — prefix mismatch.\n\
+             Card state: NDEF may be corrupt, K0=factory → re-burn should fix this."
+        , plan.ndef_bytes.len(), read_len);
+    }
+    println!("  ✓ NDEF verified ({} bytes written)", plan.ndef_bytes.len());
+
+    // --- Configure SDM + verify ---
+    println!("[3/7] Configuring SDM file settings...");
     let (settings, session) = session
         .get_file_settings(transport, File::Ndef)
         .await
-        .context("failed to read file settings")?;
-    let update = settings.into_update().with_sdm(plan.sdm_settings);
+        .context("failed to read back file settings for verification")?;
     let session = session
-        .change_file_settings(transport, File::Ndef, &update)
-        .await
-        .context("failed to change file settings")?;
-
-    // Step 7-10: Change K1-K4 (non-master keys first, old key = factory)
-    println!("Installing K1...");
-    let session = session
-        .change_key(
+        .change_file_settings(
             transport,
-            NonMasterKeyNumber::Key1,
-            &keys.k1,
-            version,
-            &FACTORY_KEY,
+            File::Ndef,
+            &settings.into_update().with_sdm(plan.sdm_settings),
         )
         .await
-        .context("failed to change K1")?;
+        .context("failed to configure SDM")?;
 
-    println!("Installing K2...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key2,
-            &keys.k2,
-            version,
-            &FACTORY_KEY,
-        )
+    let (verify_settings, session) = session
+        .get_file_settings(transport, File::Ndef)
         .await
-        .context("failed to change K2")?;
+        .context("failed to verify SDM file settings")?;
+    if verify_settings.sdm.is_none() {
+        anyhow::bail!(
+            "SDM verification failed: file settings show no SDM configured.\n\
+             Card state: NDEF correct, SDM not active, K0=factory → re-burn should fix this."
+        );
+    }
+    println!("  ✓ SDM configured and verified");
 
-    println!("Installing K3...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key3,
-            &keys.k3,
-            version,
-            &FACTORY_KEY,
-        )
-        .await
-        .context("failed to change K3")?;
+    // --- Install K1-K4 ---
+    let key_steps: [(NonMasterKeyNumber, &[u8; 16], &str); 4] = [
+        (NonMasterKeyNumber::Key1, &keys.k1, "K1"),
+        (NonMasterKeyNumber::Key2, &keys.k2, "K2"),
+        (NonMasterKeyNumber::Key3, &keys.k3, "K3"),
+        (NonMasterKeyNumber::Key4, &keys.k4, "K4"),
+    ];
+    let derived_keys = [&keys.k1, &keys.k2, &keys.k3, &keys.k4];
 
-    println!("Installing K4...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key4,
-            &keys.k4,
-            version,
-            &FACTORY_KEY,
-        )
-        .await
-        .context("failed to change K4")?;
+    let mut session = session;
+    for (i, (key_no, new_key, label)) in key_steps.iter().enumerate() {
+        let step = 4 + i;
+        let old_key: &[u8; 16] = if old_keys_are_factory {
+            &FACTORY_KEY
+        } else {
+            derived_keys[i]
+        };
+        println!("[{step}/7] Installing {label}...");
+        match session
+            .change_key(transport, *key_no, new_key, version, old_key)
+            .await
+        {
+            Ok(s) => {
+                println!("  ✓ {label} installed");
+                session = s;
+            }
+            Err(e) => {
+                let already_changed: Vec<&str> = key_steps[..i]
+                    .iter()
+                    .map(|(_, _, l)| *l)
+                    .collect();
+                anyhow::bail!(
+                    "Failed to install {label}: {e:#}\n\
+                     Card state: NDEF ✓, SDM ✓, K0=factory, changed keys: [{}]\n\
+                     Recovery: re-run burn (factory K0 still active, changed keys will be overwritten)"
+                 , already_changed.join(", "));
+            }
+        }
+    }
 
-    // Step 11: Change master key (K0) last — invalidates session
-    println!("Installing K0 (master key)...");
+    // --- Install K0 (master) ---
+    println!("[7/7] Installing K0 (master key)...");
     session
         .change_master_key(transport, &keys.k0, version)
         .await
-        .context("failed to change master key")?;
+        .context(
+            "Failed to install K0 (master key).\n\
+             Card state: NDEF ✓, SDM ✓, K1-K4 changed, K0=factory.\n\
+             Recovery: re-run burn immediately (factory K0 still active).",
+        )?;
+    println!("  ✓ K0 installed");
 
-    println!("Card burned successfully!");
+    // --- Post-burn verification ---
+    println!("\nVerifying burn...");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let rnd_a = gen_rnd_a()?;
+    let verify_session = match Session::default()
+        .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) if is_auth_delay(&e) => {
+            println!("  Authentication delay, waiting 1s...");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let rnd_a = gen_rnd_a()?;
+            Session::default()
+                .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+                .await
+                .context(
+                    "POST-BURN VERIFICATION FAILED: Cannot authenticate with new K0.\n\
+                     Try: bolty-cli wipe and re-burn.",
+                )?
+        }
+        Err(e) => {
+            return Err(e).context(
+                "POST-BURN VERIFICATION FAILED: Cannot authenticate with new K0.\n\
+                 Try: bolty-cli wipe and re-burn.",
+            );
+        }
+    };
+
+    let (final_settings, _) = verify_session
+        .get_file_settings(transport, File::Ndef)
+        .await
+        .context("POST-BURN VERIFICATION FAILED: Cannot read file settings with new K0")?;
+
+    if final_settings.sdm.is_none() {
+        anyhow::bail!(
+            "POST-BURN VERIFICATION FAILED: SDM not active after burn.\n\
+             Card is authenticated with new K0 but SDM is missing."
+        );
+    }
+
+    println!("  ✓ K0 authentication verified");
+    println!("  ✓ SDM active");
+    println!("\n✅ Card burned and verified successfully!");
     Ok(())
 }
 
-/// Wipe a card: authenticate with derived K0, clear SDM, reset all keys to factory.
 pub async fn cmd_wipe(
     transport: &mut PcscTransport,
     issuer_key: &[u8; 16],
     version: u8,
 ) -> anyhow::Result<()> {
-    // Step 1: Read UID
     let uid = Session::default()
         .get_selected_uid(transport)
         .await
@@ -252,108 +343,162 @@ pub async fn cmd_wipe(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", hex::encode(uid_fixed));
 
-    // Step 2: Derive current keys
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
     println!("Derived K0: {}", hex::encode(keys.k0));
 
-    // Step 3: Authenticate with derived K0
+    // Probe card state: try factory K0 first, then derived K0
+    let rnd_a = gen_rnd_a()?;
+    match Session::default()
+        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+        .await
+    {
+        Ok(session) => {
+            let (settings, mut session) = session
+                .get_file_settings(transport, File::Ndef)
+                .await
+                .context("failed to read file settings with factory K0")?;
+
+            let has_sdm = settings.sdm.is_some();
+            let mut buf = [0u8; 256];
+            let len = session
+                .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
+                .await
+                .context("failed to read NDEF with factory K0")?;
+            let has_ndef = len > 2 || buf[..len] != [0x00, 0x00];
+
+            if !has_sdm && !has_ndef {
+                println!("Card already wiped (factory keys, no SDM, empty NDEF). Nothing to do.");
+                return Ok(());
+            }
+            anyhow::bail!(
+                "Factory K0 works but card has residual state (SDM={}, NDEF={} bytes).\n\
+                 Card may have been partially wiped. Use `burn` to re-burn first, then `wipe`.",
+                has_sdm,
+                if has_ndef { len } else { 0 }
+            );
+        }
+        Err(_) => {} // Factory K0 failed — card likely has derived keys, proceed
+    }
+
     println!("Authenticating with derived K0...");
     let rnd_a = gen_rnd_a()?;
-
     let session = match Session::default()
         .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
         .await
     {
         Ok(s) => s,
         Err(e) if is_auth_delay(&e) => {
-            println!("Authentication delay, waiting 1s...");
+            println!("  Authentication delay, waiting 1s...");
             tokio::time::sleep(Duration::from_secs(1)).await;
             let rnd_a = gen_rnd_a()?;
             Session::default()
                 .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
-                .await?
+                .await
+                .context(
+                    "derived K0 authentication failed — wrong issuer key or card not burned",
+                )?
         }
-        Err(e) => return Err(e).context("authentication failed"),
+        Err(e) => {
+            return Err(e).context(
+                "derived K0 authentication failed — wrong issuer key or card not burned",
+            )
+        }
     };
 
-    // Step 4: Clear SDM from file settings
+    // Clear SDM by explicitly setting disabled SDM (not just into_update which preserves it)
     println!("Clearing SDM settings...");
     let (settings, session) = session
         .get_file_settings(transport, File::Ndef)
         .await
         .context("failed to read file settings")?;
-    let update = settings.into_update(); // No SDM = cleared
+    let update = settings.into_update().with_sdm(disabled_sdm());
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await
         .context("failed to clear file settings")?;
 
-    // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian length of NDEF message).
-    // NLEN=0 means empty NDEF — no records. Was [0u8; 8] which worked in practice
-    // but 2 bytes is the spec-correct minimum (NFC Forum NDEF Type 4 Tag §4.1).
     let empty_ndef = [0x00u8, 0x00];
     session
         .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
         .await
         .context("failed to write empty NDEF")?;
 
-    // Step 6: Reset K1-K4 to factory (old keys = derived keys)
-    println!("Resetting K1...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key1,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys.k1,
-        )
-        .await
-        .context("failed to reset K1")?;
+    // Reset K1-K4 to factory
+    let key_steps: [(NonMasterKeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
+        (NonMasterKeyNumber::Key1, &FACTORY_KEY, &keys.k1, "K1"),
+        (NonMasterKeyNumber::Key2, &FACTORY_KEY, &keys.k2, "K2"),
+        (NonMasterKeyNumber::Key3, &FACTORY_KEY, &keys.k3, "K3"),
+        (NonMasterKeyNumber::Key4, &FACTORY_KEY, &keys.k4, "K4"),
+    ];
 
-    println!("Resetting K2...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key2,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys.k2,
-        )
-        .await
-        .context("failed to reset K2")?;
+    let mut session = session;
+    for (key_no, new_key, old_key, label) in key_steps {
+        println!("Resetting {label}...");
+        session = session
+            .change_key(transport, key_no, new_key, FACTORY_KEY_VERSION, old_key)
+            .await
+            .with_context(|| format!("failed to reset {label}"))?;
+    }
 
-    println!("Resetting K3...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key3,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys.k3,
-        )
-        .await
-        .context("failed to reset K3")?;
-
-    println!("Resetting K4...");
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key4,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys.k4,
-        )
-        .await
-        .context("failed to reset K4")?;
-
-    // Step 7: Reset K0 last
     println!("Resetting K0 (master key)...");
     session
         .change_master_key(transport, &FACTORY_KEY, FACTORY_KEY_VERSION)
         .await
         .context("failed to reset master key")?;
 
-    println!("Card wiped successfully!");
+    // --- Post-wipe verification ---
+    println!("\nVerifying wipe...");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let rnd_a = gen_rnd_a()?;
+    match Session::default()
+        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+        .await
+    {
+        Ok(verify) => {
+            let (settings, mut verify) = verify
+                .get_file_settings(transport, File::Ndef)
+                .await
+                .context("wipe verification: cannot read file settings")?;
+            if let Some(ref sdm) = settings.sdm {
+                let has_picc = !matches!(sdm.picc_data(), PiccData::None);
+                let has_mac = sdm.file_read().is_some();
+                if has_picc || has_mac {
+                    anyhow::bail!(
+                        "POST-WIPE WARNING: SDM still functionally active (picc={}, mac={})!",
+                        has_picc, has_mac
+                    );
+                }
+            }
+
+            let mut buf = [0u8; 256];
+            let len = verify
+                .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
+                .await
+                .context("wipe verification: cannot read NDEF")?;
+            // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian). NLEN=0 = empty.
+            // The file may contain old data past byte 2; only NLEN matters.
+            if len < 2 || buf[0] != 0x00 || buf[1] != 0x00 {
+                anyhow::bail!(
+                    "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",
+                    len,
+                    hex::encode(&buf[..len.min(32)])
+                );
+            }
+            println!("  ✓ Factory K0 works");
+            println!("  ✓ SDM cleared");
+            println!("  ✓ NDEF empty");
+        }
+        Err(e) => {
+            anyhow::bail!(
+                "POST-WIPE VERIFICATION FAILED: Cannot authenticate with factory K0.\n\
+                 Card may be in an inconsistent state.\n\
+                 Error: {e:#}"
+            );
+        }
+    }
+
+    println!("\n✅ Card wiped and verified successfully!");
     Ok(())
 }
 
