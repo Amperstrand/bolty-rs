@@ -1,12 +1,12 @@
 use anyhow::Context;
+use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use ntag424::{
-    File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Uid,
+    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Uid,
     sdm::{SdmUrlOptions, sdm_url_config},
     types::file_settings::CryptoMode,
 };
 use std::time::Duration;
 
-use crate::keys::DerivedKeys;
 use crate::transport::PcscTransport;
 
 /// Factory default key (all zeros).
@@ -136,7 +136,7 @@ pub async fn cmd_burn(
     println!("Card UID: {}", hex::encode(uid_fixed));
 
     // Step 3: Derive keys
-    let keys = crate::keys::derive_keys(&uid_fixed, issuer_key, version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
     print_derived_keys(&keys, version);
 
     // Step 4: Authenticate with factory K0 first — card may require auth for writes
@@ -253,7 +253,7 @@ pub async fn cmd_wipe(
     println!("Card UID: {}", hex::encode(uid_fixed));
 
     // Step 2: Derive current keys
-    let keys = crate::keys::derive_keys(&uid_fixed, issuer_key, version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
     println!("Derived K0: {}", hex::encode(keys.k0));
 
     // Step 3: Authenticate with derived K0
@@ -357,7 +357,7 @@ pub async fn cmd_wipe(
     Ok(())
 }
 
-fn print_derived_keys(keys: &DerivedKeys, version: u8) {
+fn print_derived_keys(keys: &CardKeySet, version: u8) {
     println!("Derived keys (version {version}):");
     println!("  cardKey: {}", hex::encode(keys.card_key));
     println!("  K0:      {}", hex::encode(keys.k0));

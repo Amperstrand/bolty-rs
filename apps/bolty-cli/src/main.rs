@@ -1,7 +1,7 @@
 mod burn;
-mod keys;
 mod transport;
 
+use bolty_core::derivation::BoltcardDeterministicDeriver;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let uid = parse_hex_7(&uid)?;
             let issuer_key = parse_hex_16(&issuer_key)?;
-            let keys = keys::derive_keys(&uid, &issuer_key, version as u32);
+            let keys = BoltcardDeterministicDeriver::derive_keys(&issuer_key, &uid, version as u32);
             println!("Derived keys (version {version}):");
             println!("  cardKey: {}", hex::encode(keys.card_key));
             println!("  K0:      {}", hex::encode(keys.k0));
