@@ -1,0 +1,20 @@
+[package]
+name = "bolty-cli"
+version = "0.1.0"
+edition = "2024"
+description = "NTAG424 card programming CLI via PCSC"
+
+[[bin]]
+name = "bolty-cli"
+path = "src/main.rs"
+
+[dependencies]
+ntag424 = { workspace = true }
+pcsc = "2"
+cmac = "0.8"
+aes = "0.9"
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "time"] }
+anyhow = "1"
+getrandom = "0.3"
