@@ -137,15 +137,7 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
 }
 
 pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
-    if s.len() != 32 {
-        return None;
-    }
-
-    let mut out = [0u8; 16];
-    for (index, chunk) in s.as_bytes().chunks_exact(2).enumerate() {
-        out[index] = (decode_hex_nibble(chunk[0])? << 4) | decode_hex_nibble(chunk[1])?;
-    }
-    Some(out)
+    crate::util::decode_hex(s)
 }
 
 fn parse_keys_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
@@ -254,15 +246,6 @@ fn expect_no_args<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<(), Co
         Err(CommandError::InvalidArgs)
     } else {
         Ok(())
-    }
-}
-
-fn decode_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
     }
 }
 

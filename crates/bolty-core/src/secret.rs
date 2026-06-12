@@ -13,18 +13,9 @@ impl AesKey {
     }
 
     pub fn from_hex(s: &str) -> Result<Self, SecretError> {
-        if s.len() != 32 {
-            return Err(SecretError::InvalidLength);
-        }
-
-        let mut bytes = [0u8; 16];
-        let raw = s.as_bytes();
-
-        for (idx, chunk) in raw.chunks_exact(2).enumerate() {
-            bytes[idx] = (decode_nibble(chunk[0])? << 4) | decode_nibble(chunk[1])?;
-        }
-
-        Ok(Self(bytes))
+        crate::util::decode_hex(s)
+            .ok_or(SecretError::InvalidHex)
+            .map(Self)
     }
 
     pub fn as_bytes(&self) -> &[u8; 16] {
@@ -86,11 +77,4 @@ impl fmt::Debug for CardKeys {
     }
 }
 
-fn decode_nibble(byte: u8) -> Result<u8, SecretError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(SecretError::InvalidHex),
-    }
-}
+

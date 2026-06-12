@@ -242,24 +242,6 @@ mod tests {
     }
 
     fn parse_hex_array<const N: usize>(hex: &str) -> [u8; N] {
-        assert_eq!(hex.len(), N * 2, "hex string length mismatch");
-
-        let mut bytes = [0u8; N];
-        let raw = hex.as_bytes();
-
-        for (index, chunk) in raw.chunks_exact(2).enumerate() {
-            bytes[index] = (decode_hex_nibble(chunk[0]) << 4) | decode_hex_nibble(chunk[1]);
-        }
-
-        bytes
-    }
-
-    fn decode_hex_nibble(byte: u8) -> u8 {
-        match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            b'A'..=b'F' => byte - b'A' + 10,
-            _ => panic!("invalid hex nibble: {byte}"),
-        }
+        crate::util::decode_hex(hex).expect("invalid hex in fixture")
     }
 }
