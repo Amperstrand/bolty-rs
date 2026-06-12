@@ -7,11 +7,13 @@ pub mod assessment;
 pub mod commands;
 pub mod config;
 pub mod constants;
+pub mod crypto;
 pub mod derivation;
 pub mod issuer;
 pub mod picc;
 pub mod secret;
 pub mod service;
+pub mod util;
 pub mod workflow;
 
 #[cfg(test)]

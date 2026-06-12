@@ -1,6 +1,4 @@
-use aes::Aes128;
-use cmac::{Cmac, Mac};
-
+use crate::crypto::aes_cmac;
 use crate::secret::{AesKey, CardKeys};
 
 const DEFAULT_BOLTCARD_VERSION: u32 = 1;
@@ -52,13 +50,7 @@ pub struct CardKeySet {
 }
 
 pub fn aes128_cmac(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
-    let mut mac = <Cmac<Aes128> as Mac>::new_from_slice(key)
-        .expect("AES-128-CMAC requires a 16-byte key");
-    mac.update(msg);
-
-    let mut output = [0u8; 16];
-    output.copy_from_slice(&mac.finalize().into_bytes());
-    output
+    crate::crypto::aes_cmac(key, msg)
 }
 
 pub struct BoltcardDeterministicDeriver;
@@ -69,7 +61,7 @@ impl BoltcardDeterministicDeriver {
         message[..4].copy_from_slice(&TAG_CARD_KEY);
         message[4..11].copy_from_slice(uid);
         message[11..].copy_from_slice(&version.to_le_bytes());
-        aes128_cmac(issuer_key, &message)
+        aes_cmac(issuer_key, &message)
     }
 
     pub fn derive_keys(issuer_key: &[u8; 16], uid: &[u8; 7], version: u32) -> CardKeySet {
@@ -77,11 +69,11 @@ impl BoltcardDeterministicDeriver {
 
         CardKeySet {
             card_key,
-            k0: aes128_cmac(&card_key, &TAG_K0),
-            k1: aes128_cmac(issuer_key, &TAG_K1),
-            k2: aes128_cmac(&card_key, &TAG_K2),
-            k3: aes128_cmac(&card_key, &TAG_K3),
-            k4: aes128_cmac(&card_key, &TAG_K4),
+            k0: aes_cmac(&card_key, &TAG_K0),
+            k1: aes_cmac(issuer_key, &TAG_K1),
+            k2: aes_cmac(&card_key, &TAG_K2),
+            k3: aes_cmac(&card_key, &TAG_K3),
+            k4: aes_cmac(&card_key, &TAG_K4),
             card_id: Self::derive_card_id(issuer_key, uid),
         }
     }
@@ -90,7 +82,7 @@ impl BoltcardDeterministicDeriver {
         let mut message = [0u8; 11];
         message[..4].copy_from_slice(&TAG_CARD_ID);
         message[4..].copy_from_slice(uid);
-        aes128_cmac(issuer_key, &message)
+        aes_cmac(issuer_key, &message)
     }
 }
 
@@ -107,7 +99,9 @@ impl KeyDeriver for BoltcardDeterministicDeriver {
             DerivationStrategy::BoltcardDeterministic => {
                 Self::derive_keys(issuer_key.as_bytes(), uid, DEFAULT_BOLTCARD_VERSION)
             }
-            DerivationStrategy::An10922 => todo!("AN10922 derivation is not implemented yet"),
+            DerivationStrategy::An10922 => {
+                return Err(DerivationError::UnsupportedStrategy);
+            }
         };
 
         Ok(CardKeys {
@@ -231,25 +225,7 @@ mod tests {
     }
 
     fn parse_hex_array<const N: usize>(hex: &str) -> [u8; N] {
-        assert_eq!(hex.len(), N * 2, "hex string length mismatch");
-
-        let mut bytes = [0u8; N];
-        let raw = hex.as_bytes();
-
-        for (index, chunk) in raw.chunks_exact(2).enumerate() {
-            bytes[index] = (decode_hex_nibble(chunk[0]) << 4) | decode_hex_nibble(chunk[1]);
-        }
-
-        bytes
-    }
-
-    fn decode_hex_nibble(byte: u8) -> u8 {
-        match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            b'A'..=b'F' => byte - b'A' + 10,
-            _ => panic!("invalid hex nibble: {byte}"),
-        }
+        crate::util::decode_hex(hex).expect("invalid hex in fixture")
     }
 
     fn assert_key_eq(label: &str, name: &str, actual: [u8; 16], expected: [u8; 16]) {
