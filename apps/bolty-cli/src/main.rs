@@ -138,12 +138,12 @@ async fn main() -> anyhow::Result<()> {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let keys = BoltcardDeterministicDeriver::derive_keys(&issuer_key, &uid, version as u32);
             println!("Derived keys (version {version}):");
-            println!("  cardKey: {}", to_hex(keys.card_key));
-            println!("  K0:      {}", to_hex(keys.k0));
-            println!("  K1:      {}", to_hex(keys.k1));
-            println!("  K2:      {}", to_hex(keys.k2));
-            println!("  K3:      {}", to_hex(keys.k3));
-            println!("  K4:      {}", to_hex(keys.k4));
+            println!("  cardKey: {}", to_hex(keys.card_key.as_bytes()));
+            println!("  K0:      {}", to_hex(keys.k0.as_bytes()));
+            println!("  K1:      {}", to_hex(keys.k1.as_bytes()));
+            println!("  K2:      {}", to_hex(keys.k2.as_bytes()));
+            println!("  K3:      {}", to_hex(keys.k3.as_bytes()));
+            println!("  K4:      {}", to_hex(keys.k4.as_bytes()));
         }
 
         Cli::Cycle {

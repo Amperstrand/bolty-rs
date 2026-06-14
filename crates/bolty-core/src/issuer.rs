@@ -137,11 +137,12 @@ mod tests {
             .expect("known issuer should match");
 
         assert_eq!(matched.0, 1);
-        assert_eq!(matched.1.k1, BoltcardDeterministicDeriver::derive_keys(
+        let other = BoltcardDeterministicDeriver::derive_keys(
             issuers[1].issuer_key.as_bytes(),
             &vector.uid,
             issuers[1].derivation_version,
-        ).k1);
+        );
+        assert_eq!(&matched.1.k1, &other.k1);
     }
 
     fn issuer_fixtures() -> [IssuerConfig; 2] {

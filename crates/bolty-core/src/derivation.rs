@@ -1,5 +1,7 @@
 use crate::crypto::aes_cmac;
 use crate::secret::{AesKey, CardKeys};
+use core::fmt;
+use zeroize::Zeroize;
 
 const DEFAULT_BOLTCARD_VERSION: u32 = 1;
 
@@ -38,15 +40,41 @@ pub enum DerivationError {
     UnsupportedStrategy,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CardKeySet {
-    pub card_key: [u8; 16],
-    pub k0: [u8; 16],
-    pub k1: [u8; 16],
-    pub k2: [u8; 16],
-    pub k3: [u8; 16],
-    pub k4: [u8; 16],
+    pub card_key: AesKey,
+    pub k0: AesKey,
+    pub k1: AesKey,
+    pub k2: AesKey,
+    pub k3: AesKey,
+    pub k4: AesKey,
     pub card_id: [u8; 16],
+}
+
+impl Default for CardKeySet {
+    fn default() -> Self {
+        Self {
+            card_key: AesKey::zeroed(),
+            k0: AesKey::zeroed(),
+            k1: AesKey::zeroed(),
+            k2: AesKey::zeroed(),
+            k3: AesKey::zeroed(),
+            k4: AesKey::zeroed(),
+            card_id: [0u8; 16],
+        }
+    }
+}
+
+impl fmt::Debug for CardKeySet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CardKeySet([REDACTED])")
+    }
+}
+
+impl Drop for CardKeySet {
+    fn drop(&mut self) {
+        self.card_id.zeroize();
+    }
 }
 
 pub fn aes128_cmac(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
@@ -68,12 +96,12 @@ impl BoltcardDeterministicDeriver {
         let card_key = Self::derive_card_key(issuer_key, uid, version);
 
         CardKeySet {
-            card_key,
-            k0: aes_cmac(&card_key, &TAG_K0),
-            k1: aes_cmac(issuer_key, &TAG_K1),
-            k2: aes_cmac(&card_key, &TAG_K2),
-            k3: aes_cmac(&card_key, &TAG_K3),
-            k4: aes_cmac(&card_key, &TAG_K4),
+            card_key: AesKey::new(card_key),
+            k0: AesKey::new(aes_cmac(&card_key, &TAG_K0)),
+            k1: AesKey::new(aes_cmac(issuer_key, &TAG_K1)),
+            k2: AesKey::new(aes_cmac(&card_key, &TAG_K2)),
+            k3: AesKey::new(aes_cmac(&card_key, &TAG_K3)),
+            k4: AesKey::new(aes_cmac(&card_key, &TAG_K4)),
             card_id: Self::derive_card_id(issuer_key, uid),
         }
     }
@@ -105,23 +133,23 @@ impl KeyDeriver for BoltcardDeterministicDeriver {
         };
 
         Ok(CardKeys {
-            k0: AesKey::new(derived.k0),
-            k1: AesKey::new(derived.k1),
-            k2: AesKey::new(derived.k2),
-            k3: AesKey::new(derived.k3),
-            k4: AesKey::new(derived.k4),
+            k0: derived.k0.clone(),
+            k1: derived.k1.clone(),
+            k2: derived.k2.clone(),
+            k3: derived.k3.clone(),
+            k4: derived.k4.clone(),
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BoltcardDeterministicDeriver, CardKeySet, DerivationStrategy};
+    use super::{AesKey, BoltcardDeterministicDeriver, CardKeySet, DerivationStrategy};
 
     const FIXTURES: &str =
         include_str!("../../../tests/fixtures/derivation/boltcard_deterministic.toml");
 
-    #[derive(Clone, Copy, Default)]
+    #[derive(Clone, Default)]
     struct FixtureVector {
         description: &'static str,
         issuer_key: [u8; 16],
@@ -139,23 +167,13 @@ mod tests {
                 vector.version,
             );
 
-            assert_key_eq(
-                vector.description,
-                "card_key",
-                actual.card_key,
-                vector.expected.card_key,
-            );
-            assert_key_eq(vector.description, "k0", actual.k0, vector.expected.k0);
-            assert_key_eq(vector.description, "k1", actual.k1, vector.expected.k1);
-            assert_key_eq(vector.description, "k2", actual.k2, vector.expected.k2);
-            assert_key_eq(vector.description, "k3", actual.k3, vector.expected.k3);
-            assert_key_eq(vector.description, "k4", actual.k4, vector.expected.k4);
-            assert_key_eq(
-                vector.description,
-                "card_id",
-                actual.card_id,
-                vector.expected.card_id,
-            );
+            assert_key_eq(vector.description, "card_key", &actual.card_key, &vector.expected.card_key);
+            assert_key_eq(vector.description, "k0", &actual.k0, &vector.expected.k0);
+            assert_key_eq(vector.description, "k1", &actual.k1, &vector.expected.k1);
+            assert_key_eq(vector.description, "k2", &actual.k2, &vector.expected.k2);
+            assert_key_eq(vector.description, "k3", &actual.k3, &vector.expected.k3);
+            assert_key_eq(vector.description, "k4", &actual.k4, &vector.expected.k4);
+            assert_eq!(actual.card_id, vector.expected.card_id, "{} card_id mismatch", vector.description);
         }
     }
 
@@ -168,7 +186,11 @@ mod tests {
     }
 
     fn parse_fixture_vectors() -> [FixtureVector; 3] {
-        let mut vectors = [FixtureVector::default(); 3];
+        let mut vectors = [
+            FixtureVector::default(),
+            FixtureVector::default(),
+            FixtureVector::default(),
+        ];
         let mut current = FixtureVector::default();
         let mut vector_count = 0usize;
         let mut in_vector = false;
@@ -204,12 +226,12 @@ mod tests {
                 "issuer_key" => current.issuer_key = parse_hex_array(value),
                 "uid" => current.uid = parse_hex_array(value),
                 "version" => current.version = value.parse().expect("invalid fixture version"),
-                "card_key" => current.expected.card_key = parse_hex_array(value),
-                "k0" => current.expected.k0 = parse_hex_array(value),
-                "k1" => current.expected.k1 = parse_hex_array(value),
-                "k2" => current.expected.k2 = parse_hex_array(value),
-                "k3" => current.expected.k3 = parse_hex_array(value),
-                "k4" => current.expected.k4 = parse_hex_array(value),
+                "card_key" => current.expected.card_key = AesKey::new(parse_hex_array(value)),
+                "k0" => current.expected.k0 = AesKey::new(parse_hex_array(value)),
+                "k1" => current.expected.k1 = AesKey::new(parse_hex_array(value)),
+                "k2" => current.expected.k2 = AesKey::new(parse_hex_array(value)),
+                "k3" => current.expected.k3 = AesKey::new(parse_hex_array(value)),
+                "k4" => current.expected.k4 = AesKey::new(parse_hex_array(value)),
                 "card_id" => current.expected.card_id = parse_hex_array(value),
                 _ => {}
             }
@@ -228,7 +250,7 @@ mod tests {
         crate::util::decode_hex(hex).expect("invalid hex in fixture")
     }
 
-    fn assert_key_eq(label: &str, name: &str, actual: [u8; 16], expected: [u8; 16]) {
+    fn assert_key_eq(label: &str, name: &str, actual: &AesKey, expected: &AesKey) {
         assert_eq!(actual, expected, "{label} {name} mismatch");
     }
 }

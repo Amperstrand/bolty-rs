@@ -54,7 +54,7 @@ fn provisioned_card_assessment_returns_provisioned() {
         &[issuer],
     );
 
-    assert_eq!(derived.k1, PICC_K1);
+    assert_eq!(derived.k1.as_bytes(), &PICC_K1);
     assert_eq!(assessment.state, CardState::Provisioned(0));
 }
 

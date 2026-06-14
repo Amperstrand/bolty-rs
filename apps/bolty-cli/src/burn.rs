@@ -136,7 +136,7 @@ pub async fn cmd_burn(
             println!("  Factory K0 failed, trying derived K0...");
             let rnd_a = gen_rnd_a()?;
             match Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+                .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
             {
                 Ok(s) => {
@@ -226,12 +226,12 @@ pub async fn cmd_burn(
 
     // --- Install K1-K4 ---
     let key_steps: [(NonMasterKeyNumber, &[u8; 16], &str); 4] = [
-        (NonMasterKeyNumber::Key1, &keys.k1, "K1"),
-        (NonMasterKeyNumber::Key2, &keys.k2, "K2"),
-        (NonMasterKeyNumber::Key3, &keys.k3, "K3"),
-        (NonMasterKeyNumber::Key4, &keys.k4, "K4"),
+        (NonMasterKeyNumber::Key1, keys.k1.as_bytes(), "K1"),
+        (NonMasterKeyNumber::Key2, keys.k2.as_bytes(), "K2"),
+        (NonMasterKeyNumber::Key3, keys.k3.as_bytes(), "K3"),
+        (NonMasterKeyNumber::Key4, keys.k4.as_bytes(), "K4"),
     ];
-    let derived_keys = [&keys.k1, &keys.k2, &keys.k3, &keys.k4];
+    let derived_keys = [keys.k1.as_bytes(), keys.k2.as_bytes(), keys.k3.as_bytes(), keys.k4.as_bytes()];
 
     let mut session = session;
     for (i, (key_no, new_key, label)) in key_steps.iter().enumerate() {
@@ -267,7 +267,7 @@ pub async fn cmd_burn(
     // --- Install K0 (master) ---
     println!("[7/7] Installing K0 (master key)...");
     session
-        .change_master_key(transport, &keys.k0, version)
+        .change_master_key(transport, keys.k0.as_bytes(), version)
         .await
         .context(
             "Failed to install K0 (master key).\n\
@@ -282,7 +282,7 @@ pub async fn cmd_burn(
 
     let rnd_a = gen_rnd_a()?;
     let verify_session = match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+        .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
         .await
     {
         Ok(s) => s,
@@ -291,7 +291,7 @@ pub async fn cmd_burn(
             tokio::time::sleep(Duration::from_secs(1)).await;
             let rnd_a = gen_rnd_a()?;
             Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+                .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
                 .context(
                     "POST-BURN VERIFICATION FAILED: Cannot authenticate with new K0.\n\
@@ -337,7 +337,7 @@ pub async fn cmd_wipe(
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
-    println!("Derived K0: {}", crate::to_hex(keys.k0));
+    println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
 
     // Probe card state: try factory K0 first, then derived K0
     let rnd_a = gen_rnd_a()?;
@@ -374,7 +374,7 @@ pub async fn cmd_wipe(
     println!("Authenticating with derived K0...");
     let rnd_a = gen_rnd_a()?;
     let session = match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+        .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
         .await
     {
         Ok(s) => s,
@@ -383,7 +383,7 @@ pub async fn cmd_wipe(
             tokio::time::sleep(Duration::from_secs(1)).await;
             let rnd_a = gen_rnd_a()?;
             Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, &keys.k0, rnd_a)
+                .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
                 .context(
                     "derived K0 authentication failed — wrong issuer key or card not burned",
@@ -416,10 +416,10 @@ pub async fn cmd_wipe(
 
     // Reset K1-K4 to factory
     let key_steps: [(NonMasterKeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
-        (NonMasterKeyNumber::Key1, &FACTORY_KEY, &keys.k1, "K1"),
-        (NonMasterKeyNumber::Key2, &FACTORY_KEY, &keys.k2, "K2"),
-        (NonMasterKeyNumber::Key3, &FACTORY_KEY, &keys.k3, "K3"),
-        (NonMasterKeyNumber::Key4, &FACTORY_KEY, &keys.k4, "K4"),
+        (NonMasterKeyNumber::Key1, &FACTORY_KEY, keys.k1.as_bytes(), "K1"),
+        (NonMasterKeyNumber::Key2, &FACTORY_KEY, keys.k2.as_bytes(), "K2"),
+        (NonMasterKeyNumber::Key3, &FACTORY_KEY, keys.k3.as_bytes(), "K3"),
+        (NonMasterKeyNumber::Key4, &FACTORY_KEY, keys.k4.as_bytes(), "K4"),
     ];
 
     let mut session = session;
@@ -512,10 +512,10 @@ pub async fn cmd_wipe(
 
 fn print_derived_keys(keys: &CardKeySet, version: u8) {
     println!("Derived keys (version {version}):");
-    println!("  cardKey: {}", crate::to_hex(keys.card_key));
-    println!("  K0:      {}", crate::to_hex(keys.k0));
-    println!("  K1:      {}", crate::to_hex(keys.k1));
-    println!("  K2:      {}", crate::to_hex(keys.k2));
-    println!("  K3:      {}", crate::to_hex(keys.k3));
-    println!("  K4:      {}", crate::to_hex(keys.k4));
+    println!("  cardKey: {}", crate::to_hex(keys.card_key.as_bytes()));
+    println!("  K0:      {}", crate::to_hex(keys.k0.as_bytes()));
+    println!("  K1:      {}", crate::to_hex(keys.k1.as_bytes()));
+    println!("  K2:      {}", crate::to_hex(keys.k2.as_bytes()));
+    println!("  K3:      {}", crate::to_hex(keys.k3.as_bytes()));
+    println!("  K4:      {}", crate::to_hex(keys.k4.as_bytes()));
 }
