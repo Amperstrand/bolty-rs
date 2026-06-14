@@ -2,6 +2,8 @@ use core::fmt;
 
 use zeroize::Zeroize;
 
+use crate::util::HexError;
+
 /// A 16-byte AES key held only in RAM.
 /// Never serialized, never logged.
 #[derive(Clone, PartialEq, Eq)]
@@ -12,10 +14,8 @@ impl AesKey {
         Self(bytes)
     }
 
-    pub fn from_hex(s: &str) -> Result<Self, SecretError> {
-        crate::util::decode_hex(s)
-            .ok_or(SecretError::InvalidHex)
-            .map(Self)
+    pub fn from_hex(s: &str) -> Result<Self, HexError> {
+        crate::util::decode_hex(s).map(Self)
     }
 
     pub fn as_bytes(&self) -> &[u8; 16] {
@@ -41,12 +41,6 @@ impl Drop for AesKey {
     fn drop(&mut self) {
         self.0.zeroize();
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecretError {
-    InvalidHex,
-    InvalidLength,
 }
 
 /// Set of 5 card keys (K0–K4). Zeroed on drop.
@@ -79,7 +73,8 @@ impl fmt::Debug for CardKeys {
 
 #[cfg(test)]
 mod tests {
-    use super::{AesKey, CardKeys, SecretError};
+    use super::{AesKey, CardKeys};
+    use crate::util::HexError;
 
     // ── AesKey::new / as_bytes ─────────────────────────────────────
 
@@ -114,17 +109,17 @@ mod tests {
 
     #[test]
     fn from_hex_wrong_length() {
-        assert_eq!(AesKey::from_hex("0001"), Err(SecretError::InvalidHex));
+        assert_eq!(AesKey::from_hex("0001"), Err(HexError::InvalidLength));
     }
 
     #[test]
     fn from_hex_invalid_chars() {
-        assert_eq!(AesKey::from_hex("GG00000000000000000000000000000X"), Err(SecretError::InvalidHex));
+        assert_eq!(AesKey::from_hex("GG00000000000000000000000000000X"), Err(HexError::InvalidHexCharacter));
     }
 
     #[test]
     fn from_hex_empty() {
-        assert_eq!(AesKey::from_hex(""), Err(SecretError::InvalidHex));
+        assert_eq!(AesKey::from_hex(""), Err(HexError::InvalidLength));
     }
 
     // ── AesKey::zeroed / is_zero ───────────────────────────────────

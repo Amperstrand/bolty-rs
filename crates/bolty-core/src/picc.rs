@@ -46,7 +46,7 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     }
 
     let mut buf = [0u8; 16];
-    decode_hex_into(p_hex, &mut buf)?;
+    decode_hex_into(p_hex, &mut buf).ok()?;
 
     aes_cbc_decrypt(k1, &[0u8; 16], &mut buf);
 
@@ -91,7 +91,7 @@ pub fn picc_verify_c(k2: &[u8; 16], picc: &PiccData, c_hex: &str) -> bool {
     }
 
     let mut expected = [0u8; 8];
-    if decode_hex_into(c_hex, &mut expected).is_none() {
+    if decode_hex_into(c_hex, &mut expected).is_err() {
         return false;
     }
 

@@ -1,3 +1,21 @@
+/// Error returned when decoding a hex string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HexError {
+    /// The input string length does not match the expected number of bytes.
+    InvalidLength,
+    /// The input string contains a character that is not a valid hex digit.
+    InvalidHexCharacter,
+}
+
+impl core::fmt::Display for HexError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HexError::InvalidLength => f.write_str("hex string has invalid length"),
+            HexError::InvalidHexCharacter => f.write_str("hex string contains invalid character"),
+        }
+    }
+}
+
 pub fn decode_hex_nibble(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -7,25 +25,27 @@ pub fn decode_hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-pub fn decode_hex_into(hex: &str, out: &mut [u8]) -> Option<()> {
+pub fn decode_hex_into(hex: &str, out: &mut [u8]) -> Result<(), HexError> {
     if hex.len() != out.len() * 2 {
-        return None;
+        return Err(HexError::InvalidLength);
     }
     for (idx, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        out[idx] = (decode_hex_nibble(chunk[0])? << 4) | decode_hex_nibble(chunk[1])?;
+        let hi = decode_hex_nibble(chunk[0]).ok_or(HexError::InvalidHexCharacter)?;
+        let lo = decode_hex_nibble(chunk[1]).ok_or(HexError::InvalidHexCharacter)?;
+        out[idx] = (hi << 4) | lo;
     }
-    Some(())
+    Ok(())
 }
 
-pub fn decode_hex<const N: usize>(hex: &str) -> Option<[u8; N]> {
+pub fn decode_hex<const N: usize>(hex: &str) -> Result<[u8; N], HexError> {
     let mut out = [0u8; N];
     decode_hex_into(hex, &mut out)?;
-    Some(out)
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_hex, decode_hex_into, decode_hex_nibble};
+    use super::{HexError, decode_hex, decode_hex_into, decode_hex_nibble};
 
     // ── decode_hex_nibble ──────────────────────────────────────────
 
@@ -86,95 +106,95 @@ mod tests {
     #[test]
     fn decode_into_valid_2_bytes() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("dead", &mut out), Some(()));
+        assert_eq!(decode_hex_into("dead", &mut out), Ok(()));
         assert_eq!(out, [0xDE, 0xAD]);
     }
 
     #[test]
     fn decode_into_valid_mixed_case() {
         let mut out = [0u8; 4];
-        assert_eq!(decode_hex_into("DeAdBeef", &mut out), Some(()));
+        assert_eq!(decode_hex_into("DeAdBeef", &mut out), Ok(()));
         assert_eq!(out, [0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
     #[test]
     fn decode_into_valid_all_zeros() {
         let mut out = [0u8; 16];
-        assert_eq!(decode_hex_into("00000000000000000000000000000000", &mut out), Some(()));
+        assert_eq!(decode_hex_into("00000000000000000000000000000000", &mut out), Ok(()));
         assert_eq!(out, [0u8; 16]);
     }
 
     #[test]
     fn decode_into_empty_string_empty_buf() {
         let mut out: [u8; 0] = [];
-        assert_eq!(decode_hex_into("", &mut out), Some(()));
+        assert_eq!(decode_hex_into("", &mut out), Ok(()));
     }
 
     #[test]
     fn decode_into_wrong_length_too_short() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("de", &mut out), None);
+        assert_eq!(decode_hex_into("de", &mut out), Err(HexError::InvalidLength));
     }
 
     #[test]
     fn decode_into_wrong_length_too_long() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("deadbe", &mut out), None);
+        assert_eq!(decode_hex_into("deadbe", &mut out), Err(HexError::InvalidLength));
     }
 
     #[test]
     fn decode_into_invalid_char_at_start() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("gead", &mut out), None);
+        assert_eq!(decode_hex_into("gead", &mut out), Err(HexError::InvalidHexCharacter));
     }
 
     #[test]
     fn decode_into_invalid_char_in_middle() {
         let mut out = [0u8; 4];
-        assert_eq!(decode_hex_into("deXXbeef", &mut out), None);
+        assert_eq!(decode_hex_into("deXXbeef", &mut out), Err(HexError::InvalidHexCharacter));
     }
 
     #[test]
     fn decode_into_invalid_char_at_end() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("dexg", &mut out), None);
+        assert_eq!(decode_hex_into("dexg", &mut out), Err(HexError::InvalidHexCharacter));
     }
 
     // ── decode_hex::<N> ────────────────────────────────────────────
 
     #[test]
     fn decode_hex_n7_valid() {
-        let result: Option<[u8; 7]> = decode_hex("04a39493cc8680");
-        assert_eq!(result, Some([0x04, 0xA3, 0x94, 0x93, 0xCC, 0x86, 0x80]));
+        let result = decode_hex::<7>("04a39493cc8680");
+        assert_eq!(result, Ok([0x04, 0xA3, 0x94, 0x93, 0xCC, 0x86, 0x80]));
     }
 
     #[test]
     fn decode_hex_n16_valid() {
-        let result: Option<[u8; 16]> = decode_hex("00000000000000000000000000000001");
-        assert_eq!(result, Some([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+        let result = decode_hex::<16>("00000000000000000000000000000001");
+        assert_eq!(result, Ok([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
     }
 
     #[test]
     fn decode_hex_n0_empty() {
-        let result: Option<[u8; 0]> = decode_hex("");
-        assert_eq!(result, Some([]));
+        let result = decode_hex::<0>("");
+        assert_eq!(result, Ok([]));
     }
 
     #[test]
     fn decode_hex_wrong_length() {
-        let result: Option<[u8; 16]> = decode_hex("0001");
-        assert_eq!(result, None);
+        let result = decode_hex::<16>("0001");
+        assert_eq!(result, Err(HexError::InvalidLength));
     }
 
     #[test]
     fn decode_hex_invalid_chars() {
-        let result: Option<[u8; 7]> = decode_hex("04g39493cc8680");
-        assert_eq!(result, None);
+        let result = decode_hex::<7>("04g39493cc8680");
+        assert_eq!(result, Err(HexError::InvalidHexCharacter));
     }
 
     #[test]
     fn decode_hex_uppercase_works() {
-        let result: Option<[u8; 4]> = decode_hex("DEADBEEF");
-        assert_eq!(result, Some([0xDE, 0xAD, 0xBE, 0xEF]));
+        let result = decode_hex::<4>("DEADBEEF");
+        assert_eq!(result, Ok([0xDE, 0xAD, 0xBE, 0xEF]));
     }
 }

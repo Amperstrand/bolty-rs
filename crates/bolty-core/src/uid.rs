@@ -1,4 +1,4 @@
-use crate::util::decode_hex;
+use crate::util::{HexError, decode_hex};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CardUid([u8; 7]);
@@ -12,7 +12,7 @@ impl CardUid {
         &self.0
     }
 
-    pub fn from_hex(s: &str) -> Option<Self> {
+    pub fn from_hex(s: &str) -> Result<Self, HexError> {
         decode_hex::<7>(s).map(Self)
     }
 }
@@ -67,12 +67,12 @@ mod tests {
 
     #[test]
     fn from_hex_wrong_length() {
-        assert!(CardUid::from_hex("04a394").is_none());
+        assert!(CardUid::from_hex("04a394").is_err());
     }
 
     #[test]
     fn from_hex_invalid_chars() {
-        assert!(CardUid::from_hex("XXa39493cc8680").is_none());
+        assert!(CardUid::from_hex("XXa39493cc8680").is_err());
     }
 
     #[test]

@@ -137,7 +137,7 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
 }
 
 pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
-    crate::util::decode_hex(s)
+    crate::util::decode_hex(s).ok()
 }
 
 fn parse_keys_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {

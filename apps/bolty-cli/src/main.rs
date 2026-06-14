@@ -80,11 +80,11 @@ enum Cli {
 }
 
 fn parse_hex_16(s: &str) -> anyhow::Result<[u8; 16]> {
-    decode_hex::<16>(s.trim()).ok_or_else(|| anyhow::anyhow!("expected 32 hex chars (16 bytes)"))
+    decode_hex::<16>(s.trim()).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn parse_hex_7(s: &str) -> anyhow::Result<[u8; 7]> {
-    decode_hex::<7>(s.trim()).ok_or_else(|| anyhow::anyhow!("expected 14 hex chars (7 bytes)"))
+    decode_hex::<7>(s.trim()).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 fn to_hex(bytes: impl AsRef<[u8]>) -> String {
