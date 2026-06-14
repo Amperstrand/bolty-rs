@@ -1,4 +1,5 @@
 use anyhow::Context;
+use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK};
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use ntag424::{
     AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Uid,
@@ -8,9 +9,6 @@ use ntag424::{
 use std::time::Duration;
 
 use crate::transport::PcscTransport;
-
-const FACTORY_KEY: [u8; 16] = [0u8; 16];
-const FACTORY_KEY_VERSION: u8 = 0x00;
 
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
@@ -46,7 +44,7 @@ pub async fn cmd_uid(transport: &mut PcscTransport) -> anyhow::Result<[u8; 7]> {
         .await
         .context("failed to read UID")?;
     let uid_fixed = uid_to_fixed(&uid);
-    println!("UID: {}", hex::encode(uid_fixed));
+    println!("UID: {}", crate::to_hex(uid_fixed));
     Ok(uid_fixed)
 }
 
@@ -57,7 +55,7 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
         .get_selected_uid(transport)
         .await
         .context("failed to read UID")?;
-    println!("UID: {}", hex::encode(uid.as_ref()));
+    println!("UID: {}", crate::to_hex(uid.as_ref()));
 
     match session.get_version(transport).await {
         Ok(v) => {
@@ -92,7 +90,7 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
         .await
     {
         Ok(len) => {
-            println!("NDEF content ({} bytes): {}", len, hex::encode(&buf[..len]));
+            println!("NDEF content ({} bytes): {}", len, crate::to_hex(&buf[..len]));
             if let Ok(s) = std::str::from_utf8(&buf[..len]) {
                 println!("NDEF (text): {s}");
             }
@@ -117,7 +115,7 @@ pub async fn cmd_burn(
         .await
         .context("failed to read UID")?;
     let uid_fixed = uid_to_fixed(&uid);
-    println!("Card UID: {}", hex::encode(uid_fixed));
+    println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
     print_derived_keys(&keys, version);
@@ -336,10 +334,10 @@ pub async fn cmd_wipe(
         .await
         .context("failed to read UID")?;
     let uid_fixed = uid_to_fixed(&uid);
-    println!("Card UID: {}", hex::encode(uid_fixed));
+    println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
-    println!("Derived K0: {}", hex::encode(keys.k0));
+    println!("Derived K0: {}", crate::to_hex(keys.k0));
 
     // Probe card state: try factory K0 first, then derived K0
     let rnd_a = gen_rnd_a()?;
@@ -428,7 +426,7 @@ pub async fn cmd_wipe(
     for (i, (key_no, new_key, old_key, label)) in key_steps.iter().enumerate() {
         println!("Resetting {label}...");
         match session
-            .change_key(transport, *key_no, new_key, FACTORY_KEY_VERSION, old_key)
+            .change_key(transport, *key_no, new_key, KEY_VERSION_BLANK, old_key)
             .await
         {
             Ok(s) => {
@@ -452,7 +450,7 @@ pub async fn cmd_wipe(
 
     println!("Resetting K0 (master key)...");
     session
-        .change_master_key(transport, &FACTORY_KEY, FACTORY_KEY_VERSION)
+        .change_master_key(transport, &FACTORY_KEY, KEY_VERSION_BLANK)
         .await
         .context("failed to reset master key")?;
 
@@ -492,7 +490,7 @@ pub async fn cmd_wipe(
                 anyhow::bail!(
                     "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",
                     len,
-                    hex::encode(&buf[..len.min(32)])
+                    crate::to_hex(&buf[..len.min(32)])
                 );
             }
             println!("  ✓ Factory K0 works");
@@ -514,10 +512,10 @@ pub async fn cmd_wipe(
 
 fn print_derived_keys(keys: &CardKeySet, version: u8) {
     println!("Derived keys (version {version}):");
-    println!("  cardKey: {}", hex::encode(keys.card_key));
-    println!("  K0:      {}", hex::encode(keys.k0));
-    println!("  K1:      {}", hex::encode(keys.k1));
-    println!("  K2:      {}", hex::encode(keys.k2));
-    println!("  K3:      {}", hex::encode(keys.k3));
-    println!("  K4:      {}", hex::encode(keys.k4));
+    println!("  cardKey: {}", crate::to_hex(keys.card_key));
+    println!("  K0:      {}", crate::to_hex(keys.k0));
+    println!("  K1:      {}", crate::to_hex(keys.k1));
+    println!("  K2:      {}", crate::to_hex(keys.k2));
+    println!("  K3:      {}", crate::to_hex(keys.k3));
+    println!("  K4:      {}", crate::to_hex(keys.k4));
 }

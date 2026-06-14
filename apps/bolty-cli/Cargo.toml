@@ -13,7 +13,7 @@ bolty-core = { path = "../../crates/bolty-core", features = ["std"] }
 ntag424 = { workspace = true }
 pcsc = "=2.9.0"
 clap = { version = "=4.6.1", features = ["derive"] }
-hex = "=0.4.3"
+
 tokio = { version = "=1.52.3", features = ["rt", "macros", "rt-multi-thread", "time"] }
 anyhow = "=1.0.102"
 getrandom = "=0.3.4"

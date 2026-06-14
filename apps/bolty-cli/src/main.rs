@@ -2,6 +2,7 @@ mod burn;
 mod transport;
 
 use bolty_core::derivation::BoltcardDeterministicDeriver;
+use bolty_core::util::decode_hex;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -71,21 +72,21 @@ enum Cli {
 }
 
 fn parse_hex_16(s: &str) -> anyhow::Result<[u8; 16]> {
-    let trimmed = s.trim();
-    if trimmed.len() != 32 {
-        anyhow::bail!("expected 16 bytes (32 hex chars), got {} chars", trimmed.len());
-    }
-    let bytes = hex::decode(trimmed)?;
-    bytes.try_into().map_err(|_| anyhow::anyhow!("invalid 16-byte hex"))
+    decode_hex::<16>(s.trim()).ok_or_else(|| anyhow::anyhow!("expected 32 hex chars (16 bytes)"))
 }
 
 fn parse_hex_7(s: &str) -> anyhow::Result<[u8; 7]> {
-    let trimmed = s.trim();
-    if trimmed.len() != 14 {
-        anyhow::bail!("expected 7 bytes (14 hex chars), got {} chars", trimmed.len());
+    decode_hex::<7>(s.trim()).ok_or_else(|| anyhow::anyhow!("expected 14 hex chars (7 bytes)"))
+}
+
+fn to_hex(bytes: impl AsRef<[u8]>) -> String {
+    use std::fmt::Write;
+    let bytes = bytes.as_ref();
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(s, "{b:02x}").unwrap();
     }
-    let bytes = hex::decode(trimmed)?;
-    bytes.try_into().map_err(|_| anyhow::anyhow!("invalid 7-byte hex"))
+    s
 }
 
 fn connect_transport() -> anyhow::Result<transport::PcscTransport> {
@@ -137,12 +138,12 @@ async fn main() -> anyhow::Result<()> {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let keys = BoltcardDeterministicDeriver::derive_keys(&issuer_key, &uid, version as u32);
             println!("Derived keys (version {version}):");
-            println!("  cardKey: {}", hex::encode(keys.card_key));
-            println!("  K0:      {}", hex::encode(keys.k0));
-            println!("  K1:      {}", hex::encode(keys.k1));
-            println!("  K2:      {}", hex::encode(keys.k2));
-            println!("  K3:      {}", hex::encode(keys.k3));
-            println!("  K4:      {}", hex::encode(keys.k4));
+            println!("  cardKey: {}", to_hex(keys.card_key));
+            println!("  K0:      {}", to_hex(keys.k0));
+            println!("  K1:      {}", to_hex(keys.k1));
+            println!("  K2:      {}", to_hex(keys.k2));
+            println!("  K3:      {}", to_hex(keys.k3));
+            println!("  K4:      {}", to_hex(keys.k4));
         }
 
         Cli::Cycle {
