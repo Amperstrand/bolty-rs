@@ -51,10 +51,21 @@ impl<I2C: I2c> Mfrc522Transceiver<I2C> {
         self.mfrc522.release().release()
     }
 
+    /// Maximum number of register polls to wait for the MFRC522 PowerDown bit
+    /// to clear during a soft reset. The MFRC522 datasheet specifies the reset
+    /// completes within a few milliseconds. On a 100 kHz I2C bus, each poll
+    /// takes ~0.3 ms, so 1024 polls ≈ 300 ms — well beyond any expected reset
+    /// time. If this limit is exceeded the chip is in an unrecoverable state.
+    const SOFT_RESET_MAX_POLLS: usize = 1024;
+
     fn soft_reset(&mut self) -> Result<(), Mfrc522Error<I2C::Error>> {
         self.mfrc522.write_register(Register::CommandReg, 0x0F)?;
-        while self.mfrc522.read_register(Register::CommandReg)? & 0x10 != 0 {}
-        Ok(())
+        for _ in 0..Self::SOFT_RESET_MAX_POLLS {
+            if self.mfrc522.read_register(Register::CommandReg)? & 0x10 == 0 {
+                return Ok(());
+            }
+        }
+        Err(Mfrc522Error::Timeout)
     }
 
     fn reset_frontend(&mut self) -> Result<(), Mfrc522Error<I2C::Error>> {
