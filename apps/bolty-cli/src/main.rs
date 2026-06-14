@@ -34,8 +34,22 @@ enum Cli {
         version: u8,
     },
 
-    /// Inspect card: UID, version, file settings, NDEF content (unauthenticated)
-    Inspect,
+    /// Inspect card: UID, version, file settings, NDEF content
+    Inspect {
+        /// Issuer key for authenticated reads + SDM decryption (32 hex chars)
+        #[arg(long)]
+        issuer_key: Option<String>,
+
+        #[arg(long, default_value = "1")]
+        version: u8,
+
+        /// Print derived key material and SDM details
+        #[arg(long)]
+        verbose: bool,
+    },
+
+    /// Extract the live NDEF URL from the card
+    Url,
 
     /// Burn card: write SDM NDEF, enable SDM, install derived keys
     Burn {
@@ -188,9 +202,19 @@ async fn run() -> anyhow::Result<()> {
             keyver::cmd_keyver(&mut transport, &issuer_key, version).await?;
         }
 
-        Cli::Inspect => {
+        Cli::Inspect {
+            issuer_key,
+            version,
+            verbose,
+        } => {
             let mut transport = connect_transport()?;
-            inspect::cmd_inspect(&mut transport).await?;
+            let issuer_key = issuer_key.map(|s| parse_hex_16(&s)).transpose()?;
+            inspect::cmd_inspect(&mut transport, issuer_key, version, verbose).await?;
+        }
+
+        Cli::Url => {
+            let mut transport = connect_transport()?;
+            inspect::cmd_url(&mut transport).await?;
         }
 
         Cli::Burn {
