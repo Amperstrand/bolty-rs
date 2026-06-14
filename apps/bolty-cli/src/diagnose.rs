@@ -17,7 +17,7 @@ use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
 use ntag424::{File, KeyNumber, Session, Transport};
 
-use crate::common::{gen_rnd_a, is_auth_delay, uid_to_fixed};
+use crate::common::{gen_rnd_a, is_auth_delay, parse_ndef_uri, uid_to_fixed};
 
 /// Standard Bolt Card key version.
 const DEFAULT_VERSION: u32 = 1;
@@ -81,59 +81,56 @@ where
 
     // 4. NDEF content (unauthenticated)
     let mut buf = [0u8; 256];
-    let (ndef_len, has_ndef_content, ndef_str) = match session
+    let (ndef_len, has_ndef_content, ndef_parsed) = match session
         .read_file_unauthenticated(transport, File::Ndef, 0, &mut buf)
         .await
     {
         Ok(len) => {
             let clamped = len.min(buf.len());
-            // NDEF Type 4: bytes 0-1 = NLEN (big-endian message length).
-            let ndef_end = if clamped >= 2 {
-                let nlen = (buf[0] as usize) * 256 + buf[1] as usize;
-                (nlen + 2).min(clamped)
-            } else {
-                clamped
-            };
-            let has_content = ndef_end > 2;
-            let s = String::from_utf8_lossy(buf.get(2..ndef_end).unwrap_or(&[])).into_owned();
-            println!("NDEF:           {clamped} bytes, content={has_content}");
-            if has_content {
-                println!("NDEF (text):    {s}");
+            let data = buf.get(..clamped).unwrap_or(&[]);
+            let parsed = parse_ndef_uri(data);
+            let has_content = parsed.is_some();
+            match &parsed {
+                Some(p) => println!("NDEF:           {clamped} bytes, URL={}", p.url),
+                None => println!("NDEF:           {clamped} bytes, no valid URI"),
             }
-            (clamped, has_content, s)
+            (clamped, has_content, parsed)
         }
         Err(e) => {
             println!("NDEF:           FAILED ({e})");
-            (0, false, String::new())
+            (0, false, None)
         }
     };
 
-    // 5. PICC verification (local crypto only — no APDUs).
     let picc_ok = if has_sdm {
-        if let Some((p_hex, c_hex)) = picc_crypto::extract_p_and_c(&ndef_str) {
-            println!("\nSDM params:     p={p_hex} c={c_hex}");
-            let keys = BoltcardDeterministicDeriver::derive_keys(
-                issuer_key,
-                CardUid::new(uid_fixed),
-                DEFAULT_VERSION,
-            );
-            match picc_crypto::picc_decrypt_p(keys.k1.as_bytes(), p_hex) {
-                Some(picc) => {
-                    let uid_match = picc.uid == uid_fixed;
-                    let cmac_ok = picc_crypto::picc_verify_c(keys.k2.as_bytes(), &picc, c_hex);
-                    println!(
-                        "PICC decrypt:   OK (uid_match={uid_match}, counter={}, cmac={cmac_ok})",
-                        picc.counter
-                    );
-                    uid_match && cmac_ok
+        if let Some(ref parsed) = ndef_parsed {
+            if let (Some(p_hex), Some(c_hex)) = (&parsed.picc_hex, &parsed.mac_hex) {
+                println!("\nSDM params:     p={p_hex} c={c_hex}");
+                let keys = BoltcardDeterministicDeriver::derive_keys(
+                    issuer_key,
+                    CardUid::new(uid_fixed),
+                    DEFAULT_VERSION,
+                );
+                match picc_crypto::picc_decrypt_p(keys.k1.as_bytes(), p_hex) {
+                    Some(picc) => {
+                        let uid_match = picc.uid == uid_fixed;
+                        let cmac_ok = picc_crypto::picc_verify_c(keys.k2.as_bytes(), &picc, c_hex);
+                        println!(
+                            "PICC decrypt:   OK (uid_match={uid_match}, counter={}, cmac={cmac_ok})",
+                            picc.counter
+                        );
+                        uid_match && cmac_ok
+                    }
+                    None => {
+                        println!("PICC decrypt:   FAILED (wrong issuer key?)");
+                        false
+                    }
                 }
-                None => {
-                    println!("PICC decrypt:   FAILED (wrong issuer key?)");
-                    false
-                }
+            } else {
+                println!("\nSDM active but no p=/c= in NDEF URL");
+                false
             }
         } else {
-            println!("\nSDM active but no p=/c= in NDEF (SDM may not have populated yet).");
             false
         }
     } else {
