@@ -107,7 +107,38 @@ fn connect_transport() -> anyhow::Result<transport::PcscTransport> {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {e:#}");
+        let code = exit_code_for(&e);
+        std::process::exit(code);
+    }
+}
+
+fn exit_code_for(e: &anyhow::Error) -> i32 {
+    for cause in e.chain() {
+        if let Some(err) = cause.downcast_ref::<transport::PcscError>() {
+            return match err {
+                transport::PcscError::NoReaders => {
+                    eprintln!("Hint: connect a PCSC smart card reader.");
+                    2
+                }
+                transport::PcscError::NoCardInReader(_) => {
+                    eprintln!("Hint: place an NTAG424 card on the reader.");
+                    3
+                }
+                _ => 4,
+            };
+        }
+        if cause.downcast_ref::<bolty_core::util::HexError>().is_some() {
+            eprintln!("Hint: hex strings must use only 0-9 a-f A-F with the correct length.");
+            return 5;
+        }
+    }
+    1
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli {

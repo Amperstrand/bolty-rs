@@ -16,6 +16,8 @@ impl core::fmt::Display for HexError {
     }
 }
 
+impl core::error::Error for HexError {}
+
 pub fn decode_hex_nibble(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
