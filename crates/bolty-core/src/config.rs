@@ -63,3 +63,84 @@ impl Default for CardConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bolty_config_default_all_none() {
+        let config = BoltyConfig::default();
+        assert!(config.lnurl.is_none());
+        assert!(config.issuer_name.is_none());
+        assert!(config.pending_keys.is_none());
+        assert!(config.pending_issuer.is_none());
+        assert!(config.rest_read_token.is_none());
+        assert!(config.rest_write_token.is_none());
+    }
+
+    #[test]
+    fn issuer_config_default_values() {
+        let config = IssuerConfig::default();
+        assert!(config.name.is_none());
+        assert!(config.issuer_key.is_zero());
+        assert_eq!(config.derivation_version, u32::from(KEY_VERSION_PROVISIONED));
+        assert_eq!(config.key_version, KEY_VERSION_PROVISIONED);
+    }
+
+    #[test]
+    fn issuer_config_with_key() {
+        let key = AesKey::new([0xAB; 16]);
+        let config = IssuerConfig {
+            issuer_key: key,
+            derivation_version: 2,
+            key_version: 0x42,
+            ..IssuerConfig::default()
+        };
+        assert_eq!(config.derivation_version, 2);
+        assert_eq!(config.key_version, 0x42);
+        assert!(!config.issuer_key.is_zero());
+    }
+
+    #[test]
+    fn card_config_default_values() {
+        let config = CardConfig::default();
+        assert_eq!(config.uid, [0u8; UID_LEN]);
+        assert_eq!(config.key_versions, [KEY_VERSION_BLANK; NUM_KEYS]);
+    }
+
+    #[test]
+    fn card_config_uid_length() {
+        assert_eq!(UID_LEN, 7);
+        let config = CardConfig::default();
+        assert_eq!(config.uid.len(), 7);
+    }
+
+    #[test]
+    fn card_config_key_versions_count() {
+        assert_eq!(NUM_KEYS, 5);
+        let config = CardConfig::default();
+        assert_eq!(config.key_versions.len(), 5);
+    }
+
+    #[test]
+    fn bolty_config_clone_eq() {
+        let a = BoltyConfig::default();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn issuer_config_clone_eq() {
+        let a = IssuerConfig::default();
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn card_config_copy_eq() {
+        let a = CardConfig::default();
+        let b = a;
+        assert_eq!(a, b);
+    }
+}

@@ -304,4 +304,114 @@ mod tests {
             _ => unreachable!(),
         }
     }
+
+    #[test]
+    fn extract_p_and_c_valid() {
+        let url = "https://example.com/bolt?p=AABBCCDDEEFF00112233445566778899&c=0102030405060708";
+        let (p, c) = extract_p_and_c(url).unwrap();
+        assert_eq!(p, "AABBCCDDEEFF00112233445566778899");
+        assert_eq!(c, "0102030405060708");
+    }
+
+    #[test]
+    fn extract_p_and_c_reverse_order() {
+        let url = "https://example.com/bolt?c=0102030405060708&p=AABBCCDDEEFF00112233445566778899";
+        let (p, c) = extract_p_and_c(url).unwrap();
+        assert_eq!(p, "AABBCCDDEEFF00112233445566778899");
+        assert_eq!(c, "0102030405060708");
+    }
+
+    #[test]
+    fn extract_p_and_c_with_fragment() {
+        let url = "https://example.com/bolt?p=AABB&c=0102030405060708#section";
+        let (p, c) = extract_p_and_c(url).unwrap();
+        assert_eq!(p, "AABB");
+        assert_eq!(c, "0102030405060708");
+    }
+
+    #[test]
+    fn extract_p_and_c_missing_p() {
+        assert!(extract_p_and_c("https://example.com/bolt?c=0102030405060708").is_none());
+    }
+
+    #[test]
+    fn extract_p_and_c_missing_c() {
+        assert!(extract_p_and_c("https://example.com/bolt?p=AABBCCDDEEFF00112233445566778899").is_none());
+    }
+
+    #[test]
+    fn extract_p_and_c_empty_url() {
+        assert!(extract_p_and_c("").is_none());
+    }
+
+    #[test]
+    fn extract_p_and_c_no_query_params() {
+        assert!(extract_p_and_c("https://example.com/bolt").is_none());
+    }
+
+    #[test]
+    fn extract_p_and_c_extra_params() {
+        let url = "https://example.com/bolt?foo=bar&p=AABBCCDDEEFF00112233445566778899&baz=qux&c=0102030405060708";
+        let (p, c) = extract_p_and_c(url).unwrap();
+        assert_eq!(p, "AABBCCDDEEFF00112233445566778899");
+        assert_eq!(c, "0102030405060708");
+    }
+
+    #[test]
+    fn sdm_build_sv2_structure() {
+        let uid = [0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80];
+        let counter: u32 = 0x010203;
+        let sv2 = sdm_build_sv2(&uid, counter);
+
+        assert_eq!(&sv2[0..6], &SV2_HEADER);
+        assert_eq!(&sv2[6..13], &uid);
+        assert_eq!(sv2[13], 0x03);
+        assert_eq!(sv2[14], 0x02);
+        assert_eq!(sv2[15], 0x01);
+    }
+
+    #[test]
+    fn sdm_build_sv2_zero_counter() {
+        let uid = [0x01; 7];
+        let sv2 = sdm_build_sv2(&uid, 0);
+        assert_eq!(&sv2[0..6], &SV2_HEADER);
+        assert_eq!(&sv2[6..13], &[0x01; 7]);
+        assert_eq!(sv2[13], 0);
+        assert_eq!(sv2[14], 0);
+        assert_eq!(sv2[15], 0);
+    }
+
+    #[test]
+    fn picc_decrypt_p_wrong_length() {
+        assert!(picc_decrypt_p(&K1, "too_short").is_none());
+        assert!(picc_decrypt_p(&K1, "this_is_way_too_long_to_be_valid").is_none());
+    }
+
+    #[test]
+    fn picc_decrypt_p_invalid_hex() {
+        assert!(picc_decrypt_p(&K1, "ZZ112233445566778899AABBCCDDEEFF").is_none());
+    }
+
+    #[test]
+    fn picc_verify_c_wrong_length() {
+        let picc = PiccData {
+            valid: false,
+            uid: [0x04; 7],
+            counter: 1,
+            has_uid: true,
+            has_counter: true,
+        };
+        assert!(!picc_verify_c(&K2, &picc, "too_short"));
+        assert!(!picc_verify_c(&K2, &picc, "way_too_long_hex_string_here"));
+    }
+
+    #[test]
+    fn picc_data_default() {
+        let picc = PiccData::default();
+        assert!(!picc.valid);
+        assert_eq!(picc.uid, [0u8; 7]);
+        assert_eq!(picc.counter, 0);
+        assert!(!picc.has_uid);
+        assert!(!picc.has_counter);
+    }
 }
