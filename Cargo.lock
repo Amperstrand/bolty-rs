@@ -189,10 +189,12 @@ dependencies = [
 name = "bolty-cli"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "anyhow",
  "bolty-core",
  "bolty-ntag",
  "clap",
+ "cmac",
  "getrandom 0.3.4",
  "ntag424",
  "pcsc",
