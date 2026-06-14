@@ -90,6 +90,9 @@ impl<T: core::error::Error + core::fmt::Debug> From<ntag424::sdm::SdmUrlError> f
     }
 }
 
+/// Check if an error is an authentication delay response.
+/// Authentication delay means the card has temporarily locked due to
+/// too many failed auth attempts and will recover after a timeout.
 pub fn is_authentication_delay<T: core::error::Error + core::fmt::Debug>(err: &Error<T>) -> bool {
     matches!(
         err,
@@ -100,7 +103,21 @@ pub fn is_authentication_delay<T: core::error::Error + core::fmt::Debug>(err: &E
     )
 }
 
-fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
+/// Check if a raw `SessionError` is an authentication delay.
+/// Use this when calling ntag424 `Session` methods directly
+/// (outside of `bolty_ntag` wrappers).
+pub fn is_session_auth_delay<T: core::error::Error + core::fmt::Debug>(
+    err: &SessionError<T>,
+) -> bool {
+    matches!(
+        err,
+        SessionError::ErrorResponse(ResponseStatus::AuthenticationDelay)
+    )
+}
+
+/// Convert an `ntag424::Uid` to a fixed 7-byte array.
+/// Returns all-zeros for random UIDs (which can't be used for key derivation).
+pub fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
     match uid {
         Uid::Fixed(f) => *f,
         Uid::Random(_) => [0u8; 7],

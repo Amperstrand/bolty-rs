@@ -94,14 +94,7 @@ fn parse_hex_7(s: &str) -> anyhow::Result<[u8; 7]> {
 /// SAFETY: b is u8, so b>>4 ∈ 0..16 and b&0xf ∈ 0..16; HEX has 16 elements.
 #[allow(clippy::indexing_slicing)]
 fn to_hex(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0xf) as usize] as char);
-    }
-    s
+    bolty_core::util::encode_hex(bytes.as_ref())
 }
 
 fn connect_transport() -> anyhow::Result<audit::LoggingTransport<transport::PcscTransport>> {

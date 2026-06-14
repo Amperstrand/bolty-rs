@@ -50,7 +50,7 @@ pub fn decode_hex<const N: usize>(hex: &str) -> Result<[u8; N], HexError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HexError, decode_hex, decode_hex_into, decode_hex_nibble};
+    use super::{HexError, decode_hex, decode_hex_into, decode_hex_nibble, encode_hex_into};
 
     // ── decode_hex_nibble ──────────────────────────────────────────
 
@@ -234,4 +234,54 @@ mod tests {
         let result = decode_hex::<4>("DEADBEEF");
         assert_eq!(result, Ok([0xDE, 0xAD, 0xBE, 0xEF]));
     }
+
+    #[test]
+    fn encode_hex_lowercase() {
+        let mut buf = [0u8; 8];
+        let len = encode_hex_into(&[0xDE, 0xAD, 0xBE, 0xEF], &mut buf);
+        assert_eq!(&buf[..len], b"deadbeef");
+    }
+
+    #[test]
+    fn encode_hex_empty() {
+        let mut buf = [0u8; 4];
+        let len = encode_hex_into(&[], &mut buf);
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn encode_hex_all_bytes() {
+        let mut buf = [0u8; 512];
+        let input: Vec<u8> = (0..=255).collect();
+        let len = encode_hex_into(&input, &mut buf);
+        assert_eq!(len, 512);
+        assert_eq!(&buf[..2], b"00");
+        assert_eq!(&buf[..4], b"0001");
+        assert_eq!(&buf[510..], b"ff");
+    }
+}
+
+const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
+
+#[allow(clippy::indexing_slicing)]
+pub fn encode_hex_into(input: &[u8], out: &mut [u8]) -> usize {
+    let max = input.len().min(out.len() / 2);
+    for (i, &b) in input[..max].iter().enumerate() {
+        #[allow(clippy::indexing_slicing)]
+        let pos = i * 2;
+        out[pos] = HEX_LOWER[(b >> 4) as usize];
+        out[pos + 1] = HEX_LOWER[(b & 0xf) as usize];
+    }
+    max * 2
+}
+
+#[cfg(feature = "std")]
+#[allow(clippy::indexing_slicing)]
+pub fn encode_hex(input: &[u8]) -> String {
+    let mut s = String::with_capacity(input.len() * 2);
+    for &b in input {
+        s.push(HEX_LOWER[(b >> 4) as usize] as char);
+        s.push(HEX_LOWER[(b & 0xf) as usize] as char);
+    }
+    s
 }
