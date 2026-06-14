@@ -92,7 +92,7 @@ If `bolty.local` does not resolve, verify that the host has mDNS enabled (`avahi
 
 ## Improvement areas already identified
 
-- Add the actual `display-st7789` implementation for M5StickC Plus using a lightweight driver stack.
-- Add timeout hardening in vendored MFRC522/ISO14443 loops before expanding hardware support.
-- Keep reducing implicit behavior in the firmware loop and serial console FFI edges.
+- Re-enable `display-st7789` and verify NFC + display coexist on M5StickC Plus hardware (display driver code exists, feature is wired into `board-m5stick`).
+- Add I2C bus recovery (SCL toggle) before `I2cDriver` init for robustness against stuck-bus conditions.
+- Add MFRC522 init retry with backoff (currently single attempt; vendor `init()` consumes the bus on failure).
 - Introduce a separate PN532 frontend when that transport is added, rather than overloading board features.

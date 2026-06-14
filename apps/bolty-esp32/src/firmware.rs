@@ -9,6 +9,7 @@ use esp_idf_hal::{
     delay::FreeRtos,
     i2c::{I2cConfig, I2cDriver},
     peripherals::Peripherals,
+    task::watchdog,
     units::FromValueType,
 };
 use esp_idf_sys as _;
@@ -47,6 +48,7 @@ pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
+const WATCHDOG_TIMEOUT_SECS: u64 = 5;
 #[cfg(feature = "rest")]
 pub(super) const REST_PORT: u16 = 80;
 
@@ -58,6 +60,33 @@ pub fn main() {
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,
         Err(_) => fatal_halt("peripherals already taken"),
+    };
+
+    let mut twdt_driver = {
+        let config = watchdog::config::Config {
+            duration: core::time::Duration::from_secs(WATCHDOG_TIMEOUT_SECS),
+            ..watchdog::config::Config::new()
+        };
+        match watchdog::TWDTDriver::new(peripherals.twdt, &config) {
+            Ok(driver) => Some(driver),
+            Err(e) => {
+                log::warn!("watchdog init failed: {e}");
+                None
+            }
+        }
+    };
+    let mut wdt = match twdt_driver.as_mut() {
+        Some(driver) => match driver.watch_current_task() {
+            Ok(sub) => {
+                info!("watchdog subscribed ({WATCHDOG_TIMEOUT_SECS}s)");
+                Some(sub)
+            }
+            Err(e) => {
+                log::warn!("watchdog subscribe failed: {e}");
+                None
+            }
+        },
+        None => None,
     };
 
     #[cfg(feature = "led-matrix")]
@@ -196,6 +225,10 @@ pub fn main() {
         if now >= next_poll_at {
             poll_card(&mut serial, &service, &mut card_announced);
             next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
+        }
+
+        if let Some(ref mut wdt) = wdt {
+            let _ = wdt.feed();
         }
 
         FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
