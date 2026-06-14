@@ -1,11 +1,14 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod audit;
-mod burn;
+pub(crate) mod burn;
 mod common;
 mod diagnose;
 mod inspect;
 mod keyver;
+#[cfg(test)]
+#[path = "mock_transport.rs"]
+mod mock_transport;
 mod picc;
 mod transport;
 mod ver;

@@ -259,3 +259,43 @@ where
     println!("\n✅ Card wiped and verified successfully!");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dry_run_preserves_provisioned_card_state() {
+        let mut transport = crate::mock_transport::MockTransport::new();
+
+        let issuer_key = [0u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+
+        crate::burn::cmd_burn(&mut transport, &issuer_key, url, 1, false, false)
+            .await
+            .expect("burn to provision card for wipe dry-run test");
+
+        let keys_before = transport.keys().clone();
+        let ndef_before = transport.ndef().to_vec();
+        let settings_before = transport.file_settings().to_vec();
+
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, true).await;
+        assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
+
+        assert_eq!(
+            transport.keys(),
+            &keys_before,
+            "keys must not change during dry-run"
+        );
+        assert_eq!(
+            transport.ndef(),
+            &ndef_before[..],
+            "NDEF must not change during dry-run"
+        );
+        assert_eq!(
+            transport.file_settings(),
+            &settings_before[..],
+            "file settings must not change during dry-run"
+        );
+    }
+}
