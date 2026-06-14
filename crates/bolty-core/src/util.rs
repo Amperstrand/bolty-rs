@@ -65,14 +65,28 @@ mod tests {
 
     #[test]
     fn nibble_valid_lowercase() {
-        for (ch, expected) in [(b'a', 10), (b'b', 11), (b'c', 12), (b'd', 13), (b'e', 14), (b'f', 15)] {
+        for (ch, expected) in [
+            (b'a', 10),
+            (b'b', 11),
+            (b'c', 12),
+            (b'd', 13),
+            (b'e', 14),
+            (b'f', 15),
+        ] {
             assert_eq!(decode_hex_nibble(ch), Some(expected));
         }
     }
 
     #[test]
     fn nibble_valid_uppercase() {
-        for (ch, expected) in [(b'A', 10), (b'B', 11), (b'C', 12), (b'D', 13), (b'E', 14), (b'F', 15)] {
+        for (ch, expected) in [
+            (b'A', 10),
+            (b'B', 11),
+            (b'C', 12),
+            (b'D', 13),
+            (b'E', 14),
+            (b'F', 15),
+        ] {
             assert_eq!(decode_hex_nibble(ch), Some(expected));
         }
     }
@@ -125,7 +139,10 @@ mod tests {
     #[test]
     fn decode_into_valid_all_zeros() {
         let mut out = [0u8; 16];
-        assert_eq!(decode_hex_into("00000000000000000000000000000000", &mut out), Ok(()));
+        assert_eq!(
+            decode_hex_into("00000000000000000000000000000000", &mut out),
+            Ok(())
+        );
         assert_eq!(out, [0u8; 16]);
     }
 
@@ -138,31 +155,46 @@ mod tests {
     #[test]
     fn decode_into_wrong_length_too_short() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("de", &mut out), Err(HexError::InvalidLength));
+        assert_eq!(
+            decode_hex_into("de", &mut out),
+            Err(HexError::InvalidLength)
+        );
     }
 
     #[test]
     fn decode_into_wrong_length_too_long() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("deadbe", &mut out), Err(HexError::InvalidLength));
+        assert_eq!(
+            decode_hex_into("deadbe", &mut out),
+            Err(HexError::InvalidLength)
+        );
     }
 
     #[test]
     fn decode_into_invalid_char_at_start() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("gead", &mut out), Err(HexError::InvalidHexCharacter));
+        assert_eq!(
+            decode_hex_into("gead", &mut out),
+            Err(HexError::InvalidHexCharacter)
+        );
     }
 
     #[test]
     fn decode_into_invalid_char_in_middle() {
         let mut out = [0u8; 4];
-        assert_eq!(decode_hex_into("deXXbeef", &mut out), Err(HexError::InvalidHexCharacter));
+        assert_eq!(
+            decode_hex_into("deXXbeef", &mut out),
+            Err(HexError::InvalidHexCharacter)
+        );
     }
 
     #[test]
     fn decode_into_invalid_char_at_end() {
         let mut out = [0u8; 2];
-        assert_eq!(decode_hex_into("dexg", &mut out), Err(HexError::InvalidHexCharacter));
+        assert_eq!(
+            decode_hex_into("dexg", &mut out),
+            Err(HexError::InvalidHexCharacter)
+        );
     }
 
     // ── decode_hex::<N> ────────────────────────────────────────────

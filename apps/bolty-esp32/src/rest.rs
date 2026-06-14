@@ -194,11 +194,17 @@ where
     });
 
     match result {
-        Ok(WorkflowResult::Success) => respond_json(request, 200, json_ok("\"blank\":true").as_str()),
+        Ok(WorkflowResult::Success) => {
+            respond_json(request, 200, json_ok("\"blank\":true").as_str())
+        }
         Ok(WorkflowResult::Error(message)) if message.as_str() == "card not blank" => {
             respond_json(request, 200, json_ok("\"blank\":false").as_str())
         }
-        Ok(other) => respond_json(request, 200, json_err(workflow_error_message(&other)).as_str()),
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
         Err(message) => respond_json(request, 500, json_err(message).as_str()),
     }
 }
@@ -218,10 +224,10 @@ where
     let body = match read_body(&mut request) {
         Ok(body) => body,
         Err(ReadBodyError::TooLarge) => {
-            return respond_json(request, 413, json_err("request too large").as_str())
+            return respond_json(request, 413, json_err("request too large").as_str());
         }
         Err(ReadBodyError::InvalidUtf8) => {
-            return respond_json(request, 400, json_err("invalid utf-8 body").as_str())
+            return respond_json(request, 400, json_err("invalid utf-8 body").as_str());
         }
         Err(ReadBodyError::Io(error)) => return Err(error),
     };
@@ -239,7 +245,11 @@ where
 
     match result {
         Ok(WorkflowResult::Success) => respond_json(request, 200, json_ok("").as_str()),
-        Ok(other) => respond_json(request, 200, json_err(workflow_error_message(&other)).as_str()),
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
         Err(message) => respond_json(request, 500, json_err(message).as_str()),
     }
 }
@@ -259,10 +269,10 @@ where
     let body = match read_body(&mut request) {
         Ok(body) => body,
         Err(ReadBodyError::TooLarge) => {
-            return respond_json(request, 413, json_err("request too large").as_str())
+            return respond_json(request, 413, json_err("request too large").as_str());
         }
         Err(ReadBodyError::InvalidUtf8) => {
-            return respond_json(request, 400, json_err("invalid utf-8 body").as_str())
+            return respond_json(request, 400, json_err("invalid utf-8 body").as_str());
         }
         Err(ReadBodyError::Io(error)) => return Err(error),
     };
@@ -286,7 +296,11 @@ where
 
     match result {
         Ok(WorkflowResult::Success) => respond_json(request, 200, json_ok("").as_str()),
-        Ok(other) => respond_json(request, 200, json_err(workflow_error_message(&other)).as_str()),
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
         Err(message) => respond_json(request, 500, json_err(message).as_str()),
     }
 }
@@ -351,12 +365,19 @@ fn json_status(status: &ServiceStatus) -> String<512> {
     let _ = write!(extra, "{}", status.nfc_ready);
     extra.push(',').ok();
     let _ = push_json_key(&mut extra, "uid");
-    let _ = push_json_string(&mut extra, if uid.is_empty() { "none" } else { uid.as_str() });
+    let _ = push_json_string(
+        &mut extra,
+        if uid.is_empty() { "none" } else { uid.as_str() },
+    );
     extra.push(',').ok();
     let _ = push_json_key(&mut extra, "lnurl");
     let _ = push_json_string(
         &mut extra,
-        status.lnurl.as_ref().map(LnurlString::as_str).unwrap_or("none"),
+        status
+            .lnurl
+            .as_ref()
+            .map(LnurlString::as_str)
+            .unwrap_or("none"),
     );
 
     json_ok(extra.as_str())
@@ -414,7 +435,11 @@ fn push_escaped_json<const N: usize>(out: &mut String<N>, value: &str) -> core::
     Ok(())
 }
 
-fn with_state<S, T, F>(config: &SharedConfig, service: &SharedService<S>, f: F) -> Result<T, &'static str>
+fn with_state<S, T, F>(
+    config: &SharedConfig,
+    service: &SharedService<S>,
+    f: F,
+) -> Result<T, &'static str>
 where
     S: RestBoltyService + Send + 'static,
     F: FnOnce(&mut BoltyConfig, &mut S) -> T,
@@ -429,7 +454,9 @@ fn workflow_error_message(result: &WorkflowResult) -> &str {
         WorkflowResult::Success => "success",
         WorkflowResult::CardNotPresent => "card not present",
         WorkflowResult::AuthFailed => "authentication failed",
-        WorkflowResult::AuthDelay => "authentication delay; remove card from field, wait, and retry with the correct key",
+        WorkflowResult::AuthDelay => {
+            "authentication delay; remove card from field, wait, and retry with the correct key"
+        }
         WorkflowResult::WipeRefused => "wipe refused",
         WorkflowResult::Error(message) => message.as_str(),
     }
@@ -487,7 +514,9 @@ enum ReadBodyError {
     InvalidUtf8,
 }
 
-fn read_body(request: &mut Request<&mut EspHttpConnection<'_>>) -> Result<String<MAX_BODY_LEN>, ReadBodyError> {
+fn read_body(
+    request: &mut Request<&mut EspHttpConnection<'_>>,
+) -> Result<String<MAX_BODY_LEN>, ReadBodyError> {
     let Some(length) = request.content_len() else {
         return Ok(String::new());
     };

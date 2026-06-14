@@ -26,11 +26,7 @@ mod tests {
     struct DummyService;
 
     impl service::BoltyService for DummyService {
-        fn burn(
-            &mut self,
-            _keys: &secret::CardKeys,
-            _lnurl: &str,
-        ) -> service::WorkflowResult {
+        fn burn(&mut self, _keys: &secret::CardKeys, _lnurl: &str) -> service::WorkflowResult {
             service::WorkflowResult::Success
         }
 
@@ -63,6 +59,9 @@ mod tests {
         );
 
         let mut service = DummyService;
-        assert!(matches!(service.check_blank(), service::WorkflowResult::Success));
+        assert!(matches!(
+            service.check_blank(),
+            service::WorkflowResult::Success
+        ));
     }
 }

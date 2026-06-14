@@ -84,7 +84,10 @@ mod tests {
         let config = IssuerConfig::default();
         assert!(config.name.is_none());
         assert!(config.issuer_key.is_zero());
-        assert_eq!(config.derivation_version, u32::from(KEY_VERSION_PROVISIONED));
+        assert_eq!(
+            config.derivation_version,
+            u32::from(KEY_VERSION_PROVISIONED)
+        );
         assert_eq!(config.key_version, KEY_VERSION_PROVISIONED);
     }
 

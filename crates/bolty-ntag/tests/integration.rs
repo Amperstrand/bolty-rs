@@ -1,8 +1,7 @@
 mod mock;
 
 use bolty_ntag::{
-    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, KeySet, burn, check_key_versions, read_uid,
-    wipe,
+    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, KeySet, burn, check_key_versions, read_uid, wipe,
 };
 use mock::{MockTransport, UID, block_on};
 use ntag424::{
@@ -84,7 +83,11 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
     assert_eq!(result.uid, UID);
     assert_eq!(transport.keys(), &[[0u8; 16]; 5]);
     assert_eq!(transport.key_versions(), &[FACTORY_KEY_VERSION; 5]);
-    assert_eq!(&transport.ndef()[..2], &[0x00, 0x00], "NDEF should be empty (NLEN=0)");
+    assert_eq!(
+        &transport.ndef()[..2],
+        &[0x00, 0x00],
+        "NDEF should be empty (NLEN=0)"
+    );
     assert_eq!(transport.keys()[0], FACTORY_KEY);
 }
 

@@ -114,7 +114,10 @@ mod tests {
 
     #[test]
     fn from_hex_invalid_chars() {
-        assert_eq!(AesKey::from_hex("GG00000000000000000000000000000X"), Err(HexError::InvalidHexCharacter));
+        assert_eq!(
+            AesKey::from_hex("GG00000000000000000000000000000X"),
+            Err(HexError::InvalidHexCharacter)
+        );
     }
 
     #[test]
@@ -188,4 +191,3 @@ mod tests {
         assert!(keys.k4.is_zero());
     }
 }
-

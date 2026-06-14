@@ -18,7 +18,9 @@ pub enum Command {
         password: WifiPasswordString,
     },
     WifiOff,
-    Ota { url: UrlString },
+    Ota {
+        url: UrlString,
+    },
     Burn,
     Wipe,
     Ndef,
@@ -140,7 +142,9 @@ pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
     crate::util::decode_hex(s).ok()
 }
 
-fn parse_keys_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
+fn parse_keys_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
     let k0 = parse_key_arg(parts.next())?;
     let k1 = parse_key_arg(parts.next())?;
     let k2 = parse_key_arg(parts.next())?;
@@ -160,7 +164,9 @@ fn parse_keys_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Co
     }))
 }
 
-fn parse_issuer_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
+fn parse_issuer_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
     match parts.next() {
         None => Ok(Command::Issuer),
         Some(hex) => {
@@ -173,7 +179,9 @@ fn parse_issuer_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<
     }
 }
 
-fn parse_url_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
+fn parse_url_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
     let Some(url) = parts.next() else {
         return Err(CommandError::MissingArgs);
     };
@@ -186,7 +194,9 @@ fn parse_url_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Com
     Ok(Command::SetUrl(lnurl))
 }
 
-fn parse_wifi_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
+fn parse_wifi_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
     let Some(first) = parts.next() else {
         return Err(CommandError::MissingArgs);
     };
@@ -221,7 +231,9 @@ fn parse_wifi_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Co
     })
 }
 
-fn parse_ota_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Command, CommandError> {
+fn parse_ota_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
     let Some(url) = parts.next() else {
         return Err(CommandError::MissingArgs);
     };
@@ -230,7 +242,9 @@ fn parse_ota_command<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<Com
     }
 
     let mut url_out = UrlString::new();
-    url_out.push_str(url).map_err(|_| CommandError::InvalidArgs)?;
+    url_out
+        .push_str(url)
+        .map_err(|_| CommandError::InvalidArgs)?;
     Ok(Command::Ota { url: url_out })
 }
 
@@ -271,8 +285,20 @@ mod tests {
         let Command::SetKeys(keys) = command else {
             unreachable!("expected SetKeys, got {command:?}");
         };
-        assert_eq!(keys.k0.as_bytes(), &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]);
-        assert_eq!(keys.k4.as_bytes(), &[0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F]);
+        assert_eq!(
+            keys.k0.as_bytes(),
+            &[
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D,
+                0x0E, 0x0F
+            ]
+        );
+        assert_eq!(
+            keys.k4.as_bytes(),
+            &[
+                0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+                0x4E, 0x4F
+            ]
+        );
     }
 
     #[test]
@@ -285,13 +311,19 @@ mod tests {
         let Command::SetIssuer(key) = command else {
             unreachable!("expected SetIssuer, got {command:?}");
         };
-        assert_eq!(key.as_bytes(), &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+        assert_eq!(
+            key.as_bytes(),
+            &[
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+                0xEE, 0xFF
+            ]
+        );
     }
 
     #[test]
     fn parses_url_command() {
-        let command = parse_command("url https://example.com/lnurl")
-            .expect("url command should parse");
+        let command =
+            parse_command("url https://example.com/lnurl").expect("url command should parse");
         let mut expected = LnurlString::new();
         expected.push_str("https://example.com/lnurl").unwrap();
         assert_eq!(command, Command::SetUrl(expected));
@@ -299,7 +331,8 @@ mod tests {
 
     #[test]
     fn parses_wifi_commands() {
-        let command = parse_command("wifi test-ssid supersecret").expect("wifi command should parse");
+        let command =
+            parse_command("wifi test-ssid supersecret").expect("wifi command should parse");
         assert_eq!(
             command,
             Command::SetWifi {
@@ -321,8 +354,8 @@ mod tests {
 
     #[test]
     fn parses_ota_command() {
-        let command = parse_command("ota http://example.com/fw.bin")
-            .expect("ota command should parse");
+        let command =
+            parse_command("ota http://example.com/fw.bin").expect("ota command should parse");
         assert_eq!(
             command,
             Command::Ota {
@@ -342,11 +375,20 @@ mod tests {
         assert_eq!(parse_command("url"), Err(CommandError::MissingArgs));
         assert_eq!(parse_command("wifi"), Err(CommandError::MissingArgs));
         assert_eq!(parse_command("wifi ssid"), Err(CommandError::MissingArgs));
-        assert_eq!(parse_command("wifi off now"), Err(CommandError::InvalidArgs));
+        assert_eq!(
+            parse_command("wifi off now"),
+            Err(CommandError::InvalidArgs)
+        );
         assert_eq!(parse_command("ota"), Err(CommandError::MissingArgs));
-        assert_eq!(parse_command("ota http://example.com/fw.bin now"), Err(CommandError::InvalidArgs));
+        assert_eq!(
+            parse_command("ota http://example.com/fw.bin now"),
+            Err(CommandError::InvalidArgs)
+        );
         assert_eq!(parse_command("burn now"), Err(CommandError::InvalidArgs));
-        assert_eq!(parse_command("issuer 00 extra"), Err(CommandError::InvalidArgs));
+        assert_eq!(
+            parse_command("issuer 00 extra"),
+            Err(CommandError::InvalidArgs)
+        );
     }
 
     #[test]

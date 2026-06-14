@@ -95,7 +95,11 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
             #[allow(clippy::indexing_slicing)]
             {
                 let clamped = len.min(buf.len());
-                println!("NDEF content ({} bytes): {}", clamped, crate::to_hex(&buf[..clamped]));
+                println!(
+                    "NDEF content ({} bytes): {}",
+                    clamped,
+                    crate::to_hex(&buf[..clamped])
+                );
                 if let Ok(s) = std::str::from_utf8(&buf[..clamped]) {
                     println!("NDEF (text): {s}");
                 }
@@ -124,7 +128,11 @@ pub async fn cmd_burn(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, CardUid::new(uid_fixed), version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(
+        issuer_key,
+        CardUid::new(uid_fixed),
+        version as u32,
+    );
     if verbose {
         print_derived_keys(&keys, version);
     }
@@ -183,7 +191,10 @@ pub async fn cmd_burn(
     }
 
     // --- Write NDEF + verify prefix ---
-    println!("[2/7] Writing NDEF template ({} bytes)...", plan.ndef_bytes.len());
+    println!(
+        "[2/7] Writing NDEF template ({} bytes)...",
+        plan.ndef_bytes.len()
+    );
     session
         .write_file_plain(transport, File::Ndef, 0, &plan.ndef_bytes)
         .await
@@ -198,15 +209,19 @@ pub async fn cmd_burn(
     // NDEF file is typically 256 bytes; only compare the bytes we actually wrote
     // SAFETY: read_buf is [u8; 256], NDEF templates are always <= 256 bytes.
     #[allow(clippy::indexing_slicing)]
-    if read_len < plan.ndef_bytes.len()
-        || read_buf[..plan.ndef_bytes.len()] != plan.ndef_bytes[..]
+    if read_len < plan.ndef_bytes.len() || read_buf[..plan.ndef_bytes.len()] != plan.ndef_bytes[..]
     {
         anyhow::bail!(
             "NDEF verification failed: wrote {} bytes, read back {} bytes — prefix mismatch.\n\
-             Card state: NDEF may be corrupt, K0=factory → re-burn should fix this."
-        , plan.ndef_bytes.len(), read_len);
+             Card state: NDEF may be corrupt, K0=factory → re-burn should fix this.",
+            plan.ndef_bytes.len(),
+            read_len
+        );
     }
-    println!("  ✓ NDEF verified ({} bytes written)", plan.ndef_bytes.len());
+    println!(
+        "  ✓ NDEF verified ({} bytes written)",
+        plan.ndef_bytes.len()
+    );
 
     // --- Configure SDM + verify ---
     println!("[3/7] Configuring SDM file settings...");
@@ -242,7 +257,12 @@ pub async fn cmd_burn(
         (NonMasterKeyNumber::Key3, keys.k3.as_bytes(), "K3"),
         (NonMasterKeyNumber::Key4, keys.k4.as_bytes(), "K4"),
     ];
-    let derived_keys = [keys.k1.as_bytes(), keys.k2.as_bytes(), keys.k3.as_bytes(), keys.k4.as_bytes()];
+    let derived_keys = [
+        keys.k1.as_bytes(),
+        keys.k2.as_bytes(),
+        keys.k3.as_bytes(),
+        keys.k4.as_bytes(),
+    ];
 
     let mut session = session;
     // SAFETY: i from enumerate over key_steps (4 items); derived_keys has 4 items.
@@ -264,15 +284,14 @@ pub async fn cmd_burn(
                 session = s;
             }
             Err(e) => {
-                let already_changed: Vec<&str> = key_steps[..i]
-                    .iter()
-                    .map(|(_, _, l)| *l)
-                    .collect();
+                let already_changed: Vec<&str> =
+                    key_steps[..i].iter().map(|(_, _, l)| *l).collect();
                 anyhow::bail!(
                     "Failed to install {label}: {e:#}\n\
                      Card state: NDEF ✓, SDM ✓, K0=factory, changed keys: [{}]\n\
-                     Recovery: re-run burn (factory K0 still active, changed keys will be overwritten)"
-                 , already_changed.join(", "));
+                     Recovery: re-run burn (factory K0 still active, changed keys will be overwritten)",
+                    already_changed.join(", ")
+                );
             }
         }
     }
@@ -350,7 +369,11 @@ pub async fn cmd_wipe(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, CardUid::new(uid_fixed), version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(
+        issuer_key,
+        CardUid::new(uid_fixed),
+        version as u32,
+    );
     if verbose {
         println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
     }
@@ -401,14 +424,11 @@ pub async fn cmd_wipe(
             Session::default()
                 .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
-                .context(
-                    "derived K0 authentication failed — wrong issuer key or card not burned",
-                )?
+                .context("derived K0 authentication failed — wrong issuer key or card not burned")?
         }
         Err(e) => {
-            return Err(e).context(
-                "derived K0 authentication failed — wrong issuer key or card not burned",
-            )
+            return Err(e)
+                .context("derived K0 authentication failed — wrong issuer key or card not burned");
         }
     };
 
@@ -432,10 +452,30 @@ pub async fn cmd_wipe(
 
     // Reset K1-K4 to factory
     let key_steps: [(NonMasterKeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
-        (NonMasterKeyNumber::Key1, &FACTORY_KEY, keys.k1.as_bytes(), "K1"),
-        (NonMasterKeyNumber::Key2, &FACTORY_KEY, keys.k2.as_bytes(), "K2"),
-        (NonMasterKeyNumber::Key3, &FACTORY_KEY, keys.k3.as_bytes(), "K3"),
-        (NonMasterKeyNumber::Key4, &FACTORY_KEY, keys.k4.as_bytes(), "K4"),
+        (
+            NonMasterKeyNumber::Key1,
+            &FACTORY_KEY,
+            keys.k1.as_bytes(),
+            "K1",
+        ),
+        (
+            NonMasterKeyNumber::Key2,
+            &FACTORY_KEY,
+            keys.k2.as_bytes(),
+            "K2",
+        ),
+        (
+            NonMasterKeyNumber::Key3,
+            &FACTORY_KEY,
+            keys.k3.as_bytes(),
+            "K3",
+        ),
+        (
+            NonMasterKeyNumber::Key4,
+            &FACTORY_KEY,
+            keys.k4.as_bytes(),
+            "K4",
+        ),
     ];
 
     let mut session = session;
@@ -452,10 +492,8 @@ pub async fn cmd_wipe(
                 session = s;
             }
             Err(e) => {
-                let already_reset: Vec<&str> = key_steps[..i]
-                    .iter()
-                    .map(|(_, _, _, l)| *l)
-                    .collect();
+                let already_reset: Vec<&str> =
+                    key_steps[..i].iter().map(|(_, _, _, l)| *l).collect();
                 anyhow::bail!(
                     "Failed to reset {label}: {e:#}\n\
                      Card state: partially wiped (reset: [{}])\n\
@@ -492,7 +530,8 @@ pub async fn cmd_wipe(
                 if has_picc || has_mac {
                     anyhow::bail!(
                         "POST-WIPE WARNING: SDM still functionally active (picc={}, mac={})!",
-                        has_picc, has_mac
+                        has_picc,
+                        has_mac
                     );
                 }
             }

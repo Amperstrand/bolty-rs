@@ -43,12 +43,7 @@ impl<I2C: I2c> Mfrc522Transceiver<I2C> {
 
     fn soft_reset(&mut self) -> Result<(), Mfrc522Error<I2C::Error>> {
         self.mfrc522.write_register(Register::CommandReg, 0x0F)?;
-        while self
-            .mfrc522
-            .read_register(Register::CommandReg)?
-            & 0x10
-            != 0
-        {}
+        while self.mfrc522.read_register(Register::CommandReg)? & 0x10 != 0 {}
         Ok(())
     }
 
@@ -56,8 +51,7 @@ impl<I2C: I2c> Mfrc522Transceiver<I2C> {
         self.mfrc522.write_register(Register::TxModeReg, 0x00)?;
         self.mfrc522.write_register(Register::RxModeReg, 0x00)?;
         self.mfrc522.write_register(Register::ModWidthReg, 0x26)?;
-        self.mfrc522
-            .write_register(Register::TxASKReg, 0x40)?;
+        self.mfrc522.write_register(Register::TxASKReg, 0x40)?;
         self.mfrc522
             .write_register(Register::ModeReg, (0x3f & !0b11) | 0b01)?;
         Ok(())
@@ -69,8 +63,7 @@ impl<I2C: I2c> Mfrc522Transceiver<I2C> {
         self.mfrc522
             .rmw_register(Register::TxControlReg, |b| b & !0b11)?;
         for _ in 0..4 {
-            self.mfrc522
-                .write_register(Register::FIFOLevelReg, 0x80)?;
+            self.mfrc522.write_register(Register::FIFOLevelReg, 0x80)?;
         }
         self.mfrc522
             .rmw_register(Register::TxControlReg, |b| b | 0b11)?;

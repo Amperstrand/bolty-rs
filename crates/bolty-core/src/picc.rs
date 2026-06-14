@@ -1,9 +1,9 @@
-use aes::Aes128;
-use aes::cipher::{Array, Block, BlockCipherDecrypt, KeyInit};
-#[cfg(test)]
-use aes::cipher::BlockCipherEncrypt;
 use crate::crypto::aes_cmac;
 use crate::util::decode_hex_into;
+use aes::Aes128;
+#[cfg(test)]
+use aes::cipher::BlockCipherEncrypt;
+use aes::cipher::{Array, Block, BlockCipherDecrypt, KeyInit};
 
 pub const PICC_FORMAT_BOLTCARD: u8 = 0xC7;
 pub const PICC_FLAG_HAS_UID: u8 = 0x80;
@@ -73,9 +73,7 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     };
 
     picc.uid.copy_from_slice(&buf[1..1 + PICC_UID_BYTE_LEN]);
-    picc.counter = u32::from(buf[8])
-        | (u32::from(buf[9]) << 8)
-        | (u32::from(buf[10]) << 16);
+    picc.counter = u32::from(buf[8]) | (u32::from(buf[9]) << 8) | (u32::from(buf[10]) << 16);
 
     Some(picc)
 }
@@ -190,19 +188,20 @@ mod tests {
 
     const FIXTURE_FILE: &str = include_str!("../../../tests/fixtures/picc/valid_picc.toml");
     const K1: [u8; 16] = [
-        0x55, 0xDA, 0x17, 0x4C, 0x96, 0x08, 0x99, 0x3D, 0xC2, 0x7B, 0xB3, 0xF3, 0x0A, 0x4A,
-        0x73, 0x14,
+        0x55, 0xDA, 0x17, 0x4C, 0x96, 0x08, 0x99, 0x3D, 0xC2, 0x7B, 0xB3, 0xF3, 0x0A, 0x4A, 0x73,
+        0x14,
     ];
     const K2: [u8; 16] = [
-        0x2A, 0xB7, 0x4A, 0xBC, 0x12, 0x73, 0xFB, 0x43, 0xCA, 0xE9, 0x75, 0x53, 0xA3, 0x6D,
-        0x4D, 0x08,
+        0x2A, 0xB7, 0x4A, 0xBC, 0x12, 0x73, 0xFB, 0x43, 0xCA, 0xE9, 0x75, 0x53, 0xA3, 0x6D, 0x4D,
+        0x08,
     ];
 
     #[test]
     fn picc_valid_vectors() {
         assert!(FIXTURE_FILE.contains("E61CB056F52D34F9368F079D1814D2CF"));
 
-        let fixture_url = "https://example.com/bolt?p=E61CB056F52D34F9368F079D1814D2CF&c=FCC9A22201EA2298";
+        let fixture_url =
+            "https://example.com/bolt?p=E61CB056F52D34F9368F079D1814D2CF&c=FCC9A22201EA2298";
         let fixture_picc = picc_parse_url(&K1, &K2, fixture_url);
         assert!(fixture_picc.valid);
         assert_eq!(fixture_picc.uid, [0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80]);
@@ -218,7 +217,13 @@ mod tests {
             has_counter: true,
         };
         let sv2 = sdm_build_sv2(&manual_picc.uid, manual_picc.counter);
-        assert_eq!(sv2, [0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80, 0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80, 0x2A, 0x00, 0x00]);
+        assert_eq!(
+            sv2,
+            [
+                0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80, 0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80, 0x2A,
+                0x00, 0x00
+            ]
+        );
 
         let derived_key = aes_cmac(&K2, &sv2);
         let mac_hex = hex_string(&truncate_odd_bytes(&aes_cmac(&derived_key, &[])));
@@ -248,9 +253,30 @@ mod tests {
         let mac_hex = hex_string(&truncate_odd_bytes(&aes_cmac(&derived_key, &[])));
 
         assert!(!picc_parse_url(&K1, &K2, "https://example.com/bolt?c=0011223344556677").valid);
-        assert!(!picc_parse_url(&K1, &K2, "https://example.com/bolt?p=00112233445566778899AABBCCDDEEFF").valid);
-        assert!(!picc_parse_url(&K1, &K2, "https://example.com/bolt?p=ZZ112233445566778899AABBCCDDEEFF&c=0011223344556677").valid);
-        assert!(!picc_parse_url(&K1, &K2, "https://example.com/bolt?p=00112233445566778899AABBCCDDEE&c=0011223344556677").valid);
+        assert!(
+            !picc_parse_url(
+                &K1,
+                &K2,
+                "https://example.com/bolt?p=00112233445566778899AABBCCDDEEFF"
+            )
+            .valid
+        );
+        assert!(
+            !picc_parse_url(
+                &K1,
+                &K2,
+                "https://example.com/bolt?p=ZZ112233445566778899AABBCCDDEEFF&c=0011223344556677"
+            )
+            .valid
+        );
+        assert!(
+            !picc_parse_url(
+                &K1,
+                &K2,
+                "https://example.com/bolt?p=00112233445566778899AABBCCDDEE&c=0011223344556677"
+            )
+            .valid
+        );
         assert!(picc_decrypt_p(&[0u8; 16], p_hex.as_str()).is_none());
         assert!(!picc_parse_url(&K1, &K2, &build_url(&p_hex, "0011223344556677")).valid);
         assert!(picc_parse_url(&K1, &K2, &build_url(&p_hex, &mac_hex)).valid);
@@ -336,7 +362,10 @@ mod tests {
 
     #[test]
     fn extract_p_and_c_missing_c() {
-        assert!(extract_p_and_c("https://example.com/bolt?p=AABBCCDDEEFF00112233445566778899").is_none());
+        assert!(
+            extract_p_and_c("https://example.com/bolt?p=AABBCCDDEEFF00112233445566778899")
+                .is_none()
+        );
     }
 
     #[test]

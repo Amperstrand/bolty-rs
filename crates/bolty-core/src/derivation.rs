@@ -168,13 +168,22 @@ mod tests {
                 vector.version,
             );
 
-            assert_key_eq(vector.description, "card_key", &actual.card_key, &vector.expected.card_key);
+            assert_key_eq(
+                vector.description,
+                "card_key",
+                &actual.card_key,
+                &vector.expected.card_key,
+            );
             assert_key_eq(vector.description, "k0", &actual.k0, &vector.expected.k0);
             assert_key_eq(vector.description, "k1", &actual.k1, &vector.expected.k1);
             assert_key_eq(vector.description, "k2", &actual.k2, &vector.expected.k2);
             assert_key_eq(vector.description, "k3", &actual.k3, &vector.expected.k3);
             assert_key_eq(vector.description, "k4", &actual.k4, &vector.expected.k4);
-            assert_eq!(actual.card_id, vector.expected.card_id, "{} card_id mismatch", vector.description);
+            assert_eq!(
+                actual.card_id, vector.expected.card_id,
+                "{} card_id mismatch",
+                vector.description
+            );
         }
     }
 
@@ -243,7 +252,11 @@ mod tests {
             vector_count += 1;
         }
 
-        assert_eq!(vector_count, vectors.len(), "unexpected fixture vector count");
+        assert_eq!(
+            vector_count,
+            vectors.len(),
+            "unexpected fixture vector count"
+        );
         vectors
     }
 

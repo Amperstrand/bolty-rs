@@ -120,7 +120,9 @@ mod tests {
 
         fn inspect(&mut self) -> Result<CardAssessment, WorkflowResult> {
             self.inspect_calls += 1;
-            self.inspect_result.clone().unwrap_or(Ok(CardAssessment::default()))
+            self.inspect_result
+                .clone()
+                .unwrap_or(Ok(CardAssessment::default()))
         }
 
         fn check_blank(&mut self) -> WorkflowResult {
@@ -146,15 +148,28 @@ mod tests {
             k4: AesKey::new([0x44; 16]),
         };
 
-        assert_eq!(dispatch_command(Command::SetKeys(keys.clone()), &mut service, &mut config), WorkflowResult::Success);
+        assert_eq!(
+            dispatch_command(Command::SetKeys(keys.clone()), &mut service, &mut config),
+            WorkflowResult::Success
+        );
         assert_eq!(config.pending_keys, Some(keys));
 
         let issuer = AesKey::new([0xAA; 16]);
-        assert_eq!(dispatch_command(Command::SetIssuer(issuer.clone()), &mut service, &mut config), WorkflowResult::Success);
+        assert_eq!(
+            dispatch_command(
+                Command::SetIssuer(issuer.clone()),
+                &mut service,
+                &mut config
+            ),
+            WorkflowResult::Success
+        );
         assert_eq!(config.pending_issuer, Some(issuer));
 
         let url = lnurl_string("https://example.com/pay");
-        assert_eq!(dispatch_command(Command::SetUrl(url.clone()), &mut service, &mut config), WorkflowResult::Success);
+        assert_eq!(
+            dispatch_command(Command::SetUrl(url.clone()), &mut service, &mut config),
+            WorkflowResult::Success
+        );
         assert_eq!(config.lnurl, Some(url));
     }
 
@@ -163,10 +178,16 @@ mod tests {
         let mut service = MockService::default();
         let mut config = BoltyConfig::default();
 
-        assert_eq!(dispatch_command(Command::Burn, &mut service, &mut config), workflow_error("missing keys"));
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            workflow_error("missing keys")
+        );
 
         config.pending_keys = Some(CardKeys::zeroed());
-        assert_eq!(dispatch_command(Command::Burn, &mut service, &mut config), workflow_error("missing lnurl"));
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            workflow_error("missing lnurl")
+        );
     }
 
     #[test]
@@ -185,11 +206,20 @@ mod tests {
             rest_write_token: None,
         };
 
-        assert_eq!(dispatch_command(Command::Burn, &mut service, &mut config), WorkflowResult::Success);
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            WorkflowResult::Success
+        );
         assert_eq!(service.burn_calls, 1);
-        assert_eq!(service.last_burn_lnurl, Some(lnurl_string("https://example.com/pay")));
+        assert_eq!(
+            service.last_burn_lnurl,
+            Some(lnurl_string("https://example.com/pay"))
+        );
 
-        assert_eq!(dispatch_command(Command::Wipe, &mut service, &mut config), WorkflowResult::WipeRefused);
+        assert_eq!(
+            dispatch_command(Command::Wipe, &mut service, &mut config),
+            WorkflowResult::WipeRefused
+        );
         assert_eq!(service.wipe_calls, 1);
         assert!(service.last_wipe_had_keys);
     }
@@ -203,8 +233,14 @@ mod tests {
         };
         let mut config = BoltyConfig::default();
 
-        assert_eq!(dispatch_command(Command::Inspect, &mut service, &mut config), WorkflowResult::AuthFailed);
-        assert_eq!(dispatch_command(Command::Check, &mut service, &mut config), WorkflowResult::CardNotPresent);
+        assert_eq!(
+            dispatch_command(Command::Inspect, &mut service, &mut config),
+            WorkflowResult::AuthFailed
+        );
+        assert_eq!(
+            dispatch_command(Command::Check, &mut service, &mut config),
+            WorkflowResult::CardNotPresent
+        );
         assert_eq!(service.inspect_calls, 1);
         assert_eq!(service.check_calls, 1);
     }
@@ -238,7 +274,10 @@ mod tests {
             Command::DeriveKeys,
             Command::Issuer,
         ] {
-            assert_eq!(dispatch_command(command, &mut service, &mut config), WorkflowResult::Success);
+            assert_eq!(
+                dispatch_command(command, &mut service, &mut config),
+                WorkflowResult::Success
+            );
         }
     }
 

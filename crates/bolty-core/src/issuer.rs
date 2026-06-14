@@ -56,7 +56,10 @@ pub fn assess_card(
 ) -> CardAssessment {
     let mut assessment = base_assessment(uid, key_versions);
 
-    if key_versions.iter().all(|version| *version == KEY_VERSION_BLANK) {
+    if key_versions
+        .iter()
+        .all(|version| *version == KEY_VERSION_BLANK)
+    {
         assessment.state = CardState::Blank;
         assessment.kind = IdleCardKind::Blank;
         assessment.zero_key_auth_ok = true;
@@ -99,8 +102,7 @@ mod tests {
     use super::*;
     use crate::{config::IssuerConfig, secret::AesKey};
 
-    const FIXTURES: &str =
-        include_str!("../../../tests/fixtures/assessment/issuer_matching.toml");
+    const FIXTURES: &str = include_str!("../../../tests/fixtures/assessment/issuer_matching.toml");
 
     #[derive(Clone, Copy, Default)]
     struct FixtureVector {
@@ -121,7 +123,12 @@ mod tests {
             match (vector.expected_state, assessment.state) {
                 ("Blank", CardState::Blank) => {}
                 ("Provisioned", CardState::Provisioned(idx)) => {
-                    assert_eq!(Some(idx), vector.expected_issuer, "{} issuer mismatch", vector.description);
+                    assert_eq!(
+                        Some(idx),
+                        vector.expected_issuer,
+                        "{} issuer mismatch",
+                        vector.description
+                    );
                 }
                 ("Foreign", CardState::Foreign) => {}
                 _ => panic!("unexpected assessment state for {}", vector.description),
@@ -155,8 +162,8 @@ mod tests {
             },
             IssuerConfig {
                 issuer_key: AesKey::new([
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x01,
                 ]),
                 key_version: 0x42,
                 ..IssuerConfig::default()
@@ -217,7 +224,11 @@ mod tests {
             vector_count += 1;
         }
 
-        assert_eq!(vector_count, vectors.len(), "unexpected fixture vector count");
+        assert_eq!(
+            vector_count,
+            vectors.len(),
+            "unexpected fixture vector count"
+        );
         vectors
     }
 

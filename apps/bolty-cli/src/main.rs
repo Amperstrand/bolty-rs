@@ -181,7 +181,11 @@ async fn run() -> anyhow::Result<()> {
         } => {
             let uid = parse_hex_7(&uid)?;
             let issuer_key = parse_hex_16(&issuer_key)?;
-            let keys = BoltcardDeterministicDeriver::derive_keys(&issuer_key, CardUid::new(uid), version as u32);
+            let keys = BoltcardDeterministicDeriver::derive_keys(
+                &issuer_key,
+                CardUid::new(uid),
+                version as u32,
+            );
             if verbose {
                 println!("Derived keys (version {version}):");
                 println!("  cardKey: {}", to_hex(keys.card_key.as_bytes()));
@@ -222,7 +226,7 @@ async fn run() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hex_16, parse_hex_7};
+    use super::{parse_hex_7, parse_hex_16};
 
     // ── parse_hex_16 ───────────────────────────────────────────────
 

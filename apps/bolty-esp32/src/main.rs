@@ -30,7 +30,11 @@ mod ota;
 #[cfg(all(target_arch = "xtensa", feature = "display-st7789"))]
 mod display;
 
-#[cfg(all(target_arch = "xtensa", feature = "board-m5atom", feature = "board-m5stick"))]
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "board-m5atom",
+    feature = "board-m5stick"
+))]
 compile_error!("Enable exactly one board feature: `board-m5atom` or `board-m5stick`.");
 
 #[cfg(all(
@@ -42,7 +46,11 @@ compile_error!("Enable one board feature: `board-m5atom` or `board-m5stick`.");
 #[cfg(all(target_arch = "xtensa", not(feature = "nfc-mfrc522")))]
 compile_error!("The current firmware requires the `nfc-mfrc522` feature.");
 
-#[cfg(all(target_arch = "xtensa", feature = "led-matrix", not(feature = "board-m5atom")))]
+#[cfg(all(
+    target_arch = "xtensa",
+    feature = "led-matrix",
+    not(feature = "board-m5atom")
+))]
 compile_error!("`led-matrix` is only supported on `board-m5atom`.");
 
 #[cfg(all(
@@ -55,7 +63,10 @@ compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 #[cfg(target_arch = "xtensa")]
 mod firmware {
     use core::fmt::Write as _;
-    use std::{sync::{Arc, Mutex}, vec::Vec};
+    use std::{
+        sync::{Arc, Mutex},
+        vec::Vec,
+    };
 
     use bolty_core::{
         assessment::{CardAssessment, CardState},
@@ -67,14 +78,14 @@ mod firmware {
         workflow::dispatch_command,
     };
     use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver, Mfrc522Transport};
+    #[cfg(feature = "ota")]
+    use esp_idf_hal::reset::restart;
     use esp_idf_hal::{
         delay::FreeRtos,
         i2c::{I2cConfig, I2cDriver},
         peripherals::Peripherals,
         units::FromValueType,
     };
-    #[cfg(feature = "ota")]
-    use esp_idf_hal::reset::restart;
     use esp_idf_sys as _;
     use heapless::String;
     use log::info;
@@ -83,10 +94,10 @@ mod firmware {
     use crate::block_on;
     #[cfg(feature = "display-st7789")]
     use crate::display;
-    #[cfg(feature = "rest")]
-    use crate::rest::{RestBoltyService, RestServer};
     #[cfg(feature = "ota")]
     use crate::ota::OtaUpdater;
+    #[cfg(feature = "rest")]
+    use crate::rest::{RestBoltyService, RestServer};
     #[cfg(feature = "wifi")]
     use crate::wifi::{WifiError, WifiManager};
 
@@ -143,8 +154,8 @@ mod firmware {
         #[cfg(feature = "led-matrix")]
         neopixel_off(peripherals.pins.gpio27);
 
-    #[cfg(feature = "wifi")]
-    let modem = peripherals.modem;
+        #[cfg(feature = "wifi")]
+        let modem = peripherals.modem;
 
         #[cfg(feature = "display-st7789")]
         {
@@ -190,7 +201,9 @@ mod firmware {
         log::info!("I2C0 initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
 
         let initial_i2c_scan = scan_i2c_bus(&mut i2c);
-        let mfrc522_seen = initial_i2c_scan.iter().any(|&address| address == DEFAULT_I2C_ADDRESS);
+        let mfrc522_seen = initial_i2c_scan
+            .iter()
+            .any(|&address| address == DEFAULT_I2C_ADDRESS);
 
         let (xcvr, raw_i2c, nfc_ready) = if mfrc522_seen {
             match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
@@ -365,25 +378,23 @@ mod firmware {
             })
         }
 
-        fn inspect_with_key(
-            &mut self,
-            key: &[u8; 16],
-        ) -> Result<CardAssessment, WorkflowResult> {
+        fn inspect_with_key(&mut self, key: &[u8; 16]) -> Result<CardAssessment, WorkflowResult> {
             let mut transport = self.activate_transport()?;
             let uid = copy_uid7(transport.uid())
                 .ok_or_else(|| workflow_error("unsupported uid length"))?;
             let key_versions = block_on(bolty_ntag::check_key_versions(&mut transport, key, RND_A))
                 .map_err(|err| map_ntag_error(&err))?;
 
-            let issuer = self.current_config.pending_issuer.as_ref().map(|issuer_key| IssuerConfig {
-                name: self.current_config.issuer_name.clone(),
-                issuer_key: issuer_key.clone(),
-                ..IssuerConfig::default()
-            });
-            let issuers = issuer
+            let issuer = self
+                .current_config
+                .pending_issuer
                 .as_ref()
-                .map(core::slice::from_ref)
-                .unwrap_or(&[]);
+                .map(|issuer_key| IssuerConfig {
+                    name: self.current_config.issuer_name.clone(),
+                    issuer_key: issuer_key.clone(),
+                    ..IssuerConfig::default()
+                });
+            let issuers = issuer.as_ref().map(core::slice::from_ref).unwrap_or(&[]);
 
             let assessment = assess_card(&uid, key_versions, issuers);
             self.authenticated_key0 = Some(*key);
@@ -558,18 +569,22 @@ mod firmware {
         }
 
         fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult {
-             let Some(keys) = expected_keys else {
-                 return WorkflowResult::WipeRefused;
-             };
+            let Some(keys) = expected_keys else {
+                return WorkflowResult::WipeRefused;
+            };
 
-             log::info!("wipe: k0={:02X?}", keys.k0.as_bytes());
+            log::info!("wipe: k0={:02X?}", keys.k0.as_bytes());
 
-             let mut transport = match self.activate_transport() {
-                 Ok(transport) => transport,
-                 Err(err) => return err,
-             };
+            let mut transport = match self.activate_transport() {
+                Ok(transport) => transport,
+                Err(err) => return err,
+            };
 
-             match block_on(bolty_ntag::wipe(&mut transport, &card_keys_to_keyset(keys), RND_A)) {
+            match block_on(bolty_ntag::wipe(
+                &mut transport,
+                &card_keys_to_keyset(keys),
+                RND_A,
+            )) {
                 Ok(result) => {
                     self.status.last_uid = Some(result.uid);
                     self.status.nfc_ready = true;
@@ -645,11 +660,7 @@ mod firmware {
         fn read_byte_nonblocking(&mut self) -> Option<u8> {
             let mut byte = 0u8;
             let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
-            if read == 1 {
-                Some(byte)
-            } else {
-                None
-            }
+            if read == 1 { Some(byte) } else { None }
         }
 
         fn line(&mut self, line: &str) {
@@ -743,7 +754,11 @@ mod firmware {
                         #[cfg(feature = "rest")]
                         {
                             if rest_server.is_none() {
-                                match RestServer::start(REST_PORT, Arc::clone(config), Arc::clone(service)) {
+                                match RestServer::start(
+                                    REST_PORT,
+                                    Arc::clone(config),
+                                    Arc::clone(service),
+                                ) {
                                     Ok(server) => {
                                         *rest_server = Some(server);
                                         serial.ok("rest server started");
@@ -832,7 +847,10 @@ mod firmware {
         }
 
         #[cfg(not(feature = "wifi"))]
-        if matches!(&command, Command::SetWifi { .. } | Command::WifiOff | Command::Ota { .. }) {
+        if matches!(
+            &command,
+            Command::SetWifi { .. } | Command::WifiOff | Command::Ota { .. }
+        ) {
             let _ = wifi_manager;
             serial.fail("wifi feature disabled");
             set_display_fail(command_name(&command), "wifi feature disabled");
@@ -986,8 +1004,7 @@ mod firmware {
                 let _ = write!(
                     line,
                     "keys_loaded={} keys_confirmed={}",
-                    result.keys_loaded,
-                    result.keys_confirmed
+                    result.keys_loaded, result.keys_confirmed
                 );
                 serial.line(line.as_str());
                 serial.ok("picc complete");
@@ -1040,7 +1057,11 @@ mod firmware {
                 serial.line(fs_line.as_str());
 
                 let mut state_line = String::<64>::new();
-                let _ = write!(state_line, "classification={}", diagnose_state_label(result.state));
+                let _ = write!(
+                    state_line,
+                    "classification={}",
+                    diagnose_state_label(result.state)
+                );
                 serial.line(state_line.as_str());
                 serial.ok("diagnose complete");
                 set_display_ok("diagnose", "diagnose complete");
@@ -1082,7 +1103,11 @@ mod firmware {
             "nfc_ready={} uid={} lnurl={}",
             status.nfc_ready,
             if uid.is_empty() { "none" } else { uid.as_str() },
-            status.lnurl.as_ref().map(LnurlString::as_str).unwrap_or("none")
+            status
+                .lnurl
+                .as_ref()
+                .map(LnurlString::as_str)
+                .unwrap_or("none")
         );
         serial.ok(line.as_str());
         set_display_ok("status", line.as_str());
@@ -1225,7 +1250,9 @@ mod firmware {
                     }
                 }
             }
-            WorkflowResult::AuthFailed | WorkflowResult::AuthDelay | WorkflowResult::WipeRefused => {
+            WorkflowResult::AuthFailed
+            | WorkflowResult::AuthDelay
+            | WorkflowResult::WipeRefused => {
                 if !*card_announced && service.last_card.present {
                     serial.card(&service.last_card);
                     *card_announced = true;
@@ -1365,10 +1392,10 @@ mod firmware {
     {
         match error {
             err if bolty_ntag::is_authentication_delay(err) => WorkflowResult::AuthDelay,
-             bolty_ntag::Error::Session(ntag424::SessionError::ErrorResponse(status)) => {
-                 log::warn!("ntag424 auth error: {:?}", status);
-                 WorkflowResult::AuthFailed
-             }
+            bolty_ntag::Error::Session(ntag424::SessionError::ErrorResponse(status)) => {
+                log::warn!("ntag424 auth error: {:?}", status);
+                WorkflowResult::AuthFailed
+            }
             _ => workflow_error_debug(error),
         }
     }
@@ -1415,7 +1442,10 @@ mod firmware {
             && matches!(file_settings.access_rights.read, Access::Free)
             && matches!(file_settings.access_rights.write, Access::Free)
             && matches!(file_settings.access_rights.read_write, Access::Free)
-            && matches!(file_settings.access_rights.change, Access::Key(KeyNumber::Key0))
+            && matches!(
+                file_settings.access_rights.change,
+                Access::Key(KeyNumber::Key0)
+            )
     }
 
     fn ndef_ascii(bytes: &[u8]) -> String<MAX_LINE_LEN> {
@@ -1474,11 +1504,7 @@ mod firmware {
 
     fn millis() -> u64 {
         let micros = unsafe { esp_idf_sys::esp_timer_get_time() };
-        if micros <= 0 {
-            0
-        } else {
-            micros as u64 / 1000
-        }
+        if micros <= 0 { 0 } else { micros as u64 / 1000 }
     }
 
     fn scan_i2c_bus<I2C>(i2c: &mut I2C) -> Vec<u8>
@@ -1497,7 +1523,7 @@ mod firmware {
     #[cfg(feature = "led-matrix")]
     fn neopixel_off(pin: esp_idf_hal::gpio::Gpio27) {
         use core::time::Duration;
-        use esp_idf_hal::rmt::config::{TxChannelConfig, TransmitConfig};
+        use esp_idf_hal::rmt::config::{TransmitConfig, TxChannelConfig};
         use esp_idf_hal::rmt::encoder::{BytesEncoder, BytesEncoderConfig};
         use esp_idf_hal::rmt::{PinState, Pulse, Symbol, TxChannelDriver};
         use esp_idf_hal::units::FromValueType as _;

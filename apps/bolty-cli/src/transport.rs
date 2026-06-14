@@ -55,16 +55,12 @@ impl PcscTransport {
 
         let reader_cstr = readers
             .iter()
-            .find(|r| {
-                r.to_str()
-                    .map(|s| s.contains("PICC"))
-                    .unwrap_or(false)
+            .find(|r| r.to_str().map(|s| s.contains("PICC")).unwrap_or(false))
+            .or_else(|| {
+                readers
+                    .iter()
+                    .find(|r| r.to_str().map(|s| !s.contains("SAM")).unwrap_or(false))
             })
-            .or_else(|| readers.iter().find(|r| {
-                r.to_str()
-                    .map(|s| !s.contains("SAM"))
-                    .unwrap_or(false)
-            }))
             .or_else(|| readers.first())
             .ok_or(PcscError::NoReaders)?;
         let reader_name = reader_cstr.to_str().unwrap_or("(unknown)").to_string();
