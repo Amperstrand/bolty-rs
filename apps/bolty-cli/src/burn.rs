@@ -3,14 +3,13 @@ use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use bolty_core::uid::CardUid;
 use ntag424::{
-    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session,
+    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, Transport,
     sdm::{SdmUrlOptions, sdm_url_config},
     types::file_settings::{CryptoMode, Sdm},
 };
 use std::time::Duration;
 
 use crate::common::{gen_rnd_a, is_auth_delay, uid_to_fixed};
-use crate::transport::PcscTransport;
 
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
@@ -20,13 +19,16 @@ fn boltcard_sdm_opts() -> SdmUrlOptions {
     }
 }
 
-pub async fn cmd_burn(
-    transport: &mut PcscTransport,
+pub async fn cmd_burn<T: Transport>(
+    transport: &mut T,
     issuer_key: &[u8; 16],
     url: &str,
     version: u8,
     verbose: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
     let plan = sdm_url_config(url, CryptoMode::Aes, boltcard_sdm_opts())
         .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?;
 

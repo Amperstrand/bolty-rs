@@ -1,10 +1,12 @@
 use anyhow::Context;
-use ntag424::{File, Session};
+use ntag424::{File, Session, Transport};
 
 use crate::common::uid_to_fixed;
-use crate::transport::PcscTransport;
 
-pub async fn cmd_uid(transport: &mut PcscTransport) -> anyhow::Result<[u8; 7]> {
+pub async fn cmd_uid<T: Transport>(transport: &mut T) -> anyhow::Result<[u8; 7]>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
     let uid = Session::default()
         .get_selected_uid(transport)
         .await
@@ -14,7 +16,10 @@ pub async fn cmd_uid(transport: &mut PcscTransport) -> anyhow::Result<[u8; 7]> {
     Ok(uid_fixed)
 }
 
-pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
+pub async fn cmd_inspect<T: Transport>(transport: &mut T) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
     let mut session = Session::default();
 
     let uid = session

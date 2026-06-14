@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+mod audit;
 mod burn;
 mod common;
 mod inspect;
@@ -103,10 +104,10 @@ fn to_hex(bytes: impl AsRef<[u8]>) -> String {
     s
 }
 
-fn connect_transport() -> anyhow::Result<transport::PcscTransport> {
+fn connect_transport() -> anyhow::Result<audit::LoggingTransport<transport::PcscTransport>> {
     let t = transport::PcscTransport::connect()?;
     println!("Connected to reader: {}", t.reader_name());
-    Ok(t)
+    Ok(audit::LoggingTransport::new(t))
 }
 
 #[tokio::main]

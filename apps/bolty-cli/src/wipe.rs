@@ -3,20 +3,22 @@ use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK};
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
 use ntag424::{
-    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session,
+    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, Transport,
     types::file_settings::{PiccData, Sdm},
 };
 use std::time::Duration;
 
 use crate::common::{gen_rnd_a, is_auth_delay, uid_to_fixed};
-use crate::transport::PcscTransport;
 
-pub async fn cmd_wipe(
-    transport: &mut PcscTransport,
+pub async fn cmd_wipe<T: Transport>(
+    transport: &mut T,
     issuer_key: &[u8; 16],
     version: u8,
     verbose: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
     let uid = Session::default()
         .get_selected_uid(transport)
         .await
