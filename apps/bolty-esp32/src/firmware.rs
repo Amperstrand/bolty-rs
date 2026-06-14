@@ -55,10 +55,10 @@ pub fn main() {
     esp_idf_hal::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    let peripherals = Peripherals::take().unwrap_or_else(|_| {
-        log::error!("FATAL: peripherals already taken");
-        loop {}
-    });
+    let peripherals = match Peripherals::take() {
+        Ok(peripherals) => peripherals,
+        Err(_) => fatal_halt("peripherals already taken"),
+    };
 
     #[cfg(feature = "led-matrix")]
     neopixel_off(peripherals.pins.gpio27);
@@ -102,10 +102,7 @@ pub fn main() {
         &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
     ) {
         Ok(i2c) => i2c,
-        Err(e) => {
-            log::error!("FATAL: I2C0 init failed: {e:?}");
-            loop {}
-        }
+        Err(e) => fatal_halt(&format!("I2C0 init failed: {e:?}")),
     };
     log::info!("I2C0 initialized ({BOARD_NAME}) @ {}Hz", I2C_BAUDRATE_HZ);
 
@@ -261,6 +258,25 @@ fn poll_card<I2C>(
                 }
             }
         }
+    }
+}
+
+/// Delayed halt with periodic re-logging and eventual software restart.
+fn fatal_halt(context: &str) -> ! {
+    const RELOG_INTERVAL_MS: u32 = 5000;
+    const MAX_ATTEMPTS: u32 = 6;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        log::error!("FATAL: {context} (attempt {attempt}/{MAX_ATTEMPTS})");
+        FreeRtos::delay_ms(RELOG_INTERVAL_MS);
+    }
+
+    log::error!("FATAL: {context} — restarting device");
+    FreeRtos::delay_ms(100);
+    unsafe { esp_idf_sys::esp_restart() };
+    // Fallback if esp_restart somehow returns (should not happen).
+    loop {
+        FreeRtos::delay_ms(RELOG_INTERVAL_MS);
     }
 }
 
