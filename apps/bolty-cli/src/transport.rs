@@ -9,6 +9,7 @@ use ntag424::{Response, Transport};
 pub struct PcscTransport {
     card: pcsc::Card,
     reader_name: String,
+    protocol: pcsc::Protocols,
 }
 
 #[derive(Debug)]
@@ -65,16 +66,27 @@ impl PcscTransport {
             .ok_or(PcscError::NoReaders)?;
         let reader_name = reader_cstr.to_str().unwrap_or("(unknown)").to_string();
 
-        let card = ctx
+        let (card, protocol) = ctx
             .connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T1)
-            .or_else(|_| ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::RAW))
-            .or_else(|_| ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0))
+            .map(|c| (c, pcsc::Protocols::T1))
+            .or_else(|_| {
+                ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::RAW)
+                    .map(|c| (c, pcsc::Protocols::RAW))
+            })
+            .or_else(|_| {
+                ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0)
+                    .map(|c| (c, pcsc::Protocols::T0))
+            })
             .map_err(|e| match e {
                 pcsc::Error::NoSmartcard => PcscError::NoCardInReader(reader_name.clone()),
                 other => PcscError::Pcsc(other),
             })?;
 
-        Ok(Self { card, reader_name })
+        Ok(Self {
+            card,
+            reader_name,
+            protocol,
+        })
     }
 
     /// Get the reader name.
@@ -116,6 +128,16 @@ impl Transport for PcscTransport {
         // GET DATA (INS CA) for UID — standard PCSC GET DATA APDU
         let apdu = [0xff, 0xca, 0x00, 0x00, 0x00];
         let response = self.transmit(&apdu).await?;
+
+        // PCSC pseudo-APDU 0xFF CA is handled by the reader firmware, not the
+        // card. On some readers (e.g. ACS ACR1252), this corrupts the ISO
+        // 14443-4 protocol state — subsequent native NTAG424 APDUs fail with
+        // "card reset". Reconnect to restore a clean card session.
+        let _ = self.card.reconnect(
+            pcsc::ShareMode::Shared,
+            self.protocol,
+            pcsc::Disposition::ResetCard,
+        );
 
         if response.sw1 != 0x90 || response.sw2 != 0x00 {
             return Err(PcscError::Transmit(format!(
