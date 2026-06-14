@@ -1,3 +1,15 @@
+//! NTAG424 Bolt Card workflows over any `ntag424::Transport` implementation.
+//!
+//! Implements the high-level card operations used by bolty-rs firmware:
+//! `safe_inspect` (read-only card diagnostics + SDM verification), `burn`
+//! (provision keys and SDM URL), `wipe` (factory reset), `check_key_versions`,
+//! and `derive_keys` via NTAG424 key diversification.
+//!
+//! `#![no_std]`-compatible (uses `alloc`).
+//!
+//! Key types: `KeySet`, `BurnParams`, `BurnResult`, `WipeResult`,
+//! `SafeInspectResult`, `Error`.
+
 #![no_std]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 

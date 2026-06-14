@@ -1,3 +1,13 @@
+//! MFRC522 NFC frontend transport for NTAG424 card communication.
+//!
+//! Implements the `ntag424::Transport` trait over I²C-connected MFRC522
+//! hardware, handling ISO/IEC 14443-4 Type A activation, ISO-DEP frame
+//! transceive with hardware CRC, and APDU-level exchange with the card.
+//!
+//! `#![no_std]`-compatible (uses `alloc`).
+//!
+//! Key types: `Mfrc522Transceiver`, `Mfrc522Transport`, `Error`.
+
 #![no_std]
 
 extern crate alloc;

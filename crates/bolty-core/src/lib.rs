@@ -1,3 +1,16 @@
+//! Core domain logic for Bolt Card operations.
+//!
+//! Provides serial-command parsing (`commands`), key derivation strategies
+//! (`derivation`), PICC URL decrypt/verify (`picc`), card state assessment
+//! (`assessment`), issuer registry lookup (`issuer`), configuration types
+//! (`config`), and the `BoltyService` trait (`service`) that ties workflows
+//! together.
+//!
+//! `#![no_std]`-compatible with optional `alloc` and `std` features.
+//!
+//! Key types: `CardAssessment`, `Command`, `DerivationStrategy`, `BoltyService`,
+//! `CardKeys`, `PiccData`, `BoltyConfig`, `IssuerRegistry`.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
