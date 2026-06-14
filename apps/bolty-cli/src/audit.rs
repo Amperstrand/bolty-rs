@@ -7,6 +7,7 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,7 +29,12 @@ fn audit_log_path() -> &'static PathBuf {
 
 fn log_entry(entry: &str) {
     let path = audit_log_path();
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(path)
+    {
         let _ = writeln!(f, "{entry}");
         let _ = f.flush();
     }

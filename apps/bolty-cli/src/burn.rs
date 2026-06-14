@@ -26,6 +26,7 @@ pub async fn cmd_burn<T: Transport>(
     version: u8,
     verbose: bool,
     dry_run: bool,
+    confirm_uid: Option<&[u8; 7]>,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -35,6 +36,17 @@ where
 
     let uid_fixed = preflight_check(transport).await?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
+
+    if let Some(expected) = confirm_uid {
+        if uid_fixed != *expected {
+            anyhow::bail!(
+                "UID mismatch: expected {}, got {} — refusing to burn wrong card",
+                crate::to_hex(expected),
+                crate::to_hex(uid_fixed),
+            );
+        }
+        println!("  ✓ UID confirmed");
+    }
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
         issuer_key,
@@ -370,7 +382,7 @@ mod tests {
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 
-        let result = cmd_burn(&mut transport, &issuer_key, url, 1, false, true).await;
+        let result = cmd_burn(&mut transport, &issuer_key, url, 1, false, true, None).await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
 
         assert_eq!(
@@ -387,6 +399,65 @@ mod tests {
             transport.file_settings(),
             &settings_before[..],
             "file settings must not change during dry-run"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_uid_rejects_mismatch() {
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+        let wrong_uid = [0xFFu8; 7];
+
+        let keys_before = transport.keys().clone();
+
+        let result = cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            Some(&wrong_uid),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("UID mismatch"),
+            "error should mention UID mismatch: {msg}"
+        );
+
+        assert_eq!(
+            transport.keys(),
+            &keys_before,
+            "no keys should change on UID mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_uid_accepts_match() {
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+        let correct_uid = crate::mock_transport::UID;
+
+        let result = cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            true,
+            Some(&correct_uid),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "dry-run with correct UID should pass: {:?}",
+            result.err()
         );
     }
 }

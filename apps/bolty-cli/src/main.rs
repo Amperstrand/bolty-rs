@@ -72,6 +72,10 @@ enum Cli {
         /// Preview planned actions without sending any APDUs
         #[arg(long)]
         dry_run: bool,
+
+        /// Require this UID (14 hex chars) before proceeding — safety against wrong card
+        #[arg(long)]
+        confirm_uid: Option<String>,
     },
 
     /// Wipe card: clear SDM, reset all keys to factory defaults
@@ -89,6 +93,10 @@ enum Cli {
         /// Preview planned actions without sending any APDUs
         #[arg(long)]
         dry_run: bool,
+
+        /// Require this UID (14 hex chars) before proceeding — safety against wrong card
+        #[arg(long)]
+        confirm_uid: Option<String>,
     },
 
     /// Full burn → wipe → re-burn cycle with verification at each step
@@ -234,10 +242,21 @@ async fn run() -> anyhow::Result<()> {
             version,
             verbose,
             dry_run,
+            confirm_uid,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
+            let confirm_uid = confirm_uid.map(|s| parse_hex_7(&s)).transpose()?;
             let mut transport = connect_transport()?;
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, dry_run).await?;
+            burn::cmd_burn(
+                &mut transport,
+                &issuer_key,
+                &url,
+                version,
+                verbose,
+                dry_run,
+                confirm_uid.as_ref(),
+            )
+            .await?;
         }
 
         Cli::Wipe {
@@ -245,10 +264,20 @@ async fn run() -> anyhow::Result<()> {
             version,
             verbose,
             dry_run,
+            confirm_uid,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
+            let confirm_uid = confirm_uid.map(|s| parse_hex_7(&s)).transpose()?;
             let mut transport = connect_transport()?;
-            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, dry_run).await?;
+            wipe::cmd_wipe(
+                &mut transport,
+                &issuer_key,
+                version,
+                verbose,
+                dry_run,
+                confirm_uid.as_ref(),
+            )
+            .await?;
         }
 
         Cli::Picc { issuer_key } => {
@@ -299,13 +328,31 @@ async fn run() -> anyhow::Result<()> {
             let mut transport = connect_transport()?;
 
             println!("═══ CYCLE: BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, false).await?;
+            burn::cmd_burn(
+                &mut transport,
+                &issuer_key,
+                &url,
+                version,
+                verbose,
+                false,
+                None,
+            )
+            .await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
-            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, false).await?;
+            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, false, None).await?;
 
             println!("\n═══ CYCLE: RE-BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, false).await?;
+            burn::cmd_burn(
+                &mut transport,
+                &issuer_key,
+                &url,
+                version,
+                verbose,
+                false,
+                None,
+            )
+            .await?;
 
             println!("\n🎉 Full cycle completed successfully!");
         }

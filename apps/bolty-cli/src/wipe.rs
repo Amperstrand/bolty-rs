@@ -16,12 +16,24 @@ pub async fn cmd_wipe<T: Transport>(
     version: u8,
     verbose: bool,
     dry_run: bool,
+    confirm_uid: Option<&[u8; 7]>,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
     let uid_fixed = preflight_check(transport).await?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
+
+    if let Some(expected) = confirm_uid {
+        if uid_fixed != *expected {
+            anyhow::bail!(
+                "UID mismatch: expected {}, got {} — refusing to wipe wrong card",
+                crate::to_hex(expected),
+                crate::to_hex(uid_fixed),
+            );
+        }
+        println!("  ✓ UID confirmed");
+    }
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
         issuer_key,
@@ -290,7 +302,7 @@ mod tests {
         let issuer_key = [0u8; 16];
         let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
 
-        crate::burn::cmd_burn(&mut transport, &issuer_key, url, 1, false, false)
+        crate::burn::cmd_burn(&mut transport, &issuer_key, url, 1, false, false, None)
             .await
             .expect("burn to provision card for wipe dry-run test");
 
@@ -298,7 +310,7 @@ mod tests {
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, true).await;
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, true, None).await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
 
         assert_eq!(
