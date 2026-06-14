@@ -486,3 +486,84 @@ async fn get_version_returns_ntag424_signature() {
     assert_eq!(version.hw_type(), 0x04, "NTAG424 type");
     assert_eq!(*version.uid(), UID, "version UID matches mock UID");
 }
+
+#[tokio::test]
+async fn url_reads_ndef_from_provisioned_card() {
+    let mut transport = MockTransport::new();
+    do_burn(&mut transport).await;
+
+    let plan = sdm_url_config(TEST_URL, CryptoMode::Aes, boltcard_sdm_opts()).unwrap();
+
+    let mut session = Session::default();
+    let mut buf = [0u8; 256];
+    let len = session
+        .read_file_unauthenticated(&mut transport, File::Ndef, 0, &mut buf)
+        .await
+        .expect("read NDEF");
+
+    assert!(len > 2, "NDEF has content");
+    let ndef_data = &buf[..len];
+    assert_eq!(
+        &ndef_data[..plan.ndef_bytes.len()],
+        plan.ndef_bytes.as_slice(),
+        "NDEF content matches burn template"
+    );
+    assert!(
+        ndef_data[0] != 0x00 || ndef_data[1] != 0x00,
+        "NLEN is non-zero"
+    );
+}
+
+#[tokio::test]
+async fn inspect_reads_file_settings_on_blank_card() {
+    let mut transport = MockTransport::new();
+    let mut session = Session::default();
+
+    let uid = session.get_selected_uid(&mut transport).await.expect("uid");
+    assert_eq!(uid.as_ref(), UID);
+
+    let version = session.get_version(&mut transport).await.expect("version");
+    assert_eq!(version.hw_vendor_id(), 0x04);
+    assert_eq!(version.hw_type(), 0x04);
+
+    let settings = session
+        .get_file_settings(&mut transport, File::Ndef)
+        .await
+        .expect("file settings");
+    assert!(settings.sdm.is_none(), "blank card has no SDM");
+
+    let mut buf = [0u8; 256];
+    let len = session
+        .read_file_unauthenticated(&mut transport, File::Ndef, 0, &mut buf)
+        .await
+        .expect("read NDEF");
+    assert!(
+        len < 2 || (buf[0] == 0x00 && buf[1] == 0x00),
+        "blank card has empty NDEF"
+    );
+}
+
+#[tokio::test]
+async fn inspect_reads_sdm_on_provisioned_card() {
+    let mut transport = MockTransport::new();
+    do_burn(&mut transport).await;
+
+    let mut session = Session::default();
+
+    let settings = session
+        .get_file_settings(&mut transport, File::Ndef)
+        .await
+        .expect("file settings");
+    assert!(settings.sdm.is_some(), "provisioned card has SDM");
+
+    let mut buf = [0u8; 256];
+    let len = session
+        .read_file_unauthenticated(&mut transport, File::Ndef, 0, &mut buf)
+        .await
+        .expect("read NDEF");
+    assert!(len > 2, "provisioned card has NDEF content");
+    assert!(
+        buf[0] != 0x00 || buf[1] != 0x00,
+        "NLEN is non-zero on provisioned card"
+    );
+}

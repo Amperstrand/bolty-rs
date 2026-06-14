@@ -287,4 +287,27 @@ mod tests {
         // NLEN says 16 but only 9 bytes of message follow
         assert!(parse_ndef_uri(data).is_none());
     }
+
+    #[test]
+    fn parse_sdm_url_config_ndef_template() {
+        use ntag424::KeyNumber;
+        use ntag424::sdm::{SdmUrlOptions, sdm_url_config};
+        use ntag424::types::file_settings::CryptoMode;
+
+        let opts = SdmUrlOptions {
+            picc_key: KeyNumber::Key1,
+            mac_key: KeyNumber::Key2,
+            ..SdmUrlOptions::new()
+        };
+        let url = "https://card.bolt.local/lnurl?[[p={picc:uid+ctr}&cmac={mac}";
+        let plan = sdm_url_config(url, CryptoMode::Aes, opts).unwrap();
+
+        let parsed = parse_ndef_uri(&plan.ndef_bytes)
+            .expect("parse_ndef_uri should handle sdm_url_config output");
+        assert!(
+            parsed.url.contains("card.bolt.local"),
+            "URL should contain domain, got: {}",
+            parsed.url
+        );
+    }
 }
