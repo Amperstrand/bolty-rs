@@ -87,11 +87,15 @@ where
     {
         Ok(len) => {
             let clamped = len.min(buf.len());
-            let slice = buf.get(..clamped).unwrap_or(&[]);
-            // SAFETY: clamped >= 2 check guards buf[0] and buf[1].
-            #[allow(clippy::indexing_slicing)]
-            let has_content = clamped >= 2 && (buf[0] != 0x00 || buf[1] != 0x00);
-            let s = String::from_utf8_lossy(slice).into_owned();
+            // NDEF Type 4: bytes 0-1 = NLEN (big-endian message length).
+            let ndef_end = if clamped >= 2 {
+                let nlen = (buf[0] as usize) * 256 + buf[1] as usize;
+                (nlen + 2).min(clamped)
+            } else {
+                clamped
+            };
+            let has_content = ndef_end > 2;
+            let s = String::from_utf8_lossy(buf.get(2..ndef_end).unwrap_or(&[])).into_owned();
             println!("NDEF:           {clamped} bytes, content={has_content}");
             if has_content {
                 println!("NDEF (text):    {s}");

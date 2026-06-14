@@ -50,9 +50,16 @@ where
         .await
         .context("failed to read NDEF content")?;
 
-    // SAFETY: clamped via .min(buf.len()).
+    // NDEF Type 4: first 2 bytes = NLEN (big-endian length of NDEF message).
+    // Truncate to actual content to avoid picking up null-byte padding.
     let clamped = len.min(buf.len());
-    let ndef_str = String::from_utf8_lossy(buf.get(..clamped).unwrap_or(&[]));
+    let ndef_end = if clamped >= 2 {
+        let nlen = (buf[0] as usize) * 256 + buf[1] as usize;
+        (nlen + 2).min(clamped)
+    } else {
+        clamped
+    };
+    let ndef_str = String::from_utf8_lossy(buf.get(2..ndef_end).unwrap_or(&[]));
     println!("NDEF ({clamped} bytes): {ndef_str}");
 
     // 4. Extract p= and c= from the SDM-augmented URL.
