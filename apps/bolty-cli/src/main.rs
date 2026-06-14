@@ -3,7 +3,9 @@
 mod audit;
 mod burn;
 mod common;
+mod diagnose;
 mod inspect;
+mod picc;
 mod transport;
 mod wipe;
 
@@ -64,6 +66,20 @@ enum Cli {
         /// Print derived key material to stdout
         #[arg(long)]
         verbose: bool,
+    },
+
+    /// Read-only PICC data decryption: extract p=/c= from NDEF and verify locally.
+    /// No authentication APDUs sent — zero risk of bricking or auth-delay.
+    Picc {
+        #[arg(long)]
+        issuer_key: String,
+    },
+
+    /// Diagnose card state: BLANK / PROVISIONED / HALF-WIPED / AUTH_DELAY / INCONSISTENT.
+    /// Read-only except for a single factory K0 probe on blank-looking cards.
+    Diagnose {
+        #[arg(long)]
+        issuer_key: String,
     },
 
     /// Compute and print derived keys (no card needed)
@@ -168,6 +184,18 @@ async fn run() -> anyhow::Result<()> {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
             wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
+        }
+
+        Cli::Picc { issuer_key } => {
+            let issuer_key = parse_hex_16(&issuer_key)?;
+            let mut transport = connect_transport()?;
+            picc::cmd_picc(&mut transport, &issuer_key).await?;
+        }
+
+        Cli::Diagnose { issuer_key } => {
+            let issuer_key = parse_hex_16(&issuer_key)?;
+            let mut transport = connect_transport()?;
+            diagnose::cmd_diagnose(&mut transport, &issuer_key).await?;
         }
 
         Cli::DeriveKeys {
