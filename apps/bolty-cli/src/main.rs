@@ -5,8 +5,10 @@ mod burn;
 mod common;
 mod diagnose;
 mod inspect;
+mod keyver;
 mod picc;
 mod transport;
+mod ver;
 mod wipe;
 
 use bolty_core::derivation::BoltcardDeterministicDeriver;
@@ -19,6 +21,15 @@ use clap::Parser;
 enum Cli {
     /// Read and print the card UID
     Uid,
+
+    /// Read and print hardware/software version info (unauthenticated)
+    Ver,
+
+    /// Read key versions from all 5 key slots (requires K0 authentication)
+    Keyver {
+        #[arg(long)]
+        issuer_key: String,
+    },
 
     /// Inspect card: UID, version, file settings, NDEF content (unauthenticated)
     Inspect,
@@ -158,6 +169,17 @@ async fn run() -> anyhow::Result<()> {
         Cli::Uid => {
             let mut transport = connect_transport()?;
             inspect::cmd_uid(&mut transport).await?;
+        }
+
+        Cli::Ver => {
+            let mut transport = connect_transport()?;
+            ver::cmd_ver(&mut transport).await?;
+        }
+
+        Cli::Keyver { issuer_key } => {
+            let issuer_key = parse_hex_16(&issuer_key)?;
+            let mut transport = connect_transport()?;
+            keyver::cmd_keyver(&mut transport, &issuer_key).await?;
         }
 
         Cli::Inspect => {

@@ -191,6 +191,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bolty-core",
+ "bolty-ntag",
  "clap",
  "getrandom 0.3.4",
  "ntag424",
