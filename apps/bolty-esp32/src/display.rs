@@ -192,11 +192,14 @@ pub unsafe fn init(
 
     info!("ST7789 display initialized ({}x{}) on {board}", LCD_H_RES, LCD_V_RES);
 
-    *SCREEN.lock().unwrap() = Some(Screen {
-        display,
-        state: ScreenState::new(board),
-        dirty: true,
-    });
+    {
+        let mut guard = SCREEN.lock().map_err(|_| "screen mutex poisoned")?;
+        *guard = Some(Screen {
+            display,
+            state: ScreenState::new(board),
+            dirty: true,
+        });
+    }
 
     Ok(())
 }

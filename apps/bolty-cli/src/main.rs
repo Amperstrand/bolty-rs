@@ -88,11 +88,12 @@ fn parse_hex_7(s: &str) -> anyhow::Result<[u8; 7]> {
 }
 
 fn to_hex(bytes: impl AsRef<[u8]>) -> String {
-    use std::fmt::Write;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = bytes.as_ref();
     let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        write!(s, "{b:02x}").unwrap();
+    for &b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0xf) as usize] as char);
     }
     s
 }
