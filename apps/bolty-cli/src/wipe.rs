@@ -8,22 +8,19 @@ use ntag424::{
 };
 use std::time::Duration;
 
-use crate::common::{gen_rnd_a, is_auth_delay, uid_to_fixed};
+use crate::common::{gen_rnd_a, is_auth_delay, preflight_check};
 
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
     version: u8,
     verbose: bool,
+    dry_run: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let uid = Session::default()
-        .get_selected_uid(transport)
-        .await
-        .context("failed to read UID")?;
-    let uid_fixed = uid_to_fixed(&uid);
+    let uid_fixed = preflight_check(transport).await?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
@@ -31,8 +28,24 @@ where
         CardUid::new(uid_fixed),
         version as u32,
     );
-    if verbose {
+    if verbose || dry_run {
         println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
+    }
+
+    if dry_run {
+        println!("\n=== DRY RUN — no card modifications ===");
+        println!("Version:   {version}");
+        println!("\nPlanned steps:");
+        println!("  [1] Authenticate (factory K0 or derived K0)");
+        println!("  [2] Clear SDM file settings");
+        println!("  [3] Write empty NDEF (NLEN=0)");
+        println!("  [4] Reset K1 to factory");
+        println!("  [5] Reset K2 to factory");
+        println!("  [6] Reset K3 to factory");
+        println!("  [7] Reset K4 to factory, then K0 (master)");
+        println!("  Post:  Re-authenticate with factory K0 + verify");
+        println!("\nNo APDUs sent. Card unchanged.");
+        return Ok(());
     }
 
     // Probe card state: try factory K0 first, then derived K0

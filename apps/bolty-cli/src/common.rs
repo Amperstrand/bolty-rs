@@ -1,4 +1,4 @@
-use ntag424::{SessionError, Uid};
+use ntag424::{Session, SessionError, Transport, Uid};
 
 pub(crate) fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
     match uid {
@@ -18,4 +18,41 @@ pub(crate) fn gen_rnd_a() -> anyhow::Result<[u8; 16]> {
     let mut rnd_a = [0u8; 16];
     getrandom::fill(&mut rnd_a).map_err(|e| anyhow::anyhow!("RNG failed: {e}"))?;
     Ok(rnd_a)
+}
+
+/// Pre-flight safety check before destructive operations (burn/wipe).
+///
+/// Verifies that:
+/// 1. Card is responsive (can read UID)
+/// 2. Card is an NTAG424 DNA (correct vendor/type IDs)
+///
+/// This prevents sending modification APDUs to wrong card types or
+/// unresponsive cards.
+pub(crate) async fn preflight_check<T: Transport>(transport: &mut T) -> anyhow::Result<[u8; 7]>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    let session = Session::default();
+
+    let uid = session
+        .get_selected_uid(transport)
+        .await
+        .map_err(|e| anyhow::anyhow!("pre-flight: card not responding ({e})"))?;
+    let uid_fixed = uid_to_fixed(&uid);
+
+    let version = session
+        .get_version(transport)
+        .await
+        .map_err(|e| anyhow::anyhow!("pre-flight: cannot read card version ({e})"))?;
+
+    if version.hw_vendor_id() != 0x04 || version.hw_type() != 0x04 {
+        anyhow::bail!(
+            "pre-flight: card is not NTAG424 DNA (vendor={:02X}, type={:02X}). \
+             Refusing to modify non-NTAG424 card.",
+            version.hw_vendor_id(),
+            version.hw_type()
+        );
+    }
+
+    Ok(uid_fixed)
 }

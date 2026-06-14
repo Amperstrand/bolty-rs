@@ -9,7 +9,7 @@ use ntag424::{
 };
 use std::time::Duration;
 
-use crate::common::{gen_rnd_a, is_auth_delay, uid_to_fixed};
+use crate::common::{gen_rnd_a, is_auth_delay, preflight_check};
 
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
@@ -25,6 +25,7 @@ pub async fn cmd_burn<T: Transport>(
     url: &str,
     version: u8,
     verbose: bool,
+    dry_run: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -32,11 +33,7 @@ where
     let plan = sdm_url_config(url, CryptoMode::Aes, boltcard_sdm_opts())
         .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?;
 
-    let uid = Session::default()
-        .get_selected_uid(transport)
-        .await
-        .context("failed to read UID")?;
-    let uid_fixed = uid_to_fixed(&uid);
+    let uid_fixed = preflight_check(transport).await?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
@@ -44,8 +41,26 @@ where
         CardUid::new(uid_fixed),
         version as u32,
     );
-    if verbose {
+    if verbose || dry_run {
         print_derived_keys(&keys, version);
+    }
+
+    if dry_run {
+        println!("\n=== DRY RUN — no card modifications ===");
+        println!("URL:       {url}");
+        println!("Version:   {version}");
+        println!("NDEF size: {} bytes", plan.ndef_bytes.len());
+        println!("\nPlanned steps:");
+        println!("  [1/7] Authenticate (factory K0 or derived K0)");
+        println!("  [2/7] Write NDEF template + verify readback");
+        println!("  [3/7] Configure SDM file settings + verify");
+        println!("  [4/7] Install K1");
+        println!("  [5/7] Install K2");
+        println!("  [6/7] Install K3");
+        println!("  [7/7] Install K4, then K0 (master)");
+        println!("  Post:  Re-authenticate with new K0 + verify SDM");
+        println!("\nNo APDUs sent. Card unchanged.");
+        return Ok(());
     }
 
     // --- Authenticate: factory K0 for fresh cards, derived K0 for re-burns ---

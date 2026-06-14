@@ -65,6 +65,10 @@ enum Cli {
         /// Print derived key material to stdout
         #[arg(long)]
         verbose: bool,
+
+        /// Preview planned actions without sending any APDUs
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Wipe card: clear SDM, reset all keys to factory defaults
@@ -78,6 +82,10 @@ enum Cli {
         /// Print derived key material to stdout
         #[arg(long)]
         verbose: bool,
+
+        /// Preview planned actions without sending any APDUs
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Full burn → wipe → re-burn cycle with verification at each step
@@ -222,20 +230,22 @@ async fn run() -> anyhow::Result<()> {
             url,
             version,
             verbose,
+            dry_run,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, dry_run).await?;
         }
 
         Cli::Wipe {
             issuer_key,
             version,
             verbose,
+            dry_run,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
+            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, dry_run).await?;
         }
 
         Cli::Picc { issuer_key } => {
@@ -286,13 +296,13 @@ async fn run() -> anyhow::Result<()> {
             let mut transport = connect_transport()?;
 
             println!("═══ CYCLE: BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, false).await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
-            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
+            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, false).await?;
 
             println!("\n═══ CYCLE: RE-BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose, false).await?;
 
             println!("\n🎉 Full cycle completed successfully!");
         }

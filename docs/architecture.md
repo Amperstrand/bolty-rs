@@ -6,8 +6,9 @@ This document describes the current `bolty-rs` workspace shape, the dependency b
 
 ```mermaid
 flowchart TD
-    subgraph app[Application]
+    subgraph apps[Applications]
         fw[apps/bolty-esp32]
+        cli[apps/bolty-cli]
     end
 
     subgraph domain[Domain and workflow crates]
@@ -23,19 +24,26 @@ flowchart TD
 
     subgraph platform[Platform]
         idf[esp-idf-sys / esp-idf-hal / esp-idf-svc]
+        pcsc[pcsc crate]
         card[NTAG424 card]
         reader[MFRC522 reader]
+        creader[PCSC reader]
     end
 
     fw --> core
     fw --> ntag
     fw --> mfrc
     fw --> idf
+    cli --> core
+    cli --> ntag
+    cli --> pcsc
     ntag --> ntag424[ntag424 crate]
     mfrc --> iso
     mfrc --> raw
     ntag --> card
     mfrc --> reader
+    cli --> creader
+    cli --> card
 ```
 
 ## Responsibility split
@@ -46,6 +54,7 @@ flowchart TD
 | `bolty-ntag` | NTAG424-specific card operations (`burn`, `wipe`, `check_key_versions`, etc.) |
 | `bolty-mfrc522` | Reader activation and transport glue from MFRC522 to NTAG/ISO-DEP layers |
 | `apps/bolty-esp32` | Board selection, serial loop, WiFi/REST/OTA integration, hardware bootstrapping |
+| `apps/bolty-cli` | Desktop CLI via PCSC — burn, wipe, diagnose, picc, keyver, ver, inspect, cycle |
 | `vendor/iso14443` | Vendored ISO/IEC 14443 protocol support |
 | `vendor/mfrc522` | Vendored and patched MFRC522 low-level driver |
 
@@ -112,11 +121,28 @@ avahi-browse -r _http._tcp
 nmap --script broadcast-dns-service-discovery
 ```
 
-## Improvement backlog
+## Transport abstraction
 
-This polish pass intentionally keeps scope tight. The main next-step refactors are:
+All card operations are generic over `T: ntag424::Transport`. This enables
+the same burn/wipe/diagnose workflows to run on ESP32 firmware, desktop CLI,
+and integration tests.
+
+| Transport | Target | Purpose |
+|---|---|---|
+| `PcscTransport` | Desktop (bolty-cli) | PC/SC reader via `pcsc` crate |
+| MFRC522 transport | ESP32 (bolty-esp32) | ISO-DEP over MFRC522 I2C/SPI |
+| `MockTransport` | Integration tests | Full NTAG424 protocol simulation |
+| `LoggingTransport<T>` | Any | Wraps any transport with APDU audit logging to `/tmp/bolty-audit.log` |
+
+`MockTransport` simulates AES-EV2 authentication, file settings read/write,
+key change, key version read, NDEF read/write, and GetVersion — enabling 11
+hardware-free integration tests covering the complete card lifecycle.
+
+## Improvement backlog
 
 1. Add the actual ST7789 display implementation behind `display-st7789`.
 2. Add timeout hardening in vendored MFRC522 and ISO14443 loops.
 3. Further reduce ignored formatting/write failures in the serial and JSON output paths.
 4. Add a separate PN532 transport crate and frontend capability when that hardware path is introduced.
+5. DRY refactor: delegate CLI burn/wipe to `bolty-ntag::burn()`/`wipe()` after adding safety features (SDM clearing, NDEF verification, post-burn auth check) to the library implementations.
+6. Per-key verification: verify each K1-K4 individually after install, before K0 change.
