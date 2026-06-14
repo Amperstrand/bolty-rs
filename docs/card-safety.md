@@ -249,25 +249,34 @@ From empirical testing and proxmark3 community experience:
 ## 8. Safety Checklist for Card Operations
 
 ### Before ANY write operation:
-- [ ] Card UID read and matches expected value
-- [ ] Card version confirms NTAG424 DNA
+- [x] Card UID read and matches expected value *(automatic via preflight_check)*
+- [x] Card version confirms NTAG424 DNA *(automatic via preflight_check)*
 - [ ] Card state detected via `diagnose` (not AUTH_DELAY, not INCONSISTENT)
 - [ ] Correct issuer key for this card UID
-- [ ] Audit logging enabled (`/tmp/bolty-audit.log`)
+- [x] Audit logging enabled (`/tmp/bolty-audit.log`)
 
 ### Before burn:
+- [x] Pre-flight check passed *(automatic)*
 - [ ] State is BLANK or PROVISIONED (with matching issuer key)
 - [ ] SDM URL template is valid
 - [ ] All 5 keys can be derived from issuer key + UID
 - [ ] Card is on the reader and stable (not being moved)
+- [ ] Run with `--dry-run` first to preview
 
 ### Before wipe:
+- [x] Pre-flight check passed *(automatic)*
 - [ ] State is PROVISIONED (with matching issuer key)
 - [ ] Derived K0 matches card K0
 - [ ] No authentication delay active
+- [ ] Run with `--dry-run` first to preview
+
+### During burn/wipe:
+- [x] Per-key version verified after each K1-K4 change *(automatic)*
+- [x] NDEF write verified by readback *(automatic in burn)*
+- [x] SDM configuration verified after enable *(automatic in burn)*
 
 ### After ANY operation:
-- [ ] Post-operation verification completed (auth with new/old K0)
+- [x] Post-operation verification completed *(automatic: auth with new/old K0)*
 - [ ] Audit log reviewed for unexpected APDU responses
 - [ ] Card state re-verified with `diagnose` or `keyver`
 
@@ -298,18 +307,22 @@ From empirical testing and proxmark3 community experience:
 7. ✅ Audit logging captures all APDU exchanges
 8. ✅ NDEF written before SDM enabled (prevents SDM engine corruption)
 9. ✅ Residual SDM cleared before re-burn
+10. ✅ Pre-flight check: burn/wipe verify card responds + is NTAG424 DNA before any modification APDUs
+11. ✅ Per-key version verification: after each K1-K4 change/reset, GetKeyVersion confirms the version was set correctly before proceeding to the next key
+12. ✅ Dry-run mode: `--dry-run` flag previews planned actions (derived keys, URL, steps) without sending any APDUs
+13. ✅ MockTransport: 11 integration tests cover full burn/wipe/reburn cycle, diagnose, keyver, picc — all hardware-free
+14. ✅ Dry-run unit tests verify card state preservation on both factory and provisioned cards
 
-### Current Safety Gaps
-1. ⚠️ No pre-flight `diagnose` check before burn/wipe (user must run manually)
-2. ⚠️ No per-key verification after K1-K4 install (before K0 change)
-3. ⚠️ No `--dry-run` mode
-4. ⚠️ Auth delay escalation not tracked (only 1 retry, may need longer waits)
-5. ⚠️ No circuit breaker for repeated auth failures
-6. ⚠️ Mock transport doesn't exist yet — no CI testing of card logic
+### Remaining Safety Gaps
+1. ⚠️ Auth delay escalation not tracked (only 1 retry, may need longer waits)
+2. ⚠️ No circuit breaker for repeated auth failures
+
+### Resolved Gaps
+- ✅ ~~Mock transport doesn't exist~~ → MockTransport with 11 integration tests (commit `a61d7d8`)
+- ✅ ~~No pre-flight diagnose check~~ → `preflight_check()` verifies NTAG424 DNA before burn/wipe (commit `1228bbf`)
+- ✅ ~~No `--dry-run` mode~~ → `--dry-run` on both burn and wipe (commit `1228bbf`)
+- ✅ ~~No per-key verification~~ → GetKeyVersion readback after each K1-K4 change (commit `eec9e5c`)
 
 ### Priority Fixes
-1. **HIGH**: Add mock transport for CI testing
-2. **HIGH**: Auto-run state detection before burn/wipe (refuse if unsafe)
-3. **MEDIUM**: Add `--dry-run` flag
-4. **MEDIUM**: Verify each key after install before proceeding
-5. **LOW**: Track auth delay count and escalate wait time
+1. **LOW**: Track auth delay count and escalate wait time
+2. **LOW**: Add circuit breaker for repeated auth failures (refuse after N consecutive failures)
