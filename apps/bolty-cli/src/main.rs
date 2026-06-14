@@ -168,3 +168,97 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_hex_16, parse_hex_7};
+
+    // ── parse_hex_16 ───────────────────────────────────────────────
+
+    #[test]
+    fn hex16_valid() {
+        let result = parse_hex_16("00000000000000000000000000000001").unwrap();
+        assert_eq!(result[15], 1);
+        assert_eq!(result.len(), 16);
+    }
+
+    #[test]
+    fn hex16_valid_uppercase() {
+        let result = parse_hex_16("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").unwrap();
+        assert_eq!(result, [0xFFu8; 16]);
+    }
+
+    #[test]
+    fn hex16_valid_mixed_case() {
+        let result = parse_hex_16("DeAdBeEf0000000000000000000000FF").unwrap();
+        assert_eq!(result[0], 0xDE);
+        assert_eq!(result[3], 0xEF);
+        assert_eq!(result[15], 0xFF);
+    }
+
+    #[test]
+    fn hex16_trims_whitespace() {
+        let result = parse_hex_16("  00000000000000000000000000000001  ").unwrap();
+        assert_eq!(result[15], 1);
+    }
+
+    #[test]
+    fn hex16_too_short() {
+        assert!(parse_hex_16("0001").is_err());
+    }
+
+    #[test]
+    fn hex16_too_long() {
+        assert!(parse_hex_16("0000000000000000000000000000000100").is_err());
+    }
+
+    #[test]
+    fn hex16_invalid_chars() {
+        assert!(parse_hex_16("GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG").is_err());
+    }
+
+    #[test]
+    fn hex16_empty() {
+        assert!(parse_hex_16("").is_err());
+    }
+
+    // ── parse_hex_7 ────────────────────────────────────────────────
+
+    #[test]
+    fn hex7_valid() {
+        let result = parse_hex_7("04a39493cc8680").unwrap();
+        assert_eq!(result, [0x04, 0xA3, 0x94, 0x93, 0xCC, 0x86, 0x80]);
+    }
+
+    #[test]
+    fn hex7_valid_uppercase() {
+        let result = parse_hex_7("04A39493CC8680").unwrap();
+        assert_eq!(result[0], 0x04);
+    }
+
+    #[test]
+    fn hex7_trims_whitespace() {
+        let result = parse_hex_7("  04a39493cc8680  ").unwrap();
+        assert_eq!(result[0], 0x04);
+    }
+
+    #[test]
+    fn hex7_too_short() {
+        assert!(parse_hex_7("04a394").is_err());
+    }
+
+    #[test]
+    fn hex7_too_long() {
+        assert!(parse_hex_7("04a39493cc8680ff").is_err());
+    }
+
+    #[test]
+    fn hex7_invalid_chars() {
+        assert!(parse_hex_7("XXa39493cc8680").is_err());
+    }
+
+    #[test]
+    fn hex7_empty() {
+        assert!(parse_hex_7("").is_err());
+    }
+}
