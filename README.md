@@ -1,28 +1,36 @@
 # bolty-rs
 
-`bolty-rs` is a Rust-native Bolt Card firmware workspace for ESP32 devices using an MFRC522 NFC frontend. The current supported boards are **M5StickC Plus** and **M5Atom Matrix**, both wired to MFRC522 over I2C. The project is serial-driven by default, with optional WiFi/REST/OTA support behind feature flags.
+`bolty-rs` is a Rust-native Bolt Card workspace targeting **both** ESP32 firmware (MFRC522 NFC frontend) and desktop CLI (PCSC smart card readers). The ESP32 firmware supports **M5StickC Plus** and **M5Atom Matrix**, both wired to MFRC522 over I2C. The desktop CLI (`bolty-cli`) provides card programming operations via any PC/SC reader on Linux/macOS. The project is serial-driven by default, with optional WiFi/REST/OTA support behind feature flags.
 
 ## Current state
 
-- Core Bolt Card workflows are implemented: `inspect`, `check`, `burn`, `wipe`, key staging, issuer staging, URL staging, and status/UID inspection.
-- Both currently supported boards build and run from the same firmware crate with compile-time board selection.
-- WiFi/REST/OTA are optional capabilities, not baseline requirements.
-- Dependency versions are pinned exactly and the workspace `Cargo.lock` is intended to be tracked for reproducible firmware builds.
+- Core Bolt Card workflows: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`
+- Desktop CLI (`bolty-cli`) with full card lifecycle: burn/wipe/diagnose with pre-flight safety checks, per-key verification, and `--dry-run` mode
+- 166 hardware-free tests including 11 integration tests via MockTransport (full NTAG424 protocol simulation)
+- Both supported boards build and run from the same firmware crate with compile-time board selection
+- WiFi/REST/OTA are optional capabilities, not baseline requirements
+- Dependency versions are pinned exactly and the workspace `Cargo.lock` is intended to be tracked for reproducible firmware builds
 
 ## Workspace architecture
 
 ```mermaid
 flowchart TD
     host[Serial client / HTTP client] --> app[apps/bolty-esp32]
+    cli[Desktop CLI / PCSC] --> cliapp[apps/bolty-cli]
     app --> core[crates/bolty-core\npolicy + commands + derivation]
     app --> ntag[crates/bolty-ntag\nNTAG424 workflows]
     app --> mfrc[crates/bolty-mfrc522\nMFRC522 transport]
     app --> idf[esp-idf-sys / hal / svc]
+    cliapp --> core
+    cliapp --> ntag
+    cliapp --> pcsc[pcsc crate]
     ntag --> ntag424[ntag424 crate]
     mfrc --> iso[vendor/iso14443]
     mfrc --> raw[vendor/mfrc522]
     mfrc --> card[MFRC522 reader]
     ntag --> boltcard[NTAG424 card]
+    pcsc --> creader[PCSC reader]
+    cliapp --> boltcard
 ```
 
 See also [`docs/architecture.md`](docs/architecture.md) and [`docs/parity-matrix.md`](docs/parity-matrix.md).
@@ -64,6 +72,35 @@ espflash flash --port /dev/ttyUSB0 target/xtensa-esp32-espidf/release/bolty-esp3
 
 Exactly one board feature must be enabled for firmware builds.
 
+## Desktop CLI (bolty-cli)
+
+`bolty-cli` provides card programming operations via any PC/SC reader (e.g. ACS ACR1252). It requires `libpcsclite-dev` on Linux or `pcsc-lite` on macOS.
+
+```bash
+# Install pcsc dependency (Ubuntu)
+sudo apt install libpcsclite-dev
+
+# Build
+cargo build -p bolty-cli
+
+# Diagnose card state (read-only, safe)
+cargo run -p bolty-cli -- diagnose --issuer-key 00000000000000000000000000000001
+
+# Preview burn without touching the card
+cargo run -p bolty-cli -- burn --issuer-key <KEY> --url <URL> --dry-run
+
+# Burn card (writes NDEF, enables SDM, installs derived keys)
+cargo run -p bolty-cli -- burn --issuer-key <KEY> --url <URL>
+
+# Read key versions (requires K0 auth)
+cargo run -p bolty-cli -- keyver --issuer-key <KEY>
+
+# Wipe card (factory reset)
+cargo run -p bolty-cli -- wipe --issuer-key <KEY>
+```
+
+All APDU exchanges are logged to `/tmp/bolty-audit.log`. See [`docs/card-safety.md`](docs/card-safety.md) for the complete safety reference.
+
 ## REST and network discovery
 
 When built with `wifi,rest`, the device exposes an HTTP API and advertises itself over mDNS as `bolty.local`.
@@ -96,3 +133,7 @@ If `bolty.local` does not resolve, verify that the host has mDNS enabled (`avahi
 - Add I2C bus recovery (SCL toggle) before `I2cDriver` init for robustness against stuck-bus conditions.
 - Add MFRC522 init retry with backoff (currently single attempt; vendor `init()` consumes the bus on failure).
 - Introduce a separate PN532 frontend when that transport is added, rather than overloading board features.
+
+## Contributing
+
+See [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) for development setup, git hooks, testing guide, and dual-target workflow. See [`docs/card-safety.md`](docs/card-safety.md) for the NTAG424 safety reference.
