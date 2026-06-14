@@ -10,6 +10,14 @@ ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "15d01c439
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "84f4f29bc56328676c7471f398204852ac1cc6cc" }
 iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "d8f891e87246cdba25258b149618c6df1f470542", features = ["alloc"] }
 
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+panic_in_result_fn = "warn"
+indexing_slicing = "warn"
+string_slice = "warn"
+
 [profile.release]
 opt-level = "s"
 lto = true

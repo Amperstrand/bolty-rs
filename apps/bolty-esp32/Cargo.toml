@@ -40,5 +40,8 @@ esp-idf-svc = "=0.52.1"
 [build-dependencies]
 embuild = { version = "=0.32.0", features = ["espidf"] }
 
+[lints]
+workspace = true
+
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.8.2" }

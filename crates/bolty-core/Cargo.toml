@@ -14,4 +14,7 @@ default = ["std"]
 std = []
 alloc = []
 
+[lints]
+workspace = true
+
 [dev-dependencies]
