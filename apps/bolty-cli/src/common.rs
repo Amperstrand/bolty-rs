@@ -143,26 +143,16 @@ pub(crate) fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
     let uri_str = std::str::from_utf8(uri).ok()?.trim_end_matches('\0');
     let url = format!("{prefix}{uri_str}");
 
-    let (picc_hex, mac_hex) = extract_sdm_params(uri_str);
+    let (picc_hex, mac_hex) = match bolty_core::picc::extract_p_and_c(uri_str) {
+        Some((p, c)) => (Some(p.to_string()), Some(c.to_string())),
+        None => (None, None),
+    };
 
     Some(NdefUri {
         url,
         picc_hex,
         mac_hex,
     })
-}
-
-fn extract_sdm_params(uri: &str) -> (Option<String>, Option<String>) {
-    let mut p = None;
-    let mut c = None;
-    for segment in uri.split(['?', '&', '#']) {
-        if let Some(val) = segment.strip_prefix("p=") {
-            p = Some(val.to_string());
-        } else if let Some(val) = segment.strip_prefix("c=") {
-            c = Some(val.to_string());
-        }
-    }
-    (p, c)
 }
 
 #[cfg(test)]
