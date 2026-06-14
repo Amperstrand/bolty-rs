@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK};
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
+use bolty_core::uid::CardUid;
 use ntag424::{
     AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, SessionError, Uid,
     sdm::{SdmUrlOptions, sdm_url_config},
@@ -118,7 +119,7 @@ pub async fn cmd_burn(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, CardUid::new(uid_fixed), version as u32);
     if verbose {
         print_derived_keys(&keys, version);
     }
@@ -340,7 +341,7 @@ pub async fn cmd_wipe(
     let uid_fixed = uid_to_fixed(&uid);
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
+    let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, CardUid::new(uid_fixed), version as u32);
     if verbose {
         println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
     }

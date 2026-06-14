@@ -1,5 +1,6 @@
 use crate::crypto::aes_cmac;
 use crate::secret::{AesKey, CardKeys};
+use crate::uid::CardUid;
 use core::fmt;
 use zeroize::Zeroize;
 
@@ -29,7 +30,7 @@ pub trait KeyDeriver {
 
     fn derive_keys(
         &self,
-        uid: &[u8; 7],
+        uid: CardUid,
         issuer_key: &AesKey,
         strategy: DerivationStrategy,
     ) -> Result<CardKeys, Self::Error>;
@@ -84,15 +85,15 @@ pub fn aes128_cmac(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
 pub struct BoltcardDeterministicDeriver;
 
 impl BoltcardDeterministicDeriver {
-    pub fn derive_card_key(issuer_key: &[u8; 16], uid: &[u8; 7], version: u32) -> [u8; 16] {
+    pub fn derive_card_key(issuer_key: &[u8; 16], uid: CardUid, version: u32) -> [u8; 16] {
         let mut message = [0u8; 15];
         message[..4].copy_from_slice(&TAG_CARD_KEY);
-        message[4..11].copy_from_slice(uid);
+        message[4..11].copy_from_slice(uid.as_bytes());
         message[11..].copy_from_slice(&version.to_le_bytes());
         aes_cmac(issuer_key, &message)
     }
 
-    pub fn derive_keys(issuer_key: &[u8; 16], uid: &[u8; 7], version: u32) -> CardKeySet {
+    pub fn derive_keys(issuer_key: &[u8; 16], uid: CardUid, version: u32) -> CardKeySet {
         let card_key = Self::derive_card_key(issuer_key, uid, version);
 
         CardKeySet {
@@ -106,10 +107,10 @@ impl BoltcardDeterministicDeriver {
         }
     }
 
-    pub fn derive_card_id(issuer_key: &[u8; 16], uid: &[u8; 7]) -> [u8; 16] {
+    pub fn derive_card_id(issuer_key: &[u8; 16], uid: CardUid) -> [u8; 16] {
         let mut message = [0u8; 11];
         message[..4].copy_from_slice(&TAG_CARD_ID);
-        message[4..].copy_from_slice(uid);
+        message[4..].copy_from_slice(uid.as_bytes());
         aes_cmac(issuer_key, &message)
     }
 }
@@ -119,7 +120,7 @@ impl KeyDeriver for BoltcardDeterministicDeriver {
 
     fn derive_keys(
         &self,
-        uid: &[u8; 7],
+        uid: CardUid,
         issuer_key: &AesKey,
         strategy: DerivationStrategy,
     ) -> Result<CardKeys, Self::Error> {
@@ -144,7 +145,7 @@ impl KeyDeriver for BoltcardDeterministicDeriver {
 
 #[cfg(test)]
 mod tests {
-    use super::{AesKey, BoltcardDeterministicDeriver, CardKeySet, DerivationStrategy};
+    use super::{AesKey, BoltcardDeterministicDeriver, CardKeySet, CardUid, DerivationStrategy};
 
     const FIXTURES: &str =
         include_str!("../../../tests/fixtures/derivation/boltcard_deterministic.toml");
@@ -163,7 +164,7 @@ mod tests {
         for vector in parse_fixture_vectors() {
             let actual = BoltcardDeterministicDeriver::derive_keys(
                 &vector.issuer_key,
-                &vector.uid,
+                CardUid::new(vector.uid),
                 vector.version,
             );
 

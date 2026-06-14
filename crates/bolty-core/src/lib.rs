@@ -13,6 +13,7 @@ pub mod issuer;
 pub mod picc;
 pub mod secret;
 pub mod service;
+pub mod uid;
 pub mod util;
 pub mod workflow;
 

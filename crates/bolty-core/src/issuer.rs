@@ -3,6 +3,7 @@ use crate::{
     config::IssuerConfig,
     constants::{KEY_VERSION_BLANK, NUM_KEYS, UID_LEN},
     derivation::{BoltcardDeterministicDeriver, CardKeySet},
+    uid::CardUid,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -19,17 +20,17 @@ impl<'a> IssuerRegistry<'a> {
         self.issuers
     }
 
-    pub fn match_issuer(&self, uid: &[u8; UID_LEN], key_version: u8) -> Option<(usize, CardKeySet)> {
+    pub fn match_issuer(&self, uid: CardUid, key_version: u8) -> Option<(usize, CardKeySet)> {
         match_issuer(uid, key_version, self.issuers)
     }
 
-    pub fn assess_card(&self, uid: &[u8; UID_LEN], key_versions: [u8; NUM_KEYS]) -> CardAssessment {
+    pub fn assess_card(&self, uid: CardUid, key_versions: [u8; NUM_KEYS]) -> CardAssessment {
         assess_card(uid, key_versions, self.issuers)
     }
 }
 
 pub fn match_issuer(
-    uid: &[u8; UID_LEN],
+    uid: CardUid,
     key_version: u8,
     issuers: &[IssuerConfig],
 ) -> Option<(usize, CardKeySet)> {
@@ -49,7 +50,7 @@ pub fn match_issuer(
 }
 
 pub fn assess_card(
-    uid: &[u8; UID_LEN],
+    uid: CardUid,
     key_versions: [u8; NUM_KEYS],
     issuers: &[IssuerConfig],
 ) -> CardAssessment {
@@ -80,9 +81,9 @@ pub fn assess_card(
     assessment
 }
 
-fn base_assessment(uid: &[u8; UID_LEN], key_versions: [u8; NUM_KEYS]) -> CardAssessment {
+fn base_assessment(uid: CardUid, key_versions: [u8; NUM_KEYS]) -> CardAssessment {
     let mut uid_storage = [0u8; 12];
-    uid_storage[..UID_LEN].copy_from_slice(uid);
+    uid_storage[..UID_LEN].copy_from_slice(uid.as_bytes());
 
     CardAssessment {
         present: true,
@@ -115,7 +116,7 @@ mod tests {
         let issuers = issuer_fixtures();
 
         for vector in parse_fixture_vectors() {
-            let assessment = assess_card(&vector.uid, vector.key_versions, &issuers);
+            let assessment = assess_card(CardUid::new(vector.uid), vector.key_versions, &issuers);
 
             match (vector.expected_state, assessment.state) {
                 ("Blank", CardState::Blank) => {}
@@ -133,13 +134,13 @@ mod tests {
         let issuers = issuer_fixtures();
         let vector = parse_fixture_vectors()[1];
 
-        let matched = match_issuer(&vector.uid, vector.key_versions[1], &issuers)
+        let matched = match_issuer(CardUid::new(vector.uid), vector.key_versions[1], &issuers)
             .expect("known issuer should match");
 
         assert_eq!(matched.0, 1);
         let other = BoltcardDeterministicDeriver::derive_keys(
             issuers[1].issuer_key.as_bytes(),
-            &vector.uid,
+            CardUid::new(vector.uid),
             issuers[1].derivation_version,
         );
         assert_eq!(&matched.1.k1, &other.k1);

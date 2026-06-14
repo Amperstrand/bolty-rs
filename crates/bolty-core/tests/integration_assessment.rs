@@ -5,6 +5,7 @@ use bolty_core::{
     issuer::assess_card,
     picc::{extract_p_and_c, picc_parse_url},
     secret::AesKey,
+    uid::CardUid,
 };
 
 const UID_BLANK: [u8; 7] = [0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80];
@@ -29,7 +30,7 @@ const PICC_K2: [u8; 16] = [
 
 #[test]
 fn blank_card_assessment_returns_blank() {
-    let assessment = assess_card(&UID_BLANK, [0u8; 5], &[]);
+    let assessment = assess_card(CardUid::new(UID_BLANK), [0u8; 5], &[]);
 
     assert_eq!(assessment.state, CardState::Blank);
 }
@@ -44,12 +45,12 @@ fn provisioned_card_assessment_returns_provisioned() {
     };
     let derived = BoltcardDeterministicDeriver::derive_keys(
         issuer.issuer_key.as_bytes(),
-        &UID_PROVISIONED,
+        CardUid::new(UID_PROVISIONED),
         issuer.derivation_version,
     );
     let expected_key_version = issuer.key_version;
     let assessment = assess_card(
-        &UID_PROVISIONED,
+        CardUid::new(UID_PROVISIONED),
         [expected_key_version; 5],
         &[issuer],
     );
@@ -66,7 +67,7 @@ fn foreign_card_assessment_returns_foreign() {
         key_version: 0x42,
         ..IssuerConfig::default()
     };
-    let assessment = assess_card(&UID_FOREIGN, [0x99; 5], &[issuer]);
+    let assessment = assess_card(CardUid::new(UID_FOREIGN), [0x99; 5], &[issuer]);
 
     assert_eq!(assessment.state, CardState::Foreign);
 }
