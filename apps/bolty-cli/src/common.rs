@@ -1,4 +1,8 @@
+use std::time::Duration;
+
 use ntag424::{Session, SessionError, Transport, Uid};
+
+const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
 
 pub(crate) fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
     match uid {
@@ -20,14 +24,41 @@ pub(crate) fn gen_rnd_a() -> anyhow::Result<[u8; 16]> {
     Ok(rnd_a)
 }
 
-/// Pre-flight safety check before destructive operations (burn/wipe).
-///
-/// Verifies that:
-/// 1. Card is responsive (can read UID)
-/// 2. Card is an NTAG424 DNA (correct vendor/type IDs)
-///
-/// This prevents sending modification APDUs to wrong card types or
-/// unresponsive cards.
+pub(crate) struct AuthRetry {
+    attempt: usize,
+}
+
+impl AuthRetry {
+    pub(crate) fn new() -> Self {
+        Self { attempt: 0 }
+    }
+
+    pub(crate) fn next_delay(&mut self) -> Option<Duration> {
+        let delay_secs = *AUTH_RETRY_DELAYS.get(self.attempt)?;
+        self.attempt += 1;
+        let total = 1 + AUTH_RETRY_DELAYS.len();
+        println!(
+            "  Auth delay — waiting {delay_secs}s (retry {}/{total})...",
+            self.attempt
+        );
+        Some(Duration::from_secs(delay_secs))
+    }
+
+    pub(crate) fn exhausted_msg() -> String {
+        format!(
+            "authentication failed after {} attempts — auth delay persisted. \
+             Wait 30s for the card to reset, then retry.",
+            1 + AUTH_RETRY_DELAYS.len()
+        )
+    }
+}
+
+impl Default for AuthRetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub(crate) async fn preflight_check<T: Transport>(transport: &mut T) -> anyhow::Result<[u8; 7]>
 where
     T::Error: std::error::Error + Send + Sync + 'static,

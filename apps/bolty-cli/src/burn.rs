@@ -9,7 +9,7 @@ use ntag424::{
 };
 use std::time::Duration;
 
-use crate::common::{gen_rnd_a, is_auth_delay, preflight_check};
+use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, preflight_check};
 
 fn boltcard_sdm_opts() -> SdmUrlOptions {
     SdmUrlOptions {
@@ -65,35 +65,60 @@ where
 
     // --- Authenticate: factory K0 for fresh cards, derived K0 for re-burns ---
     println!("[1/7] Authenticating...");
-    let rnd_a = gen_rnd_a()?;
-    let (session, old_keys_are_factory) = match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
-        .await
-    {
-        Ok(s) => {
-            println!("  Authenticated with factory K0");
-            (s, true)
-        }
-        Err(_) => {
-            // Factory K0 failed — card may have derived keys from a previous burn
-            println!("  Factory K0 failed, trying derived K0...");
+    let (session, old_keys_are_factory) = {
+        let mut retry = AuthRetry::new();
+        let factory_result = loop {
             let rnd_a = gen_rnd_a()?;
             match Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
+                .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
                 .await
             {
-                Ok(s) => {
-                    println!("  Authenticated with derived K0 (re-burn)");
-                    (s, false)
-                }
-                Err(e) => {
-                    if is_auth_delay(&e) {
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                Ok(s) => break Some(s),
+                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                    Some(d) => {
+                        tokio::time::sleep(d).await;
                     }
-                    return Err(e).context(
-                        "authentication failed with both factory and derived K0 — \
-                         card may use a different issuer key",
-                    );
+                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+                },
+                Err(_) => break None,
+            }
+        };
+
+        match factory_result {
+            Some(s) => {
+                println!("  Authenticated with factory K0");
+                (s, true)
+            }
+            None => {
+                println!("  Factory K0 rejected, trying derived K0...");
+                let mut retry = AuthRetry::new();
+                let derived_result = loop {
+                    let rnd_a = gen_rnd_a()?;
+                    match Session::default()
+                        .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
+                        .await
+                    {
+                        Ok(s) => break Some(s),
+                        Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                            Some(d) => {
+                                tokio::time::sleep(d).await;
+                            }
+                            None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+                        },
+                        Err(_) => break None,
+                    }
+                };
+                match derived_result {
+                    Some(s) => {
+                        println!("  Authenticated with derived K0 (re-burn)");
+                        (s, false)
+                    }
+                    None => {
+                        anyhow::bail!(
+                            "authentication failed with both factory and derived K0 — \
+                             card may use a different issuer key"
+                        );
+                    }
                 }
             }
         }
@@ -274,29 +299,32 @@ where
     println!("\nVerifying burn...");
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let rnd_a = gen_rnd_a()?;
-    let verify_session = match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) if is_auth_delay(&e) => {
-            println!("  Authentication delay, waiting 1s...");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    let verify_session = {
+        let mut retry = AuthRetry::new();
+        let result = loop {
             let rnd_a = gen_rnd_a()?;
-            Session::default()
+            match Session::default()
                 .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
-                .context(
+            {
+                Ok(s) => break Some(s),
+                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                    Some(d) => {
+                        tokio::time::sleep(d).await;
+                    }
+                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+                },
+                Err(_) => break None,
+            }
+        };
+        match result {
+            Some(s) => s,
+            None => {
+                anyhow::bail!(
                     "POST-BURN VERIFICATION FAILED: Cannot authenticate with new K0.\n\
-                     Try: bolty-cli wipe and re-burn.",
-                )?
-        }
-        Err(e) => {
-            return Err(e).context(
-                "POST-BURN VERIFICATION FAILED: Cannot authenticate with new K0.\n\
-                 Try: bolty-cli wipe and re-burn.",
-            );
+                     Try: bolty-cli wipe and re-burn."
+                );
+            }
         }
     };
 

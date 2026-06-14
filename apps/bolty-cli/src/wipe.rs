@@ -8,7 +8,7 @@ use ntag424::{
 };
 use std::time::Duration;
 
-use crate::common::{gen_rnd_a, is_auth_delay, preflight_check};
+use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, preflight_check};
 
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
@@ -81,24 +81,31 @@ where
     }
 
     println!("Authenticating with derived K0...");
-    let rnd_a = gen_rnd_a()?;
-    let session = match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) if is_auth_delay(&e) => {
-            println!("  Authentication delay, waiting 1s...");
-            tokio::time::sleep(Duration::from_secs(1)).await;
+    let session = {
+        let mut retry = AuthRetry::new();
+        let result = loop {
             let rnd_a = gen_rnd_a()?;
-            Session::default()
+            match Session::default()
                 .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
-                .context("derived K0 authentication failed — wrong issuer key or card not burned")?
-        }
-        Err(e) => {
-            return Err(e)
-                .context("derived K0 authentication failed — wrong issuer key or card not burned");
+            {
+                Ok(s) => break Some(s),
+                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                    Some(d) => {
+                        tokio::time::sleep(d).await;
+                    }
+                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+                },
+                Err(_) => break None,
+            }
+        };
+        match result {
+            Some(s) => s,
+            None => {
+                anyhow::bail!(
+                    "derived K0 authentication failed — wrong issuer key or card not burned"
+                );
+            }
         }
     };
 
@@ -205,56 +212,68 @@ where
     println!("\nVerifying wipe...");
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let rnd_a = gen_rnd_a()?;
-    match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
-        .await
-    {
-        Ok(verify) => {
-            let (settings, mut verify) = verify
-                .get_file_settings(transport, File::Ndef)
+    let verify_session = {
+        let mut retry = AuthRetry::new();
+        let result = loop {
+            let rnd_a = gen_rnd_a()?;
+            match Session::default()
+                .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
                 .await
-                .context("wipe verification: cannot read file settings")?;
-            if let Some(ref sdm) = settings.sdm {
-                let has_picc = !matches!(sdm.picc_data(), PiccData::None);
-                let has_mac = sdm.file_read().is_some();
-                if has_picc || has_mac {
+            {
+                Ok(s) => break Some(s),
+                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                    Some(d) => {
+                        tokio::time::sleep(d).await;
+                    }
+                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+                },
+                Err(e) => {
                     anyhow::bail!(
-                        "POST-WIPE WARNING: SDM still functionally active (picc={}, mac={})!",
-                        has_picc,
-                        has_mac
+                        "POST-WIPE VERIFICATION FAILED: Cannot authenticate with factory K0.\n\
+                         Card may be in an inconsistent state.\n\
+                         Error: {e:#}"
                     );
                 }
             }
-
-            let mut buf = [0u8; 256];
-            let len = verify
-                .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
-                .await
-                .context("wipe verification: cannot read NDEF")?;
-            // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian). NLEN=0 = empty.
-            // The file may contain old data past byte 2; only NLEN matters.
-            // SAFETY: buf is [u8; 256], len.min(32) is always <= 32 < 256.
-            #[allow(clippy::indexing_slicing)]
-            if len < 2 || buf[0] != 0x00 || buf[1] != 0x00 {
-                anyhow::bail!(
-                    "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",
-                    len,
-                    crate::to_hex(&buf[..len.min(32)])
-                );
-            }
-            println!("  ✓ Factory K0 works");
-            println!("  ✓ SDM cleared");
-            println!("  ✓ NDEF empty");
+        };
+        match result {
+            Some(s) => s,
+            None => unreachable!("auth loop Err arm bails before reaching here"),
         }
-        Err(e) => {
+    };
+
+    let (settings, mut verify_session) = verify_session
+        .get_file_settings(transport, File::Ndef)
+        .await
+        .context("wipe verification: cannot read file settings")?;
+    if let Some(ref sdm) = settings.sdm {
+        let has_picc = !matches!(sdm.picc_data(), PiccData::None);
+        let has_mac = sdm.file_read().is_some();
+        if has_picc || has_mac {
             anyhow::bail!(
-                "POST-WIPE VERIFICATION FAILED: Cannot authenticate with factory K0.\n\
-                 Card may be in an inconsistent state.\n\
-                 Error: {e:#}"
+                "POST-WIPE WARNING: SDM still functionally active (picc={}, mac={})!",
+                has_picc,
+                has_mac
             );
         }
     }
+
+    let mut buf = [0u8; 256];
+    let len = verify_session
+        .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
+        .await
+        .context("wipe verification: cannot read NDEF")?;
+    #[allow(clippy::indexing_slicing)]
+    if len < 2 || buf[0] != 0x00 || buf[1] != 0x00 {
+        anyhow::bail!(
+            "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",
+            len,
+            crate::to_hex(&buf[..len.min(32)])
+        );
+    }
+    println!("  ✓ Factory K0 works");
+    println!("  ✓ SDM cleared");
+    println!("  ✓ NDEF empty");
 
     println!("\n✅ Card wiped and verified successfully!");
     Ok(())
