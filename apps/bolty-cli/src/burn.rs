@@ -91,9 +91,14 @@ pub async fn cmd_inspect(transport: &mut PcscTransport) -> anyhow::Result<()> {
         .await
     {
         Ok(len) => {
-            println!("NDEF content ({} bytes): {}", len, crate::to_hex(&buf[..len]));
-            if let Ok(s) = std::str::from_utf8(&buf[..len]) {
-                println!("NDEF (text): {s}");
+            // SAFETY: clamped via .min(buf.len()).
+            #[allow(clippy::indexing_slicing)]
+            {
+                let clamped = len.min(buf.len());
+                println!("NDEF content ({} bytes): {}", clamped, crate::to_hex(&buf[..clamped]));
+                if let Ok(s) = std::str::from_utf8(&buf[..clamped]) {
+                    println!("NDEF (text): {s}");
+                }
             }
         }
         Err(e) => println!("NDEF content: (unreadable: {e})"),
@@ -191,6 +196,8 @@ pub async fn cmd_burn(
         .context("failed to read back NDEF for verification")?;
 
     // NDEF file is typically 256 bytes; only compare the bytes we actually wrote
+    // SAFETY: read_buf is [u8; 256], NDEF templates are always <= 256 bytes.
+    #[allow(clippy::indexing_slicing)]
     if read_len < plan.ndef_bytes.len()
         || read_buf[..plan.ndef_bytes.len()] != plan.ndef_bytes[..]
     {
@@ -238,6 +245,8 @@ pub async fn cmd_burn(
     let derived_keys = [keys.k1.as_bytes(), keys.k2.as_bytes(), keys.k3.as_bytes(), keys.k4.as_bytes()];
 
     let mut session = session;
+    // SAFETY: i from enumerate over key_steps (4 items); derived_keys has 4 items.
+    #[allow(clippy::indexing_slicing)]
     for (i, (key_no, new_key, label)) in key_steps.iter().enumerate() {
         let step = 4 + i;
         let old_key: &[u8; 16] = if old_keys_are_factory {
@@ -430,6 +439,8 @@ pub async fn cmd_wipe(
     ];
 
     let mut session = session;
+    // SAFETY: i from enumerate, key_steps[..i] always valid.
+    #[allow(clippy::indexing_slicing)]
     for (i, (key_no, new_key, old_key, label)) in key_steps.iter().enumerate() {
         println!("Resetting {label}...");
         match session
@@ -493,6 +504,8 @@ pub async fn cmd_wipe(
                 .context("wipe verification: cannot read NDEF")?;
             // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian). NLEN=0 = empty.
             // The file may contain old data past byte 2; only NLEN matters.
+            // SAFETY: buf is [u8; 256], len.min(32) is always <= 32 < 256.
+            #[allow(clippy::indexing_slicing)]
             if len < 2 || buf[0] != 0x00 || buf[1] != 0x00 {
                 anyhow::bail!(
                     "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",

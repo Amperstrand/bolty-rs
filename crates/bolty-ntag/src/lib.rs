@@ -117,7 +117,14 @@ pub async fn safe_inspect<T: Transport>(
         .read_file_unauthenticated(transport, File::Ndef, 0, &mut buf)
         .await
         .ok()
-        .map(|len| Vec::from(&buf[..len]));
+        .map(|len| {
+            // SAFETY: clamped via .min(buf.len()).
+            #[allow(clippy::indexing_slicing)]
+            {
+                let clamped = len.min(buf.len());
+                Vec::from(&buf[..clamped])
+            }
+        });
 
     let sdm_verification = match (&file_settings, &ndef_bytes, k1, k2) {
         (Some(file_settings), Some(ndef_bytes), Some(k1), Some(k2)) => file_settings
@@ -296,6 +303,8 @@ pub async fn check_key_versions<T: Transport>(
     ];
     let mut versions = [0u8; 5];
     let mut session = session;
+    // SAFETY: i comes from enumerate over key_numbers (5 items), versions is [u8; 5].
+    #[allow(clippy::indexing_slicing)]
     for (i, kn) in key_numbers.into_iter().enumerate() {
         let (v, s) = session.get_key_version(transport, kn).await?;
         versions[i] = v;

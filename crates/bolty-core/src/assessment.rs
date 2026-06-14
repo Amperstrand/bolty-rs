@@ -105,12 +105,16 @@ pub fn same_uid(assessment: &CardAssessment, uid: &[u8; 7]) -> bool {
 
     match &assessment.uid {
         Some(stored_uid) => {
-            // Constant-time comparison to prevent timing attacks
-            let mut result: u8 = 0;
-            for i in 0..7 {
-                result |= stored_uid[i] ^ uid[i];
+            // Constant-time comparison to prevent timing attacks.
+            // SAFETY: i ranges over 0..7 and both arrays are [u8; 7].
+            #[allow(clippy::indexing_slicing)]
+            {
+                let mut result: u8 = 0;
+                for i in 0..7 {
+                    result |= stored_uid[i] ^ uid[i];
+                }
+                result == 0
             }
-            result == 0
         }
         None => false,
     }

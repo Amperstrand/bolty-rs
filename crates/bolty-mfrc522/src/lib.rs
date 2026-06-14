@@ -109,13 +109,16 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
         self.mfrc522
             .rmw_register(Register::CollReg, |value| value & !0x80)?;
 
+        // SAFETY: len is clamped via .min(fifo.buffer.len()) in each arm.
+        #[allow(clippy::indexing_slicing)]
         let response = match frame {
             Frame::Short(data) => {
                 let fifo = self.mfrc522.transceive::<2>(data.as_slice(), 7, 0)?;
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
-                fifo.buffer[..fifo.valid_bytes].to_vec()
+                let len = fifo.valid_bytes.min(fifo.buffer.len());
+                fifo.buffer[..len].to_vec()
             }
             Frame::BitOriented(data) => {
                 let tx_last_bits = data.get(1).copied().unwrap_or_default() & 0x07;
@@ -125,14 +128,16 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
-                fifo.buffer[..fifo.valid_bytes].to_vec()
+                let len = fifo.valid_bytes.min(fifo.buffer.len());
+                fifo.buffer[..len].to_vec()
             }
             Frame::Standard(data) => {
                 let fifo = self.mfrc522.transceive::<64>(data.as_slice(), 0, 0)?;
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
-                fifo.buffer[..fifo.valid_bytes].to_vec()
+                let len = fifo.valid_bytes.min(fifo.buffer.len());
+                fifo.buffer[..len].to_vec()
             }
         };
 
@@ -249,6 +254,9 @@ fn validate_uid<E>(uid: &[u8]) -> Result<(), Error<E>> {
     }
 }
 
+/// SAFETY: response.len() >= 2 is checked above, so split = len-2 and
+/// split+1 are always valid indices.
+#[allow(clippy::indexing_slicing)]
 fn split_response<E>(response: &[u8]) -> Result<Response<Vec<u8>>, Error<E>> {
     if response.len() < 2 {
         return Err(Error::InvalidResponseLength(response.len()));

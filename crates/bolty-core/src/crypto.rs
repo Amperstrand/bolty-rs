@@ -8,20 +8,25 @@ const RB: u8 = 0x87;
 /// Multiply by *x* in GF(2^128): left-shift by one bit, conditionally XOR
 /// the reduction polynomial `0x87` into the low byte when the high bit was set.
 fn gf_double(input: &[u8; 16]) -> [u8; 16] {
-    let msb_set = input[0] & 0x80 != 0;
-    let mut out = [0u8; 16];
-    let mut carry = 0u8;
-    for i in (0..16).rev() {
-        out[i] = (input[i] << 1) | carry;
-        carry = input[i] >> 7;
+    // SAFETY: i ranges over 0..16 and both input/output are [u8; 16].
+    #[allow(clippy::indexing_slicing)]
+    {
+        let msb_set = input[0] & 0x80 != 0;
+        let mut out = [0u8; 16];
+        let mut carry = 0u8;
+        for i in (0..16).rev() {
+            out[i] = (input[i] << 1) | carry;
+            carry = input[i] >> 7;
+        }
+        if msb_set {
+            out[15] ^= RB;
+        }
+        out
     }
-    if msb_set {
-        out[15] ^= RB;
-    }
-    out
 }
 
 /// Compute AES-128-CMAC of `data` under `key` (RFC 4493).
+#[allow(clippy::indexing_slicing)]
 pub fn aes_cmac(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     let cipher = Aes128::new(&Array::from(*key));
 

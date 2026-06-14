@@ -87,6 +87,8 @@ fn parse_hex_7(s: &str) -> anyhow::Result<[u8; 7]> {
     decode_hex::<7>(s.trim()).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// SAFETY: b is u8, so b>>4 ∈ 0..16 and b&0xf ∈ 0..16; HEX has 16 elements.
+#[allow(clippy::indexing_slicing)]
 fn to_hex(bytes: impl AsRef<[u8]>) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let bytes = bytes.as_ref();

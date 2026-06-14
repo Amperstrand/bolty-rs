@@ -105,8 +105,12 @@ impl Transport for PcscTransport {
             )));
         }
 
+        // SAFETY: rapdu.len() >= 2 is checked above.
+        #[allow(clippy::indexing_slicing)]
         let data = rapdu[..rapdu.len() - 2].to_vec();
+        #[allow(clippy::indexing_slicing)]
         let sw1 = rapdu[rapdu.len() - 2];
+        #[allow(clippy::indexing_slicing)]
         let sw2 = rapdu[rapdu.len() - 1];
 
         Ok(Response { data, sw1, sw2 })

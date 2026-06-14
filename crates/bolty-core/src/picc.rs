@@ -21,6 +21,11 @@ pub struct PiccData {
     pub has_counter: bool,
 }
 
+/// Extract `p` and `c` query parameters from a Bolt Card callback URL.
+///
+/// SAFETY: string slicing is safe because `start` and `idx` always originate
+/// from `char_indices()`, which yields char-boundary offsets.
+#[allow(clippy::string_slice)]
 pub fn extract_p_and_c(url: &str) -> Option<(&str, &str)> {
     let mut p = None;
     let mut c = None;
@@ -75,6 +80,8 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     Some(picc)
 }
 
+/// SAFETY: all indices are compile-time-known constants within [u8; 16].
+#[allow(clippy::indexing_slicing)]
 pub fn sdm_build_sv2(uid: &[u8; 7], counter: u32) -> [u8; 16] {
     let mut sv2 = [0u8; 16];
     sv2[..SV2_HEADER.len()].copy_from_slice(&SV2_HEADER);
@@ -163,6 +170,8 @@ fn aes_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], buf: &mut [u8]) {
     }
 }
 
+/// SAFETY: idx ∈ 0..8, so idx*2+1 ∈ {1,3,5,...,15}, all within [u8; 16].
+#[allow(clippy::indexing_slicing)]
 fn truncate_odd_bytes(full_mac: &[u8; 16]) -> [u8; 8] {
     core::array::from_fn(|idx| full_mac[idx * 2 + 1])
 }
