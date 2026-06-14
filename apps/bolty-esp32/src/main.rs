@@ -60,7 +60,7 @@ mod firmware {
     use bolty_core::{
         assessment::{CardAssessment, CardState},
         commands::{Command, CommandError, parse_command},
-        config::{BoltyConfig, IssuerConfig, LnurlString, MessageString},
+        config::{BoltyConfig, ErrorString, IssuerConfig, LnurlString},
         issuer::assess_card,
         secret::CardKeys,
         service::{BoltyService, ServiceStatus, WorkflowResult},
@@ -1340,7 +1340,7 @@ mod firmware {
     }
 
     fn workflow_error(message: &str) -> WorkflowResult {
-        let mut out = MessageString::new();
+        let mut out = ErrorString::new();
         if out.push_str(message).is_err() {
             let _ = out.push_str("workflow error");
         }
@@ -1352,9 +1352,9 @@ mod firmware {
     }
 
     fn workflow_error_debug<T: core::fmt::Debug>(error: &T) -> WorkflowResult {
-        let mut out = MessageString::new();
+        let mut out = ErrorString::new();
         if write!(out, "{error:?}").is_err() {
-            let _ = out.push_str("debug formatting overflow");
+            let _ = out.push_str("debug fmt overflow");
         }
         WorkflowResult::Error(out)
     }

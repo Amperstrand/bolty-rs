@@ -9,6 +9,7 @@ pub type UrlString = String<256>;
 pub type LnurlString = UrlString;
 pub type IssuerNameString = String<64>;
 pub type MessageString = String<256>;
+pub type ErrorString = String<64>;
 pub type WifiSsidString = String<32>;
 pub type WifiPasswordString = String<64>;
 pub type RestTokenString = String<64>;

@@ -1,19 +1,18 @@
 use crate::{
     assessment::CardAssessment,
-    config::{LnurlString, MessageString},
+    config::{ErrorString, LnurlString},
     secret::CardKeys,
 };
 
 /// Result of a card workflow operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
 pub enum WorkflowResult {
     Success,
     CardNotPresent,
     AuthFailed,
     AuthDelay,
     WipeRefused,
-    Error(MessageString),
+    Error(ErrorString),
 }
 
 /// The shared service layer. Serial, REST, GUI, and OTA all call this.
@@ -21,7 +20,6 @@ pub enum WorkflowResult {
 pub trait BoltyService {
     fn burn(&mut self, keys: &CardKeys, lnurl: &str) -> WorkflowResult;
     fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult;
-    #[allow(clippy::result_large_err)]
     fn inspect(&mut self) -> Result<CardAssessment, WorkflowResult>;
     fn check_blank(&mut self) -> WorkflowResult;
     fn get_status(&self) -> ServiceStatus;

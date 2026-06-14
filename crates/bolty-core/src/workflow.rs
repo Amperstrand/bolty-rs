@@ -58,9 +58,9 @@ pub fn dispatch_command<S: BoltyService>(
 }
 
 fn workflow_error(message: &str) -> WorkflowResult {
-    let mut buffer = crate::config::MessageString::new();
+    let mut buffer = crate::config::ErrorString::new();
     if buffer.push_str(message).is_err() {
-        return WorkflowResult::Error(crate::config::MessageString::new());
+        return WorkflowResult::Error(crate::config::ErrorString::new());
     }
     WorkflowResult::Error(buffer)
 }
