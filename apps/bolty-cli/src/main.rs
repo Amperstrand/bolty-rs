@@ -1,7 +1,10 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod burn;
+mod common;
+mod inspect;
 mod transport;
+mod wipe;
 
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
@@ -144,12 +147,12 @@ async fn run() -> anyhow::Result<()> {
     match cli {
         Cli::Uid => {
             let mut transport = connect_transport()?;
-            burn::cmd_uid(&mut transport).await?;
+            inspect::cmd_uid(&mut transport).await?;
         }
 
         Cli::Inspect => {
             let mut transport = connect_transport()?;
-            burn::cmd_inspect(&mut transport).await?;
+            inspect::cmd_inspect(&mut transport).await?;
         }
 
         Cli::Burn {
@@ -170,7 +173,7 @@ async fn run() -> anyhow::Result<()> {
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            burn::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
+            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
         }
 
         Cli::DeriveKeys {
@@ -212,7 +215,7 @@ async fn run() -> anyhow::Result<()> {
             burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
-            burn::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
+            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
 
             println!("\n═══ CYCLE: RE-BURN ═══");
             burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
