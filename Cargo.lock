@@ -199,10 +199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bolty-common"
+version = "0.1.0"
+
+[[package]]
 name = "bolty-core"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "bolty-common",
  "heapless 0.9.2",
  "zeroize",
 ]
@@ -244,6 +249,7 @@ name = "bolty-ntag"
 version = "0.1.0"
 dependencies = [
  "aes",
+ "bolty-common",
  "cmac",
  "ntag424",
 ]

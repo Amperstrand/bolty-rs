@@ -12,8 +12,7 @@ use ntag424::{
     types::{ResponseStatus, file_settings::CryptoMode},
 };
 
-pub const FACTORY_KEY: [u8; 16] = [0u8; 16];
-pub const FACTORY_KEY_VERSION: u8 = 0x00;
+pub use bolty_common::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
 
 pub type KeySet = [[u8; 16]; 5];
 
