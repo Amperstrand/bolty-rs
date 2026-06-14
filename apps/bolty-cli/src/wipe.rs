@@ -120,28 +120,33 @@ where
         .await
         .context("failed to write empty NDEF")?;
 
-    // Reset K1-K4 to factory
-    let key_steps: [(NonMasterKeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
+    // Reset K1-K4 to factory with per-key verification
+    #[allow(clippy::type_complexity)]
+    let key_steps: [(NonMasterKeyNumber, KeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
         (
             NonMasterKeyNumber::Key1,
+            KeyNumber::Key1,
             &FACTORY_KEY,
             keys.k1.as_bytes(),
             "K1",
         ),
         (
             NonMasterKeyNumber::Key2,
+            KeyNumber::Key2,
             &FACTORY_KEY,
             keys.k2.as_bytes(),
             "K2",
         ),
         (
             NonMasterKeyNumber::Key3,
+            KeyNumber::Key3,
             &FACTORY_KEY,
             keys.k3.as_bytes(),
             "K3",
         ),
         (
             NonMasterKeyNumber::Key4,
+            KeyNumber::Key4,
             &FACTORY_KEY,
             keys.k4.as_bytes(),
             "K4",
@@ -151,19 +156,35 @@ where
     let mut session = session;
     // SAFETY: i from enumerate, key_steps[..i] always valid.
     #[allow(clippy::indexing_slicing)]
-    for (i, (key_no, new_key, old_key, label)) in key_steps.iter().enumerate() {
+    for (i, (key_no, kn, new_key, old_key, label)) in key_steps.iter().enumerate() {
         println!("Resetting {label}...");
         match session
             .change_key(transport, *key_no, new_key, KEY_VERSION_BLANK, old_key)
             .await
         {
             Ok(s) => {
-                println!("  ✓ {label} reset to factory");
-                session = s;
+                let (v, s2) = s
+                    .get_key_version(transport, *kn)
+                    .await
+                    .with_context(|| format!("failed to read back {label} version"))?;
+                if v != KEY_VERSION_BLANK {
+                    anyhow::bail!(
+                        "{label} version mismatch: expected {KEY_VERSION_BLANK:#04X}, got {v:#04X}.\n\
+                         Card state: partially wiped (reset: [{}])\n\
+                         Recovery: re-run burn, then wipe again",
+                        key_steps[..i]
+                            .iter()
+                            .map(|(_, _, _, _, l)| *l)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                println!("  ✓ {label} reset to factory (v{v:#04X})");
+                session = s2;
             }
             Err(e) => {
                 let already_reset: Vec<&str> =
-                    key_steps[..i].iter().map(|(_, _, _, l)| *l).collect();
+                    key_steps[..i].iter().map(|(_, _, _, _, l)| *l).collect();
                 anyhow::bail!(
                     "Failed to reset {label}: {e:#}\n\
                      Card state: partially wiped (reset: [{}])\n\

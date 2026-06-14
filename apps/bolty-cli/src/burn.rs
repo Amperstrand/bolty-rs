@@ -176,12 +176,32 @@ where
     }
     println!("  ✓ SDM configured and verified");
 
-    // --- Install K1-K4 ---
-    let key_steps: [(NonMasterKeyNumber, &[u8; 16], &str); 4] = [
-        (NonMasterKeyNumber::Key1, keys.k1.as_bytes(), "K1"),
-        (NonMasterKeyNumber::Key2, keys.k2.as_bytes(), "K2"),
-        (NonMasterKeyNumber::Key3, keys.k3.as_bytes(), "K3"),
-        (NonMasterKeyNumber::Key4, keys.k4.as_bytes(), "K4"),
+    // --- Install K1-K4 with per-key verification ---
+    let key_steps: [(NonMasterKeyNumber, KeyNumber, &[u8; 16], &str); 4] = [
+        (
+            NonMasterKeyNumber::Key1,
+            KeyNumber::Key1,
+            keys.k1.as_bytes(),
+            "K1",
+        ),
+        (
+            NonMasterKeyNumber::Key2,
+            KeyNumber::Key2,
+            keys.k2.as_bytes(),
+            "K2",
+        ),
+        (
+            NonMasterKeyNumber::Key3,
+            KeyNumber::Key3,
+            keys.k3.as_bytes(),
+            "K3",
+        ),
+        (
+            NonMasterKeyNumber::Key4,
+            KeyNumber::Key4,
+            keys.k4.as_bytes(),
+            "K4",
+        ),
     ];
     let derived_keys = [
         keys.k1.as_bytes(),
@@ -193,7 +213,7 @@ where
     let mut session = session;
     // SAFETY: i from enumerate over key_steps (4 items); derived_keys has 4 items.
     #[allow(clippy::indexing_slicing)]
-    for (i, (key_no, new_key, label)) in key_steps.iter().enumerate() {
+    for (i, (key_no, kn, new_key, label)) in key_steps.iter().enumerate() {
         let step = 4 + i;
         let old_key: &[u8; 16] = if old_keys_are_factory {
             &FACTORY_KEY
@@ -206,12 +226,28 @@ where
             .await
         {
             Ok(s) => {
-                println!("  ✓ {label} installed");
-                session = s;
+                let (v, s2) = s
+                    .get_key_version(transport, *kn)
+                    .await
+                    .with_context(|| format!("failed to read back {label} version"))?;
+                if v != version {
+                    anyhow::bail!(
+                        "{label} version mismatch: expected {version:#04X}, got {v:#04X}.\n\
+                         Card state: NDEF ✓, SDM ✓, K0=factory, changed keys: [{}]\n\
+                         Recovery: re-run burn (factory K0 still active)",
+                        key_steps[..i]
+                            .iter()
+                            .map(|(_, _, _, l)| *l)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                println!("  ✓ {label} installed (v{v:#04X})");
+                session = s2;
             }
             Err(e) => {
                 let already_changed: Vec<&str> =
-                    key_steps[..i].iter().map(|(_, _, l)| *l).collect();
+                    key_steps[..i].iter().map(|(_, _, _, l)| *l).collect();
                 anyhow::bail!(
                     "Failed to install {label}: {e:#}\n\
                      Card state: NDEF ✓, SDM ✓, K0=factory, changed keys: [{}]\n\
