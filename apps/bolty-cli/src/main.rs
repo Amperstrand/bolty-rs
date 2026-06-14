@@ -29,6 +29,9 @@ enum Cli {
     Keyver {
         #[arg(long)]
         issuer_key: String,
+
+        #[arg(long, default_value = "1")]
+        version: u8,
     },
 
     /// Inspect card: UID, version, file settings, NDEF content (unauthenticated)
@@ -176,10 +179,13 @@ async fn run() -> anyhow::Result<()> {
             ver::cmd_ver(&mut transport).await?;
         }
 
-        Cli::Keyver { issuer_key } => {
+        Cli::Keyver {
+            issuer_key,
+            version,
+        } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            keyver::cmd_keyver(&mut transport, &issuer_key).await?;
+            keyver::cmd_keyver(&mut transport, &issuer_key, version).await?;
         }
 
         Cli::Inspect => {
