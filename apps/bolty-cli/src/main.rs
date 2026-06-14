@@ -16,58 +16,63 @@ enum Cli {
 
     /// Burn card: write SDM NDEF, enable SDM, install derived keys
     Burn {
-        /// Issuer key as 32-char hex string (16 bytes)
         #[arg(long)]
         issuer_key: String,
 
-        /// SDM URL template (e.g. https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac})
         #[arg(long)]
         url: String,
 
-        /// Key version byte (default: 1)
         #[arg(long, default_value = "1")]
         version: u8,
+
+        /// Print derived key material to stdout
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Wipe card: clear SDM, reset all keys to factory defaults
     Wipe {
-        /// Issuer key as 32-char hex string (16 bytes)
         #[arg(long)]
         issuer_key: String,
 
-        /// Key version byte (must match the version used during burn)
         #[arg(long, default_value = "1")]
         version: u8,
+
+        /// Print derived key material to stdout
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Full burn → wipe → re-burn cycle with verification at each step
     Cycle {
-        /// Issuer key as 32-char hex string (16 bytes)
         #[arg(long)]
         issuer_key: String,
 
-        /// SDM URL template (e.g. https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac})
         #[arg(long)]
         url: String,
 
-        /// Key version byte (default: 1)
         #[arg(long, default_value = "1")]
         version: u8,
+
+        /// Print derived key material to stdout
+        #[arg(long)]
+        verbose: bool,
     },
 
     /// Compute and print derived keys (no card needed)
     DeriveKeys {
-        /// Card UID as 14-char hex string (7 bytes)
         #[arg(long)]
         uid: String,
 
-        /// Issuer key as 32-char hex string (16 bytes)
         #[arg(long)]
         issuer_key: String,
 
-        /// Key version (default: 1)
         #[arg(long, default_value = "1")]
         version: u8,
+
+        /// Print derived key material to stdout
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -114,54 +119,62 @@ async fn main() -> anyhow::Result<()> {
             issuer_key,
             url,
             version,
+            verbose,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
         }
 
         Cli::Wipe {
             issuer_key,
             version,
+            verbose,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            burn::cmd_wipe(&mut transport, &issuer_key, version).await?;
+            burn::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
         }
 
         Cli::DeriveKeys {
             uid,
             issuer_key,
             version,
+            verbose,
         } => {
             let uid = parse_hex_7(&uid)?;
             let issuer_key = parse_hex_16(&issuer_key)?;
             let keys = BoltcardDeterministicDeriver::derive_keys(&issuer_key, &uid, version as u32);
-            println!("Derived keys (version {version}):");
-            println!("  cardKey: {}", to_hex(keys.card_key.as_bytes()));
-            println!("  K0:      {}", to_hex(keys.k0.as_bytes()));
-            println!("  K1:      {}", to_hex(keys.k1.as_bytes()));
-            println!("  K2:      {}", to_hex(keys.k2.as_bytes()));
-            println!("  K3:      {}", to_hex(keys.k3.as_bytes()));
-            println!("  K4:      {}", to_hex(keys.k4.as_bytes()));
+            if verbose {
+                println!("Derived keys (version {version}):");
+                println!("  cardKey: {}", to_hex(keys.card_key.as_bytes()));
+                println!("  K0:      {}", to_hex(keys.k0.as_bytes()));
+                println!("  K1:      {}", to_hex(keys.k1.as_bytes()));
+                println!("  K2:      {}", to_hex(keys.k2.as_bytes()));
+                println!("  K3:      {}", to_hex(keys.k3.as_bytes()));
+                println!("  K4:      {}", to_hex(keys.k4.as_bytes()));
+            } else {
+                println!("Keys derived (version {version}). Use --verbose to display.");
+            }
         }
 
         Cli::Cycle {
             issuer_key,
             url,
             version,
+            verbose,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
 
             println!("═══ CYCLE: BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
-            burn::cmd_wipe(&mut transport, &issuer_key, version).await?;
+            burn::cmd_wipe(&mut transport, &issuer_key, version, verbose).await?;
 
             println!("\n═══ CYCLE: RE-BURN ═══");
-            burn::cmd_burn(&mut transport, &issuer_key, &url, version).await?;
+            burn::cmd_burn(&mut transport, &issuer_key, &url, version, verbose).await?;
 
             println!("\n🎉 Full cycle completed successfully!");
         }

@@ -106,6 +106,7 @@ pub async fn cmd_burn(
     issuer_key: &[u8; 16],
     url: &str,
     version: u8,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     let plan = sdm_url_config(url, CryptoMode::Aes, boltcard_sdm_opts())
         .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?;
@@ -118,7 +119,9 @@ pub async fn cmd_burn(
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
-    print_derived_keys(&keys, version);
+    if verbose {
+        print_derived_keys(&keys, version);
+    }
 
     // --- Authenticate: factory K0 for fresh cards, derived K0 for re-burns ---
     println!("[1/7] Authenticating...");
@@ -328,6 +331,7 @@ pub async fn cmd_wipe(
     transport: &mut PcscTransport,
     issuer_key: &[u8; 16],
     version: u8,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     let uid = Session::default()
         .get_selected_uid(transport)
@@ -337,7 +341,9 @@ pub async fn cmd_wipe(
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     let keys = BoltcardDeterministicDeriver::derive_keys(issuer_key, &uid_fixed, version as u32);
-    println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
+    if verbose {
+        println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
+    }
 
     // Probe card state: try factory K0 first, then derived K0
     let rnd_a = gen_rnd_a()?;
