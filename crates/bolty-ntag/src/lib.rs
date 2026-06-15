@@ -15,6 +15,8 @@
 
 extern crate alloc;
 
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use ntag424::{
     AuthenticatedSession, File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Session,
@@ -438,4 +440,179 @@ pub async fn check_key_versions<T: Transport>(
     }
 
     Ok(versions)
+}
+
+pub struct NdefUri {
+    pub url: String,
+    pub picc_hex: Option<String>,
+    pub mac_hex: Option<String>,
+}
+
+const URI_PREFIXES: &[&str] = &["", "http://www.", "https://www.", "http://", "https://"];
+
+pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
+    if data.len() < 4 {
+        return None;
+    }
+    let nlen = usize::from(u16::from_be_bytes([*data.first()?, *data.get(1)?]));
+    if nlen < 5 || data.len() < 2 + nlen {
+        return None;
+    }
+    let msg = data.get(2..2 + nlen)?;
+
+    let flags = *msg.first()?;
+    let sr = (flags & 0x10) != 0;
+    let il = (flags & 0x08) != 0;
+
+    let type_len = usize::from(*msg.get(1)?);
+    let header_len = if sr { 3 } else { 6 };
+
+    let payload_len = if sr {
+        usize::from(*msg.get(2)?)
+    } else {
+        u32::from_be_bytes([*msg.get(2)?, *msg.get(3)?, *msg.get(4)?, *msg.get(5)?]) as usize
+    };
+
+    if type_len != 1 || *msg.get(header_len)? != b'U' {
+        return None;
+    }
+
+    let mut payload_offset = header_len + type_len;
+    if il {
+        let id_len = usize::from(*msg.get(payload_offset)?);
+        payload_offset = payload_offset.checked_add(1)?.checked_add(id_len)?;
+    }
+
+    let payload_end = payload_offset.checked_add(payload_len)?;
+    let payload = msg.get(payload_offset..payload_end)?;
+    if payload.is_empty() {
+        return None;
+    }
+
+    let prefix_code = usize::from(*payload.first()?);
+    let prefix = URI_PREFIXES.get(prefix_code).copied().unwrap_or("");
+    let uri = payload.get(1..)?;
+    let uri_str = core::str::from_utf8(uri).ok()?.trim_end_matches('\0');
+    let url = alloc::format!("{prefix}{uri_str}");
+
+    let (picc_hex, mac_hex) = match bolty_core::picc::extract_p_and_c(uri_str) {
+        Some((p, c)) => (Some(p.to_string()), Some(c.to_string())),
+        None => (None, None),
+    };
+
+    Some(NdefUri {
+        url,
+        picc_hex,
+        mac_hex,
+    })
+}
+
+#[cfg(test)]
+mod ndef_tests {
+    use super::*;
+    use alloc::vec;
+
+    const MINIMAL_NDEF: &[u8] = &[
+        0x00, 0x09, 0xD1, 0x01, 0x05, 0x55, 0x04, 0x61, 0x62, 0x63, 0x64,
+    ];
+
+    const BOLTCARD_NDEF: &[u8] = &[
+        0x00, 0x4F, 0xD1, 0x01, 0x4B, 0x55, 0x04, b'b', b'o', b'l', b't', b'c', b'a', b'r', b'd',
+        b'p', b'o', b'c', b'.', b'p', b's', b'b', b't', b'.', b'm', b'e', b'/', b'?', b'p', b'=',
+        b'A', b'B', b'C', b'D', b'E', b'F', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8',
+        b'9', b'A', b'B', b'C', b'D', b'E', b'F', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
+        b'8', b'9', b'&', b'c', b'=', b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',
+        b'A', b'B', b'C', b'D', b'E', b'F',
+    ];
+
+    #[test]
+    fn parse_minimal_ndef() {
+        let parsed = parse_ndef_uri(MINIMAL_NDEF).unwrap();
+        assert_eq!(parsed.url, "https://abcd");
+        assert!(parsed.picc_hex.is_none());
+        assert!(parsed.mac_hex.is_none());
+    }
+
+    #[test]
+    fn parse_boltcard_ndef() {
+        let parsed = parse_ndef_uri(BOLTCARD_NDEF).unwrap();
+        assert!(parsed.url.starts_with("https://boltcardpoc.psbt.me/?p="));
+        assert_eq!(
+            parsed.picc_hex.as_deref(),
+            Some("ABCDEF0123456789ABCDEF0123456789")
+        );
+        assert_eq!(parsed.mac_hex.as_deref(), Some("0123456789ABCDEF"));
+    }
+
+    #[test]
+    fn parse_empty_ndef() {
+        assert!(parse_ndef_uri(&[0x00, 0x00]).is_none());
+    }
+
+    #[test]
+    fn parse_short_ndef() {
+        assert!(parse_ndef_uri(&[0x00, 0x01, 0xD1]).is_none());
+    }
+
+    #[test]
+    fn parse_non_uri_ndef() {
+        let data = &[
+            0x00, 0x05, 0xD1, 0x01, 0x01, 0x54, 0x02, 0x65, 0x6e, 0x68, 0x69,
+        ];
+        assert!(parse_ndef_uri(data).is_none());
+    }
+
+    #[test]
+    fn parse_wrong_prefix_code() {
+        let data = &[0x00, 0x07, 0xD1, 0x01, 0x03, 0x55, 0xFF, b'x', b'y'];
+        let parsed = parse_ndef_uri(data).unwrap();
+        assert_eq!(parsed.url, "xy");
+    }
+
+    #[test]
+    fn parse_long_record_non_sr() {
+        let mut data = vec![0x00, 0x00];
+        data.push(0xC1);
+        data.push(0x01);
+        data.extend_from_slice(&100u32.to_be_bytes());
+        data.push(0x55);
+        data.push(0x04);
+        data.extend(core::iter::repeat(b'x').take(99));
+        let nlen = (data.len() - 2) as u16;
+        data[0..2].copy_from_slice(&nlen.to_be_bytes());
+        let parsed = parse_ndef_uri(&data).unwrap();
+        assert!(parsed.url.starts_with("https://"));
+        assert_eq!(parsed.url.len(), 8 + 100 - 1);
+    }
+
+    #[test]
+    fn parse_with_id_length_present() {
+        let data = vec![
+            0x00, 0x0A, 0xD9, 0x01, 0x04, 0x55, 0x01, 0x42, 0x04, b'x', b'y', b'z',
+        ];
+        let parsed = parse_ndef_uri(&data).unwrap();
+        assert_eq!(parsed.url, "https://xyz");
+    }
+
+    #[test]
+    fn parse_truncated_payload() {
+        let data = &[
+            0x00, 0x10, 0xD1, 0x01, 0x20, 0x55, 0x04, b'h', b'e', b'l', b'l', b'o',
+        ];
+        assert!(parse_ndef_uri(data).is_none());
+    }
+
+    #[test]
+    fn parse_sdm_url_config_ndef_template() {
+        let opts = SdmUrlOptions {
+            picc_key: KeyNumber::Key1,
+            mac_key: KeyNumber::Key2,
+            ..SdmUrlOptions::new()
+        };
+        let url = "https://card.bolt.local/lnurl?[[p={picc:uid+ctr}&cmac={mac}";
+        let plan = sdm_url_config(url, CryptoMode::Aes, opts).unwrap();
+
+        let parsed = parse_ndef_uri(&plan.ndef_bytes).expect("should parse sdm_url_config output");
+        assert!(parsed.url.contains("card.bolt.local"));
+    }
 }
