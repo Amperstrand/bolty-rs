@@ -31,17 +31,31 @@ Foundation-Devices/iso14443-rs    GPL-3.0-or-later
 
 ## Other dependencies
 
-| Dependency | License | GPL-3.0 Compatible? |
-|---|---|---|
-| `ntag424` (Amperstrand) | MIT OR Apache-2.0 | Yes |
-| `mfrc522` (Amperstrand fork) | MIT OR Apache-2.0 (upstream) | Yes |
-| `pcsc` | MIT | Yes |
-| `embedded-hal` | MIT OR Apache-2.0 | Yes |
-| `esp-idf-sys`/`esp-idf-hal` | Apache-2.0 | Yes |
-| `heapless` | MIT OR Apache-2.0 | Yes |
+| Dependency | Upstream | License | GPL-3.0 Compatible? |
+|---|---|---|---|
+| `iso14443` | Foundation-Devices/iso14443-rs (forked) | GPL-3.0-or-later | Forces GPL-3.0 |
+| `ntag424` | jannschu/ntag424 on Codeberg (forked) | MIT OR Apache-2.0 | Yes |
+| `mfrc522` | crates.io `mfrc522` v0.8.0 (forked) | MIT OR Apache-2.0 | Yes |
+| `pcsc` | bluetech/pcsc-rust | MIT | Yes |
+| `embedded-hal` | rust-embedded/embedded-hal | MIT OR Apache-2.0 | Yes |
+| `esp-idf-sys`/`esp-idf-hal` | esp-rs | Apache-2.0 | Yes |
+| `heapless` | japaric/heapless | MIT OR Apache-2.0 | Yes |
 
-All dependencies are compatible with GPL-3.0. No additional licensing
-constraints are imposed by any dependency.
+All dependencies are compatible with GPL-3.0. The **only** dependency that
+forces GPL-3.0 is `iso14443` (Foundation-Devices/iso14443-rs). If iso14443
+were ever replaced with a permissively-licensed alternative, bolty-rs could
+be relicensed to MIT OR Apache-2.0.
+
+### Fork documentation
+
+Amperstrand maintains forks of three dependencies, all with `ai-experiments`
+as the default branch:
+
+| Fork | Upstream | Changes | Issues |
+|---|---|---|---|
+| Amperstrand/iso14443-rs | Foundation-Devices/iso14443-rs | PcdSession, WTX timeout, protocol fixes | #1–#6 |
+| Amperstrand/mfrc522-rs | crates.io mfrc522 v0.8.0 | I2C support, timer config | #1 |
+| Amperstrand/ntag424 | jannschu/ntag424 (Codeberg) | Pinned rev, bolty-specific patches | — |
 
 ## SPDX
 
