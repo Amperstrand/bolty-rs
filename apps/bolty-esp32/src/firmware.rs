@@ -34,6 +34,8 @@ use service::Esp32BoltyService;
 mod console_commands;
 use console_commands::{handle_line, print_boot_banner};
 
+mod nvs;
+
 #[cfg(not(feature = "wifi"))]
 struct WifiManager;
 
@@ -136,7 +138,8 @@ pub fn main() {
     };
 
     let mut serial = SerialConsole::new();
-    let initial_config = BoltyConfig::default();
+    let mut initial_config = BoltyConfig::default();
+    initial_config.lnurl = nvs::load_lnurl();
     let config = Arc::new(Mutex::new(initial_config.clone()));
     let display_ok = DISPLAY_INIT_OK.load(Ordering::SeqCst);
     let service = Arc::new(Mutex::new(Esp32BoltyService::new(

@@ -112,6 +112,9 @@ where
         if self.keys.is_none() {
             self.keys = self.current_config.pending_keys.clone();
         }
+        if let Some(ref lnurl) = self.current_config.lnurl {
+            super::nvs::save_lnurl(lnurl.as_str());
+        }
     }
 
     pub(super) fn nfc_available(&self) -> bool {
