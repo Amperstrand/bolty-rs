@@ -2,7 +2,7 @@
 name = "bolty-core"
 version = "0.1.0"
 edition = "2024"
-description = "Portable Bolt Card domain logic: derivation, assessment, commands, secrets"
+description = "Portable Bolt Card domain logic: derivation, assessment, config, PICC"
 
 [dependencies]
 aes = { version = "=0.9.0", default-features = false }

@@ -11,7 +11,7 @@ flowchart TD
         cli[apps/bolty-cli]
     end
 
-    subgraph domain[Domain and workflow crates]
+    subgraph domain[Domain crates]
         core[crates/bolty-core]
         ntag[crates/bolty-ntag]
         mfrc[crates/bolty-mfrc522]
@@ -50,10 +50,10 @@ flowchart TD
 
 | Crate | Responsibility |
 |---|---|
-| `bolty-core` | Pure policy, command parsing, derivation, card assessment, RAM-only runtime config |
-| `bolty-ntag` | NTAG424-specific card operations (`burn`, `wipe`, `check_key_versions`, etc.) |
+| `bolty-core` | Portable domain logic: key derivation, card assessment, PICC decrypt/verify, config types, UID handling |
+| `bolty-ntag` | NTAG424 card operations (`burn`, `wipe`, `safe_inspect`) and sole re-export facade for `ntag424` types |
 | `bolty-mfrc522` | Reader activation and transport glue from MFRC522 to NTAG/ISO-DEP layers |
-| `apps/bolty-esp32` | Board selection, serial loop, WiFi/REST/OTA integration, hardware bootstrapping |
+| `apps/bolty-esp32` | Board selection, serial loop, WiFi/REST/OTA, command parsing/dispatch, `BoltyService` trait |
 | `apps/bolty-cli` | Desktop CLI via PCSC — burn, wipe, diagnose, picc, keyver, ver, inspect, cycle |
 | `vendor/iso14443` | Vendored ISO/IEC 14443 protocol support |
 | `vendor/mfrc522` | Vendored and patched MFRC522 low-level driver |
@@ -70,14 +70,13 @@ sequenceDiagram
     participant Card as NTAG424
 
     Host->>App: command / REST request
-    App->>Core: parse + dispatch
-    Core->>Ntag: workflow decision
+    App->>App: parse + dispatch (local commands/service/workflow)
+    App->>Ntag: burn / wipe / safe_inspect
     Ntag->>Reader: activate + APDU exchange
     Reader->>Card: ISO14443 / ISO-DEP traffic
     Card-->>Reader: response
     Reader-->>Ntag: transport result
-    Ntag-->>Core: workflow result
-    Core-->>App: ServiceStatus / WorkflowResult
+    Ntag-->>App: workflow result
     App-->>Host: serial line / JSON response
 ```
 
@@ -123,9 +122,9 @@ nmap --script broadcast-dns-service-discovery
 
 ## Transport abstraction
 
-All card operations are generic over `T: ntag424::Transport`. This enables
-the same burn/wipe/diagnose workflows to run on ESP32 firmware, desktop CLI,
-and integration tests.
+All card operations are generic over `T: bolty_ntag::Transport` (re-exported
+from `ntag424::Transport`). This enables the same burn/wipe/diagnose workflows
+to run on ESP32 firmware, desktop CLI, and integration tests.
 
 | Transport | Target | Purpose |
 |---|---|---|
@@ -135,7 +134,7 @@ and integration tests.
 | `LoggingTransport<T>` | Any | Wraps any transport with APDU audit logging to `/tmp/bolty-audit.log` |
 
 `MockTransport` simulates AES-EV2 authentication, file settings read/write,
-key change, key version read, NDEF read/write, and GetVersion — enabling 11
+key change, key version read, NDEF read/write, and GetVersion — enabling 14
 hardware-free integration tests covering the complete card lifecycle.
 
 ## Improvement backlog
@@ -144,5 +143,3 @@ hardware-free integration tests covering the complete card lifecycle.
 2. Add timeout hardening in vendored MFRC522 and ISO14443 loops.
 3. Further reduce ignored formatting/write failures in the serial and JSON output paths.
 4. Add a separate PN532 transport crate and frontend capability when that hardware path is introduced.
-5. DRY refactor: delegate CLI burn/wipe to `bolty-ntag::burn()`/`wipe()` after adding safety features (SDM clearing, NDEF verification, post-burn auth check) to the library implementations.
-6. Per-key verification: verify each K1-K4 individually after install, before K0 change.

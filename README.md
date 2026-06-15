@@ -6,7 +6,7 @@
 
 - Core Bolt Card workflows: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`
 - Desktop CLI (`bolty-cli`) with full card lifecycle: burn/wipe/diagnose with pre-flight safety checks, per-key verification, and `--dry-run` mode
-- 166 hardware-free tests including 11 integration tests via MockTransport (full NTAG424 protocol simulation)
+- 173 hardware-free tests including 14 integration tests via MockTransport (full NTAG424 protocol simulation)
 - Both supported boards build and run from the same firmware crate with compile-time board selection
 - WiFi/REST/OTA are optional capabilities, not baseline requirements
 - Dependency versions are pinned exactly and the workspace `Cargo.lock` is intended to be tracked for reproducible firmware builds
@@ -17,8 +17,8 @@
 flowchart TD
     host[Serial client / HTTP client] --> app[apps/bolty-esp32]
     cli[Desktop CLI / PCSC] --> cliapp[apps/bolty-cli]
-    app --> core[crates/bolty-core\npolicy + commands + derivation]
-    app --> ntag[crates/bolty-ntag\nNTAG424 workflows]
+    app --> core[crates/bolty-core\nderivation + assessment + config]
+    app --> ntag[crates/bolty-ntag\nNTAG424 workflows + facade]
     app --> mfrc[crates/bolty-mfrc522\nMFRC522 transport]
     app --> idf[esp-idf-sys / hal / svc]
     cliapp --> core

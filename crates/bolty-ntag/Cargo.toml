@@ -2,7 +2,7 @@
 name = "bolty-ntag"
 version = "0.1.0"
 edition = "2024"
-description = "Bolt card NTAG424 operations: burn, wipe, verify, key derivation"
+description = "NTAG424 card operations (burn, wipe, inspect) and ntag424 facade"
 
 [dependencies]
 bolty-core = { path = "../bolty-core" }
