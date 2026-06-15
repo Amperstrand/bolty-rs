@@ -15,12 +15,43 @@ use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{File, KeyNumber, Session, Transport};
+use ntag424::{File, KeyNumber, Session, Transport, types::file_settings::PiccData};
 
 use crate::common::{gen_rnd_a, is_auth_delay, parse_ndef_uri, uid_to_fixed};
 
 /// Standard Bolt Card key version.
 const DEFAULT_VERSION: u32 = 1;
+
+/// Returns `true` when SDM has at least one active feature (PICC data or
+/// file-read MAC).
+///
+/// After `wipe()`, `Sdm::disabled()` leaves a `Some(Sdm{...})` shell with
+/// `picc_data == None` and `file_read == None`.  A structural `sdm.is_some()`
+/// check would treat that as "SDM active" and mis-classify the card.
+fn is_sdm_functionally_active(sdm: Option<&ntag424::types::file_settings::Sdm>) -> bool {
+    sdm.is_some_and(|s| !matches!(s.picc_data(), PiccData::None) || s.file_read().is_some())
+}
+
+fn classify_card_state(
+    auth_delay: bool,
+    has_sdm: bool,
+    has_ndef_content: bool,
+    factory_auth_ok: bool,
+) -> &'static str {
+    if auth_delay {
+        "AUTH_DELAY"
+    } else if !has_sdm && !has_ndef_content {
+        if factory_auth_ok {
+            "BLANK"
+        } else {
+            "INCONSISTENT"
+        }
+    } else if has_sdm && has_ndef_content {
+        "PROVISIONED"
+    } else {
+        "HALF-WIPED"
+    }
+}
 
 pub async fn cmd_diagnose<T: Transport>(
     transport: &mut T,
@@ -68,7 +99,7 @@ where
     // 3. File settings (unauthenticated)
     let has_sdm = match session.get_file_settings(transport, File::Ndef).await {
         Ok(settings) => {
-            let active = settings.sdm.is_some();
+            let active = is_sdm_functionally_active(settings.sdm.as_ref());
             println!("SDM active:     {active}");
             println!("File settings:  {settings:?}");
             active
@@ -166,21 +197,7 @@ where
     // 7. Classify.
     println!("\n=== DIAGNOSIS ===");
 
-    let state = if auth_delay {
-        "AUTH_DELAY"
-    } else if looks_blank {
-        if factory_auth_ok {
-            "BLANK"
-        } else {
-            "INCONSISTENT"
-        }
-    } else if has_sdm && has_ndef_content {
-        "PROVISIONED"
-    } else if has_sdm || has_ndef_content {
-        "HALF-WIPED"
-    } else {
-        "INCONSISTENT"
-    };
+    let state = classify_card_state(auth_delay, has_sdm, has_ndef_content, factory_auth_ok);
 
     println!("Card state:     {state}");
 
@@ -220,4 +237,47 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_blank_with_factory_auth() {
+        assert_eq!(classify_card_state(false, false, false, true), "BLANK");
+    }
+
+    #[test]
+    fn classify_blank_without_factory_auth() {
+        assert_eq!(
+            classify_card_state(false, false, false, false),
+            "INCONSISTENT"
+        );
+    }
+
+    #[test]
+    fn classify_provisioned() {
+        assert_eq!(classify_card_state(false, true, true, false), "PROVISIONED");
+    }
+
+    #[test]
+    fn classify_half_wiped_sdm_only() {
+        assert_eq!(classify_card_state(false, true, false, false), "HALF-WIPED");
+    }
+
+    #[test]
+    fn classify_half_wiped_ndef_only() {
+        assert_eq!(classify_card_state(false, false, true, false), "HALF-WIPED");
+    }
+
+    #[test]
+    fn classify_auth_delay_overrides_all() {
+        assert_eq!(classify_card_state(true, true, true, true), "AUTH_DELAY");
+    }
+
+    #[test]
+    fn classify_auth_delay_with_blank_signals() {
+        assert_eq!(classify_card_state(true, false, false, false), "AUTH_DELAY");
+    }
 }
