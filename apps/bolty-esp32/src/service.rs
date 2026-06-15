@@ -1,4 +1,4 @@
-use crate::{
+use bolty_core::{
     assessment::CardAssessment,
     config::{ErrorString, LnurlString},
     secret::CardKeys,

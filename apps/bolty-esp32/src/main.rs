@@ -61,7 +61,13 @@ compile_error!("`led-matrix` is only supported on `board-m5atom`.");
 compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 
 #[cfg(target_arch = "xtensa")]
+mod commands;
+#[cfg(target_arch = "xtensa")]
 mod firmware;
+#[cfg(target_arch = "xtensa")]
+mod service;
+#[cfg(target_arch = "xtensa")]
+mod workflow;
 
 #[cfg(target_arch = "xtensa")]
 fn main() {

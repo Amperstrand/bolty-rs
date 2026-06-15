@@ -1,12 +1,14 @@
 use core::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
-use bolty_core::{
+use crate::{
     commands::Command,
-    config::{BoltyConfig, LnurlString},
-    secret::{AesKey, CardKeys},
     service::{BoltyService, ServiceStatus, WorkflowResult},
     workflow::dispatch_command,
+};
+use bolty_core::{
+    config::{BoltyConfig, LnurlString},
+    secret::{AesKey, CardKeys},
 };
 use embedded_svc::{
     http::{Headers, Method},

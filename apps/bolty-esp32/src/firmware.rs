@@ -1,9 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use bolty_core::{
-    config::BoltyConfig,
-    service::{BoltyService, WorkflowResult},
-};
+use crate::service::{BoltyService, WorkflowResult};
+use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
 use esp_idf_hal::{
     delay::FreeRtos,

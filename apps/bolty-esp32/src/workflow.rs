@@ -1,8 +1,8 @@
 use crate::{
     commands::Command,
-    config::BoltyConfig,
     service::{BoltyService, WorkflowResult},
 };
+use bolty_core::config::BoltyConfig;
 
 pub fn dispatch_command<S: BoltyService>(
     cmd: Command,
@@ -58,9 +58,9 @@ pub fn dispatch_command<S: BoltyService>(
 }
 
 fn workflow_error(message: &str) -> WorkflowResult {
-    let mut buffer = crate::config::ErrorString::new();
+    let mut buffer = bolty_core::config::ErrorString::new();
     if buffer.push_str(message).is_err() {
-        return WorkflowResult::Error(crate::config::ErrorString::new());
+        return WorkflowResult::Error(bolty_core::config::ErrorString::new());
     }
     WorkflowResult::Error(buffer)
 }
@@ -68,11 +68,11 @@ fn workflow_error(message: &str) -> WorkflowResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::service::ServiceStatus;
+    use bolty_core::{
         assessment::CardAssessment,
         config::LnurlString,
         secret::{AesKey, CardKeys},
-        service::ServiceStatus,
     };
 
     struct MockService {
@@ -256,12 +256,12 @@ mod tests {
             Command::Status,
             Command::Uid,
             Command::SetWifi {
-                ssid: crate::config::WifiSsidString::new(),
-                password: crate::config::WifiPasswordString::new(),
+                ssid: bolty_core::config::WifiSsidString::new(),
+                password: bolty_core::config::WifiPasswordString::new(),
             },
             Command::WifiOff,
             Command::Ota {
-                url: crate::config::UrlString::new(),
+                url: bolty_core::config::UrlString::new(),
             },
             Command::Ndef,
             Command::Auth,

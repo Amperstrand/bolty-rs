@@ -1,15 +1,13 @@
 //! Core domain logic for Bolt Card operations.
 //!
-//! Provides serial-command parsing (`commands`), key derivation strategies
-//! (`derivation`), PICC URL decrypt/verify (`picc`), card state assessment
-//! (`assessment`), issuer registry lookup (`issuer`), configuration types
-//! (`config`), and the `BoltyService` trait (`service`) that ties workflows
-//! together.
+//! Provides key derivation strategies (`derivation`), PICC URL decrypt/verify
+//! (`picc`), card state assessment (`assessment`), issuer registry lookup
+//! (`issuer`), configuration types (`config`), and UID handling (`uid`).
 //!
 //! `#![no_std]`-compatible with optional `alloc` and `std` features.
 //!
-//! Key types: `CardAssessment`, `Command`, `DerivationStrategy`, `BoltyService`,
-//! `CardKeys`, `PiccData`, `BoltyConfig`, `IssuerRegistry`.
+//! Key types: `CardAssessment`, `DerivationStrategy`, `CardKeys`, `PiccData`,
+//! `BoltyConfig`, `IssuerRegistry`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
@@ -18,7 +16,6 @@
 extern crate alloc;
 
 pub mod assessment;
-pub mod commands;
 pub mod config;
 pub mod constants;
 pub mod crypto;
@@ -26,42 +23,15 @@ pub mod derivation;
 pub mod issuer;
 pub mod picc;
 pub mod secret;
-pub mod service;
 pub mod uid;
 pub mod util;
-pub mod workflow;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::BoltyService;
-
-    struct DummyService;
-
-    impl service::BoltyService for DummyService {
-        fn burn(&mut self, _keys: &secret::CardKeys, _lnurl: &str) -> service::WorkflowResult {
-            service::WorkflowResult::Success
-        }
-
-        fn wipe(&mut self, _expected_keys: Option<&secret::CardKeys>) -> service::WorkflowResult {
-            service::WorkflowResult::Success
-        }
-
-        fn inspect(&mut self) -> Result<assessment::CardAssessment, service::WorkflowResult> {
-            Ok(assessment::CardAssessment::default())
-        }
-
-        fn check_blank(&mut self) -> service::WorkflowResult {
-            service::WorkflowResult::Success
-        }
-
-        fn get_status(&self) -> service::ServiceStatus {
-            service::ServiceStatus::default()
-        }
-    }
 
     #[test]
-    fn service_api_compiles() {
+    fn core_types_compile() {
         let assessment = assessment::CardAssessment::default();
         assert_eq!(assessment.kind, assessment::IdleCardKind::Unknown);
 
@@ -70,11 +40,5 @@ mod tests {
             strategy,
             derivation::DerivationStrategy::BoltcardDeterministic
         );
-
-        let mut service = DummyService;
-        assert!(matches!(
-            service.check_blank(),
-            service::WorkflowResult::Success
-        ));
     }
 }

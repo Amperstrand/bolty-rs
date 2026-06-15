@@ -1,11 +1,11 @@
 use std::vec::Vec;
 
+use crate::service::{BoltyService, ServiceStatus, WorkflowResult};
 use bolty_core::{
     assessment::{CardAssessment, CardState},
     config::{BoltyConfig, IssuerConfig},
     issuer::assess_card,
     secret::CardKeys,
-    service::{BoltyService, ServiceStatus, WorkflowResult},
 };
 use bolty_mfrc522::{Mfrc522Transceiver, Mfrc522Transport};
 use ntag424::KeyNumber;

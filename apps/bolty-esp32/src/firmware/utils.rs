@@ -1,10 +1,10 @@
 use core::fmt::Write as _;
 
+use crate::service::WorkflowResult;
 use bolty_core::{
     assessment::CardState,
     config::{ErrorString, LnurlString},
     secret::CardKeys,
-    service::WorkflowResult,
 };
 use heapless::String;
 use ntag424::{CommMode, FileSettingsView, KeyNumber, types::file_settings::Access};

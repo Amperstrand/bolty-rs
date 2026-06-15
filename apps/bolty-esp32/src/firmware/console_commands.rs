@@ -2,12 +2,12 @@ use core::fmt::Write as _;
 
 use std::sync::{Arc, Mutex};
 
-use bolty_core::{
+use crate::{
     commands::{Command, CommandError, parse_command},
-    config::{BoltyConfig, LnurlString},
     service::{BoltyService, WorkflowResult},
     workflow::dispatch_command,
 };
+use bolty_core::config::{BoltyConfig, LnurlString};
 use heapless::String;
 
 #[cfg(feature = "display-st7789")]

@@ -1,4 +1,4 @@
-use crate::{
+use bolty_core::{
     config::{LnurlString, UrlString, WifiPasswordString, WifiSsidString},
     secret::{AesKey, CardKeys},
 };
@@ -139,7 +139,7 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
 }
 
 pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
-    crate::util::decode_hex(s).ok()
+    bolty_core::util::decode_hex(s).ok()
 }
 
 fn parse_keys_command<'a>(
