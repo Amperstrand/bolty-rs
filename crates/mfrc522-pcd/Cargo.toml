@@ -1,13 +1,11 @@
 [package]
-name = "bolty-mfrc522"
+name = "mfrc522-pcd"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "MFRC522 NFC transport for ntag424"
+description = "MFRC522 PcdTransceiver for ISO 14443 — shared by bolty-rs and ccid-firmware-rs"
 
 [dependencies]
-mfrc522-pcd = { path = "../mfrc522-pcd" }
-ntag424 = { workspace = true }
 iso14443 = { workspace = true }
 mfrc522 = { workspace = true }
 embedded-hal = "=1.0.0"

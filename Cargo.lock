@@ -238,6 +238,7 @@ dependencies = [
  "iso14443",
  "log",
  "mfrc522",
+ "mfrc522-pcd",
  "ntag424",
 ]
 
@@ -1477,6 +1478,16 @@ source = "git+https://github.com/Amperstrand/mfrc522-rs.git?branch=ai-experiment
 dependencies = [
  "embedded-hal 1.0.0",
  "heapless 0.8.0",
+]
+
+[[package]]
+name = "mfrc522-pcd"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "iso14443",
+ "log",
+ "mfrc522",
 ]
 
 [[package]]
