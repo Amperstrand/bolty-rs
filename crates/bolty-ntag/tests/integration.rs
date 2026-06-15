@@ -57,7 +57,7 @@ fn preflight_and_burn_pipeline() {
 }
 
 fn burn_lnurl() -> &'static str {
-    "https://example.com/lnurl?[[p={picc:uid+ctr}&cmac={mac}"
+    "https://example.com/lnurl?p={picc:uid+ctr}&c=[[{mac}"
 }
 
 fn burn_params(lnurl: &'static str, keys: KeySet) -> BurnParams<'static> {

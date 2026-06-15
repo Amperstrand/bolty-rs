@@ -19,7 +19,7 @@ const RND_A: [u8; 16] = [
     0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75, 0x36, 0x0F,
 ];
 
-const TEST_URL: &str = "https://card.bolt.local/lnurl?[[p={picc:uid+ctr}&cmac={mac}";
+const TEST_URL: &str = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c=[[{mac}";
 
 fn derive_keys() -> bolty_core::derivation::CardKeySet {
     BoltcardDeterministicDeriver::derive_keys(&ISSUER_KEY, CardUid::new(UID), BURN_VERSION as u32)

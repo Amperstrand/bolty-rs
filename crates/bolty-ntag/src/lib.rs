@@ -34,6 +34,33 @@ pub use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VE
 
 pub type KeySet = [[u8; 16]; 5];
 
+/// Ensures the URL template produces standard Bolt Card-compatible SDM configuration.
+///
+/// The ntag424 crate defaults `SDM_MAC_Input_Offset` to the start of the URI body
+/// (offset 7) when no `[[` delimiter is present in the template. Standard Bolt Card
+/// services (LNbits, sdm-backend, boltcard.org) configure cards with
+/// `SDM_MAC_Input_Offset == SDM_MAC_Offset`, producing an **empty MAC input range**.
+/// Their server-side verification computes `AES-CMAC(session_key, empty)`.
+///
+/// Without `[[`, the card computes MAC over URL data (58+ bytes), which won't match
+/// the server's empty-input computation. This function inserts `[[` before `{mac}`
+/// if not already present, ensuring standard compatibility.
+///
+/// # Example
+/// ```
+/// use bolty_ntag::standardize_url_template;
+/// let url = "https://example.com/?p={picc:uid+ctr}&c={mac}";
+/// let standardized = standardize_url_template(url);
+/// // [[ is now before {mac}, producing empty MAC input range
+/// assert!(standardized.contains("[[{mac}"));
+/// ```
+pub fn standardize_url_template(url: &str) -> String {
+    if url.contains("[[{mac}") {
+        return String::from(url);
+    }
+    url.replace("{mac}", "[[{mac}")
+}
+
 pub fn derive_keys(master_key: &[u8; 16], uid: &[u8; 7], system_id: &[u8]) -> KeySet {
     [
         diversify_ntag424(master_key, uid, KeyNumber::Key0, system_id),
@@ -219,13 +246,13 @@ pub async fn burn<T: Transport>(
     params: &BurnParams<'_>,
     rnd_a: [u8; 16],
 ) -> Result<BurnResult, Error<T::Error>> {
-    // Bolt Card standard: K1 = PICC encryption, K2 = MAC verification.
     let sdm_opts = SdmUrlOptions {
         picc_key: KeyNumber::Key1,
         mac_key: KeyNumber::Key2,
         ..SdmUrlOptions::new()
     };
-    let plan = sdm_url_config(params.lnurl, CryptoMode::Aes, sdm_opts)?;
+    let standardized = standardize_url_template(params.lnurl);
+    let plan = sdm_url_config(&standardized, CryptoMode::Aes, sdm_opts)?;
 
     let session = Session::default();
 
@@ -610,10 +637,45 @@ mod ndef_tests {
             mac_key: KeyNumber::Key2,
             ..SdmUrlOptions::new()
         };
-        let url = "https://card.bolt.local/lnurl?[[p={picc:uid+ctr}&cmac={mac}";
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c=[[{mac}";
         let plan = sdm_url_config(url, CryptoMode::Aes, opts).unwrap();
 
         let parsed = parse_ndef_uri(&plan.ndef_bytes).expect("should parse sdm_url_config output");
         assert!(parsed.url.contains("card.bolt.local"));
+    }
+
+    #[test]
+    fn standardize_url_inserts_double_bracket() {
+        let url = "https://example.com/?p={picc:uid+ctr}&c={mac}";
+        let result = standardize_url_template(url);
+        assert!(result.contains("[[{mac}"));
+        assert!(!result.contains("&c={mac}"));
+    }
+
+    #[test]
+    fn standardize_url_preserves_existing_double_bracket() {
+        let url = "https://example.com/?p={picc:uid+ctr}&c=[[{mac}";
+        let result = standardize_url_template(url);
+        assert_eq!(result, url);
+    }
+
+    #[test]
+    fn standardize_url_produces_empty_mac_input() {
+        let opts = SdmUrlOptions {
+            picc_key: KeyNumber::Key1,
+            mac_key: KeyNumber::Key2,
+            ..SdmUrlOptions::new()
+        };
+        let url = "https://example.com/?p={picc:uid+ctr}&c={mac}";
+        let standardized = standardize_url_template(url);
+        let plan = sdm_url_config(&standardized, CryptoMode::Aes, opts).unwrap();
+        let sdm = &plan.sdm_settings;
+        let file_read = sdm.file_read().unwrap();
+        let window = file_read.window();
+        assert_eq!(
+            window.input.get(),
+            window.mac.get(),
+            "mac_input must equal mac_offset for standard compatibility"
+        );
     }
 }

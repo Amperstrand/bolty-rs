@@ -1,7 +1,10 @@
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use bolty_core::uid::CardUid;
-use bolty_ntag::{CryptoMode, KeyNumber, SdmUrlOptions, Session, Transport, sdm_url_config};
+use bolty_ntag::{
+    CryptoMode, KeyNumber, SdmUrlOptions, Session, Transport, sdm_url_config,
+    standardize_url_template,
+};
 
 use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
 
@@ -48,7 +51,8 @@ where
             mac_key: KeyNumber::Key2,
             ..SdmUrlOptions::new()
         };
-        let ndef_size = sdm_url_config(url, CryptoMode::Aes, sdm_opts)
+        let standardized = standardize_url_template(url);
+        let ndef_size = sdm_url_config(&standardized, CryptoMode::Aes, sdm_opts)
             .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?
             .ndef_bytes
             .len();
