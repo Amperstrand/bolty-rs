@@ -1,7 +1,8 @@
 mod mock;
 
 use bolty_ntag::{
-    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, KeySet, burn, check_key_versions, read_uid, wipe,
+    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, KeySet, burn, check_key_versions, preflight,
+    read_uid, wipe,
 };
 use mock::{MockTransport, UID, block_on};
 use ntag424::{
@@ -21,6 +22,43 @@ fn read_uid_returns_fixed_uid_without_modification() {
     let uid = block_on(read_uid(&mut transport)).unwrap();
 
     assert_eq!(uid, UID);
+}
+
+#[test]
+fn preflight_returns_uid_for_ntag424() {
+    let mut transport = MockTransport::new();
+
+    let uid = block_on(preflight(&mut transport)).unwrap();
+
+    assert_eq!(uid, UID);
+}
+
+#[test]
+fn preflight_and_burn_pipeline() {
+    let keys = test_keys();
+    let params = BurnParams {
+        lnurl: burn_lnurl(),
+        keys,
+        key_version: 0x42,
+        current_key: FACTORY_KEY,
+    };
+    let mut transport = MockTransport::new();
+
+    let uid = block_on(preflight(&mut transport)).unwrap();
+    assert_eq!(uid, UID);
+
+    let result = block_on(burn(
+        &mut transport,
+        &params,
+        [
+            0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75,
+            0x36, 0x0F,
+        ],
+    ))
+    .unwrap();
+
+    assert_eq!(result.uid, UID);
+    assert_eq!(transport.keys(), &keys);
 }
 
 fn burn_lnurl() -> &'static str {

@@ -16,6 +16,13 @@ const NDEF_DF_SELECT: [u8; 13] = [
 ];
 const NDEF_EF_SELECT: [u8; 7] = [0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x04];
 
+/// NTAG424 GetVersion response parts (hardware-captured values).
+const VERSION_PART1: [u8; 7] = [0x04, 0x04, 0x08, 0x30, 0x00, 0x11, 0x05];
+const VERSION_PART2: [u8; 7] = [0x04, 0x04, 0x02, 0x01, 0x02, 0x11, 0x05];
+const VERSION_PART3: [u8; 14] = [
+    0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80, 0xCF, 0x5D, 0x90, 0x45, 0x10, 0x46, 0x21,
+];
+
 #[derive(Debug)]
 pub enum MockTransportError {}
 
@@ -37,6 +44,7 @@ pub struct MockTransport {
     file_settings: Vec<u8>,
     pending_auth: Option<PendingAuth>,
     session: Option<SessionState>,
+    version_step: u8,
 }
 
 struct PendingAuth {
@@ -93,6 +101,7 @@ impl MockTransport {
             file_settings,
             pending_auth: None,
             session: None,
+            version_step: 0,
         }
     }
 
@@ -366,6 +375,46 @@ impl MockTransport {
         }
         Self::ok(Vec::new())
     }
+    fn handle_get_version_start(&mut self) -> Response<Vec<u8>> {
+        self.version_step = 1;
+        Self::response(VERSION_PART1.to_vec(), 0x91, 0xAF)
+    }
+
+    fn handle_get_version_continue(&mut self) -> Response<Vec<u8>> {
+        match self.version_step {
+            1 => {
+                self.version_step = 2;
+                Self::response(VERSION_PART2.to_vec(), 0x91, 0xAF)
+            }
+            2 => {
+                self.version_step = 0;
+                Self::response(VERSION_PART3.to_vec(), 0x91, 0x00)
+            }
+            _ => panic!("GetVersion continuation without start"),
+        }
+    }
+
+    fn handle_get_file_settings_plain(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        self.require_ndef_selected();
+        assert_eq!(apdu.len(), 7, "plain GetFileSettings must be 7 bytes");
+        assert_eq!(&apdu[..5], &[0x90, 0xF5, 0x00, 0x00, 0x01]);
+        assert_eq!(apdu[5], 0x02, "expected NDEF file number");
+        assert_eq!(apdu[6], 0x00);
+        Self::ok(self.file_settings.clone())
+    }
+
+    fn handle_iso_read_binary(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        self.require_ndef_selected();
+        assert!(
+            self.ndef_ef_selected,
+            "NDEF EF must be selected before ISOReadBinary"
+        );
+        let offset = u16::from_be_bytes([apdu[2], apdu[3]]) as usize;
+        let len = apdu[4] as usize;
+        let end = (offset + len).min(self.ndef.len());
+        let start = offset.min(end);
+        Self::ok(self.ndef[start..end].to_vec())
+    }
 }
 
 impl Transport for MockTransport {
@@ -394,8 +443,12 @@ impl Transport for MockTransport {
                 self.ndef = data;
                 Self::iso_ok()
             }
+            [0x00, 0xB0, ..] => self.handle_iso_read_binary(apdu),
             [0x90, 0x71, ..] => self.handle_auth_part1(apdu),
             [0x90, 0xAF, ..] if self.pending_auth.is_some() => self.handle_auth_part2(apdu),
+            [0x90, 0xAF, ..] => self.handle_get_version_continue(),
+            [0x90, 0x60, ..] => self.handle_get_version_start(),
+            [0x90, 0xF5, ..] if apdu.len() == 7 => self.handle_get_file_settings_plain(apdu),
             [0x90, 0xF5, ..] => self.handle_get_file_settings(apdu),
             [0x90, 0x5F, ..] => self.handle_change_file_settings(apdu),
             [0x90, 0xC4, ..] => self.handle_change_key(apdu),

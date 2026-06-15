@@ -71,6 +71,7 @@ pub enum Error<T: core::error::Error + core::fmt::Debug> {
     SdmUrl(ntag424::sdm::SdmUrlError),
     Session(SessionError<T>),
     AuthenticationDelay,
+    WrongCardType { vendor: u8, card_type: u8 },
 }
 
 impl<T: core::error::Error + core::fmt::Debug> From<SessionError<T>> for Error<T> {
@@ -127,6 +128,28 @@ pub fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
 pub async fn read_uid<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error<T::Error>> {
     let uid = Session::default().get_selected_uid(transport).await?;
     Ok(uid_to_fixed(&uid))
+}
+
+/// Pre-flight check: verify the card responds and is an NTAG424 DNA.
+///
+/// Returns the card UID on success, or an error if the card doesn't
+/// respond or isn't an NTAG424 DNA (vendor=0x04, type=0x04).
+pub async fn preflight<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error<T::Error>> {
+    let session = Session::default();
+
+    let uid = session.get_selected_uid(transport).await?;
+    let uid_fixed = uid_to_fixed(&uid);
+
+    let version = session.get_version(transport).await?;
+
+    if version.hw_vendor_id() != 0x04 || version.hw_type() != 0x04 {
+        return Err(Error::WrongCardType {
+            vendor: version.hw_vendor_id(),
+            card_type: version.hw_type(),
+        });
+    }
+
+    Ok(uid_fixed)
 }
 
 pub async fn safe_inspect<T: Transport>(
