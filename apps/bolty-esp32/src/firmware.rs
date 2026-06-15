@@ -258,6 +258,18 @@ fn poll_card<I2C>(
         return;
     }
 
+    // Once a card has been announced, use a lightweight ISO 14443A presence
+    // check instead of re-authenticating. Re-authenticating every poll cycle
+    // increments the NTAG424's SeqFailCtr and bricks cards after 50 failures.
+    if *card_announced {
+        if !service.card_present() {
+            *card_announced = false;
+            #[cfg(feature = "display-st7789")]
+            display::clear_card();
+        }
+        return;
+    }
+
     match service.check_blank() {
         WorkflowResult::CardNotPresent => {
             *card_announced = false;

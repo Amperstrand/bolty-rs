@@ -116,6 +116,18 @@ where
         self.transceiver.is_some()
     }
 
+    /// Lightweight card-presence check via ISO 14443A detection only.
+    ///
+    /// Unlike `check_blank()`, this does NOT authenticate and therefore
+    /// does not increment the NTAG424's failed-authentication counter.
+    /// Use this for polling loops to avoid bricking cards with auth spam.
+    pub(super) fn card_present(&mut self) -> bool {
+        match self.activate_transport() {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
     pub(super) fn i2c_scan(&mut self) -> Vec<u8> {
         if let Some(i2c) = self.raw_i2c.as_mut() {
             self.last_i2c_scan = scan_i2c_bus(i2c);
