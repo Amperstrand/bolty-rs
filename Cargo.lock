@@ -1364,7 +1364,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "iso14443"
 version = "0.1.0"
-source = "git+https://github.com/Amperstrand/iso14443-rs.git?rev=d8f891e87246cdba25258b149618c6df1f470542#d8f891e87246cdba25258b149618c6df1f470542"
+source = "git+https://github.com/Amperstrand/iso14443-rs.git?branch=ai-experiments#d3b00b85088f22dca0e7cdb1fca5d924303bd9b6"
 dependencies = [
  "bitflags 2.11.1",
  "bounded-integer",
