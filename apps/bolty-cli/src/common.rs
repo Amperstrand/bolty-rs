@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ntag424::{SessionError, Uid, types::file_settings::PiccData};
+use ntag424::{SessionError, types::file_settings::PiccData};
 
 const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
 
@@ -14,12 +14,7 @@ pub(crate) fn is_sdm_functionally_active(sdm: Option<&ntag424::types::file_setti
     sdm.is_some_and(|s| !matches!(s.picc_data(), PiccData::None) || s.file_read().is_some())
 }
 
-pub(crate) fn uid_to_fixed(uid: &Uid) -> [u8; 7] {
-    match uid {
-        Uid::Fixed(f) => *f,
-        Uid::Random(_) => [0u8; 7],
-    }
-}
+pub(crate) use bolty_ntag::uid_to_fixed;
 
 pub(crate) fn is_auth_delay<T: std::error::Error + std::fmt::Debug>(err: &SessionError<T>) -> bool {
     matches!(
