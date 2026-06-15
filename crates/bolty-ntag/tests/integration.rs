@@ -36,12 +36,7 @@ fn preflight_returns_uid_for_ntag424() {
 #[test]
 fn preflight_and_burn_pipeline() {
     let keys = test_keys();
-    let params = BurnParams {
-        lnurl: burn_lnurl(),
-        keys,
-        key_version: 0x42,
-        current_key: FACTORY_KEY,
-    };
+    let params = burn_params(burn_lnurl(), keys);
     let mut transport = MockTransport::new();
 
     let uid = block_on(preflight(&mut transport)).unwrap();
@@ -65,15 +60,20 @@ fn burn_lnurl() -> &'static str {
     "https://example.com/lnurl?[[p={picc:uid+ctr}&cmac={mac}"
 }
 
-#[test]
-fn burn_programs_ndef_sdm_and_keys() {
-    let keys = test_keys();
-    let params = BurnParams {
-        lnurl: burn_lnurl(),
+fn burn_params(lnurl: &'static str, keys: KeySet) -> BurnParams<'static> {
+    BurnParams {
+        lnurl,
         keys,
         key_version: 0x42,
         current_key: FACTORY_KEY,
-    };
+        previous_keys: [FACTORY_KEY; 5],
+    }
+}
+
+#[test]
+fn burn_programs_ndef_sdm_and_keys() {
+    let keys = test_keys();
+    let params = burn_params(burn_lnurl(), keys);
     let plan = sdm_url_config(burn_lnurl(), CryptoMode::Aes, SdmUrlOptions::new()).unwrap();
     let mut transport = MockTransport::new();
 

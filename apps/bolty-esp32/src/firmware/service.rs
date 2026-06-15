@@ -297,6 +297,7 @@ where
             keys: card_keys_to_keyset(keys),
             key_version,
             current_key,
+            previous_keys: [bolty_ntag::FACTORY_KEY; 5],
         };
 
         match block_on(bolty_ntag::burn(&mut transport, &params, RND_A)) {

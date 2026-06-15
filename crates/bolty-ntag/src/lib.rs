@@ -44,6 +44,7 @@ pub struct BurnParams<'a> {
     pub keys: KeySet,
     pub key_version: u8,
     pub current_key: [u8; 16],
+    pub previous_keys: KeySet,
 }
 
 #[derive(Debug)]
@@ -226,7 +227,7 @@ pub async fn burn<T: Transport>(
             NonMasterKeyNumber::Key1,
             &params.keys[1],
             params.key_version,
-            &FACTORY_KEY,
+            &params.previous_keys[1],
         )
         .await?;
     let session = session
@@ -235,7 +236,7 @@ pub async fn burn<T: Transport>(
             NonMasterKeyNumber::Key2,
             &params.keys[2],
             params.key_version,
-            &FACTORY_KEY,
+            &params.previous_keys[2],
         )
         .await?;
     let session = session
@@ -244,7 +245,7 @@ pub async fn burn<T: Transport>(
             NonMasterKeyNumber::Key3,
             &params.keys[3],
             params.key_version,
-            &FACTORY_KEY,
+            &params.previous_keys[3],
         )
         .await?;
     let session = session
@@ -253,7 +254,7 @@ pub async fn burn<T: Transport>(
             NonMasterKeyNumber::Key4,
             &params.keys[4],
             params.key_version,
-            &FACTORY_KEY,
+            &params.previous_keys[4],
         )
         .await?;
 
