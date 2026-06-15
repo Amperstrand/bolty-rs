@@ -23,7 +23,7 @@ use ntag424::{
     sdm::{SdmUrlOptions, SdmVerification, Verifier, sdm_url_config},
     types::{
         ResponseStatus,
-        file_settings::{CryptoMode, Sdm},
+        file_settings::{CryptoMode, PiccData, Sdm},
     },
 };
 
@@ -88,7 +88,7 @@ pub enum Error<T: core::error::Error + core::fmt::Debug> {
         expected: u8,
         actual: u8,
     },
-    SdmNotActive,
+    SdmVerificationFailed,
 }
 
 impl<T: core::error::Error + core::fmt::Debug> From<SessionError<T>> for Error<T> {
@@ -265,7 +265,7 @@ pub async fn burn<T: Transport>(
 
     let (verify_settings, mut session) = session.get_file_settings(transport, File::Ndef).await?;
     if verify_settings.sdm.is_none() {
-        return Err(Error::SdmNotActive);
+        return Err(Error::SdmVerificationFailed);
     }
 
     let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16], &[u8; 16]); 4] = [
@@ -321,7 +321,7 @@ pub async fn burn<T: Transport>(
         .get_file_settings(transport, File::Ndef)
         .await?;
     if final_settings.sdm.is_none() {
-        return Err(Error::SdmNotActive);
+        return Err(Error::SdmVerificationFailed);
     }
 
     Ok(BurnResult { uid: uid_fixed })
@@ -342,7 +342,7 @@ pub async fn wipe<T: Transport>(
         .await?;
 
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
-    let update = settings.into_update();
+    let update = settings.into_update().with_sdm(Sdm::disabled());
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await?;
@@ -355,46 +355,52 @@ pub async fn wipe<T: Transport>(
         .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
         .await?;
 
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key1,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys[1],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key2,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys[2],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key3,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys[3],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
-            NonMasterKeyNumber::Key4,
-            &FACTORY_KEY,
-            FACTORY_KEY_VERSION,
-            &keys[4],
-        )
-        .await?;
+    let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16]); 4] = [
+        (NonMasterKeyNumber::Key1, KeyNumber::Key1, &keys[1]),
+        (NonMasterKeyNumber::Key2, KeyNumber::Key2, &keys[2]),
+        (NonMasterKeyNumber::Key3, KeyNumber::Key3, &keys[3]),
+        (NonMasterKeyNumber::Key4, KeyNumber::Key4, &keys[4]),
+    ];
+
+    let mut session = session;
+    for (key_no, kn, old_key) in key_updates.iter() {
+        let s = session
+            .change_key(
+                transport,
+                *key_no,
+                &FACTORY_KEY,
+                FACTORY_KEY_VERSION,
+                old_key,
+            )
+            .await?;
+        let (v, s2) = s.get_key_version(transport, *kn).await?;
+        if v != FACTORY_KEY_VERSION {
+            return Err(Error::KeyVersionMismatch {
+                key_number: *kn as u8,
+                expected: FACTORY_KEY_VERSION,
+                actual: v,
+            });
+        }
+        session = s2;
+    }
 
     let _session = session
         .change_master_key(transport, &FACTORY_KEY, FACTORY_KEY_VERSION)
         .await?;
+
+    let verify_session = Session::default()
+        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+        .await?;
+    let (final_settings, _) = verify_session
+        .get_file_settings(transport, File::Ndef)
+        .await?;
+    if let Some(ref sdm) = final_settings.sdm {
+        let has_picc = !matches!(sdm.picc_data(), PiccData::None);
+        let has_mac = sdm.file_read().is_some();
+        if has_picc || has_mac {
+            return Err(Error::SdmVerificationFailed);
+        }
+    }
 
     Ok(WipeResult { uid: uid_fixed })
 }
