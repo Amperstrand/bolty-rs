@@ -11,6 +11,7 @@ mod keyver;
 mod mock_transport;
 mod picc;
 mod transport;
+mod try_key;
 mod ver;
 mod wipe;
 
@@ -143,6 +144,18 @@ enum Cli {
         /// Print derived key material to stdout
         #[arg(long)]
         verbose: bool,
+    },
+
+    /// Try a raw AES key against a specific key slot (read-only, no writes).
+    /// Useful for card recovery when you don't know which key is on the card.
+    TryKey {
+        /// Raw 16-byte key in hex (32 chars)
+        #[arg(long)]
+        key: String,
+
+        /// Key slot to test (0-4, default 0 = master key)
+        #[arg(long, default_value = "0")]
+        key_no: u8,
     },
 }
 
@@ -355,6 +368,12 @@ async fn run() -> anyhow::Result<()> {
             .await?;
 
             println!("\n🎉 Full cycle completed successfully!");
+        }
+
+        Cli::TryKey { key, key_no } => {
+            let key = parse_hex_16(&key)?;
+            let mut transport = connect_transport()?;
+            try_key::cmd_try_key(&mut transport, &key, key_no).await?;
         }
     }
 
