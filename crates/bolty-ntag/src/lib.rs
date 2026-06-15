@@ -18,11 +18,12 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use ntag424::{
-    AuthenticatedSession, File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Session,
+use ntag424::{key_diversification::diversify_ntag424, sdm::SdmVerification};
+
+pub use ntag424::{
+    AuthenticatedSession, File, FileSettingsView, KeyNumber, NonMasterKeyNumber, Response, Session,
     SessionError, Transport, Uid, Version,
-    key_diversification::diversify_ntag424,
-    sdm::{SdmUrlOptions, SdmVerification, Verifier, sdm_url_config},
+    sdm::{SdmUrlOptions, Verifier, sdm_url_config},
     types::{
         ResponseStatus,
         file_settings::{CryptoMode, PiccData, Sdm},

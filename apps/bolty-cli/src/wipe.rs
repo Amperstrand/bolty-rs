@@ -2,7 +2,7 @@ use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
-use ntag424::{AuthenticatedSession, File, KeyNumber, Session, Transport};
+use bolty_ntag::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 
 use crate::common::{
     AuthRetry, gen_rnd_a, is_auth_delay, is_sdm_functionally_active, map_ntag_error,

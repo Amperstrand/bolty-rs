@@ -13,8 +13,8 @@ use aes::{
     Aes128,
     cipher::{Array, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit},
 };
+use bolty_ntag::{Response, Transport};
 use cmac::{Cmac, Mac};
-use ntag424::{Response, Transport};
 
 /// Fixed UID used by the mock — matches the bolty-ntag test mock.
 pub const UID: [u8; 7] = [0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80];

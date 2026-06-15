@@ -2,7 +2,7 @@ use anyhow::Context;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{File, KeyNumber, Session, Transport};
+use bolty_ntag::{File, KeyNumber, Session, Transport};
 use std::time::Duration;
 
 use crate::common::{NdefUri, gen_rnd_a, is_auth_delay, parse_ndef_uri, uid_to_fixed};

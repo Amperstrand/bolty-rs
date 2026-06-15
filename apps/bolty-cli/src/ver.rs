@@ -1,5 +1,5 @@
 use anyhow::Context;
-use ntag424::{Session, Transport};
+use bolty_ntag::{Session, Transport};
 
 pub async fn cmd_ver<T: Transport>(transport: &mut T) -> anyhow::Result<()>
 where

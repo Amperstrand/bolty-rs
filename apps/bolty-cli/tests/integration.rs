@@ -5,12 +5,11 @@ mod mock_transport;
 
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
-use mock_transport::{MockTransport, UID};
-use ntag424::{
-    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session,
-    sdm::{SdmUrlOptions, sdm_url_config},
-    types::file_settings::{CryptoMode, PiccData, Sdm},
+use bolty_ntag::{
+    AuthenticatedSession, CryptoMode, File, FileSettingsView, KeyNumber, NonMasterKeyNumber,
+    PiccData, Sdm, SdmUrlOptions, Session, sdm_url_config,
 };
+use mock_transport::{MockTransport, UID};
 
 const ISSUER_KEY: [u8; 16] = [
     0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
@@ -168,8 +167,7 @@ async fn burn_on_blank_card_changes_keys() {
 
     assert!(!transport.ndef().is_empty(), "NDEF written");
 
-    let settings =
-        ntag424::types::FileSettingsView::decode(transport.file_settings()).expect("decode");
+    let settings = FileSettingsView::decode(transport.file_settings()).expect("decode");
     assert!(settings.sdm.is_some(), "SDM enabled after burn");
 }
 
@@ -193,8 +191,7 @@ async fn wipe_on_provisioned_card_resets_keys() {
 
     assert_eq!(&transport.ndef()[..2], &[0x00, 0x00], "NDEF empty (NLEN=0)");
 
-    let settings =
-        ntag424::types::FileSettingsView::decode(transport.file_settings()).expect("decode");
+    let settings = FileSettingsView::decode(transport.file_settings()).expect("decode");
     // Sdm::disabled() sets the SDM bit but configures no active mirroring/MAC.
     // Check that SDM is effectively inert.
     let sdm_inert = settings.sdm.as_ref().map_or(true, |sdm| {
@@ -452,8 +449,7 @@ async fn full_cycle_burn_wipe_reburn() {
     assert_eq!(transport.keys()[0], *keys.k0.as_bytes());
     assert_eq!(transport.keys()[1], *keys.k1.as_bytes());
 
-    let settings =
-        ntag424::types::FileSettingsView::decode(transport.file_settings()).expect("decode");
+    let settings = FileSettingsView::decode(transport.file_settings()).expect("decode");
     assert!(settings.sdm.is_some(), "SDM active after re-burn");
 }
 

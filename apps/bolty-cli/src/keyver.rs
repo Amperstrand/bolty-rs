@@ -2,7 +2,7 @@ use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
-use ntag424::{Session, Transport};
+use bolty_ntag::{Session, Transport};
 
 use crate::common::{gen_rnd_a, uid_to_fixed};
 

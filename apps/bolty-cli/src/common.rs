@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ntag424::{SessionError, types::file_settings::PiccData};
+use bolty_ntag::{PiccData, SessionError};
 
 const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
 
@@ -10,7 +10,7 @@ const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
 /// After `wipe()`, `Sdm::disabled()` leaves a `Some(Sdm{...})` shell with
 /// `picc_data == None` and `file_read == None`.  A structural `sdm.is_some()`
 /// check would treat that as "SDM active" and mis-classify the card.
-pub(crate) fn is_sdm_functionally_active(sdm: Option<&ntag424::types::file_settings::Sdm>) -> bool {
+pub(crate) fn is_sdm_functionally_active(sdm: Option<&bolty_ntag::Sdm>) -> bool {
     sdm.is_some_and(|s| !matches!(s.picc_data(), PiccData::None) || s.file_read().is_some())
 }
 
@@ -19,7 +19,7 @@ pub(crate) use bolty_ntag::{NdefUri, parse_ndef_uri, uid_to_fixed};
 pub(crate) fn is_auth_delay<T: std::error::Error + std::fmt::Debug>(err: &SessionError<T>) -> bool {
     matches!(
         err,
-        SessionError::ErrorResponse(ntag424::types::ResponseStatus::AuthenticationDelay)
+        SessionError::ErrorResponse(bolty_ntag::ResponseStatus::AuthenticationDelay)
     )
 }
 

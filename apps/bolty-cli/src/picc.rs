@@ -10,7 +10,7 @@ use anyhow::Context;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{File, Session, Transport};
+use bolty_ntag::{File, Session, Transport};
 
 use crate::common::{parse_ndef_uri, uid_to_fixed};
 

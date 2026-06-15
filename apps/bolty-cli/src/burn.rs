@@ -1,11 +1,7 @@
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use bolty_core::uid::CardUid;
-use ntag424::{
-    KeyNumber, Session, Transport,
-    sdm::{SdmUrlOptions, sdm_url_config},
-    types::file_settings::CryptoMode,
-};
+use bolty_ntag::{CryptoMode, KeyNumber, SdmUrlOptions, Session, Transport, sdm_url_config};
 
 use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
 

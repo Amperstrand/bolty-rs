@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ntag424::{Response, Transport};
+use bolty_ntag::{Response, Transport};
 
 /// PCSC-based transport for communicating with NTAG424 cards.
 ///

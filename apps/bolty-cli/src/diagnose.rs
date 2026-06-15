@@ -15,9 +15,7 @@ use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{
-    File, KeyNumber, Session, Transport, sdm::Verifier, types::file_settings::CryptoMode,
-};
+use bolty_ntag::{CryptoMode, File, KeyNumber, Session, Transport, Verifier};
 
 use crate::common::{
     gen_rnd_a, is_auth_delay, is_sdm_functionally_active, parse_ndef_uri, uid_to_fixed,

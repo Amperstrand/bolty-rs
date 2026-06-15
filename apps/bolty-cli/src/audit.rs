@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ntag424::{Response, Transport};
+use bolty_ntag::{Response, Transport};
 
 static AUDIT_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
