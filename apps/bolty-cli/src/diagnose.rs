@@ -15,22 +15,14 @@ use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{File, KeyNumber, Session, Transport, types::file_settings::PiccData};
+use ntag424::{File, KeyNumber, Session, Transport};
 
-use crate::common::{gen_rnd_a, is_auth_delay, parse_ndef_uri, uid_to_fixed};
+use crate::common::{
+    gen_rnd_a, is_auth_delay, is_sdm_functionally_active, parse_ndef_uri, uid_to_fixed,
+};
 
 /// Standard Bolt Card key version.
 const DEFAULT_VERSION: u32 = 1;
-
-/// Returns `true` when SDM has at least one active feature (PICC data or
-/// file-read MAC).
-///
-/// After `wipe()`, `Sdm::disabled()` leaves a `Some(Sdm{...})` shell with
-/// `picc_data == None` and `file_read == None`.  A structural `sdm.is_some()`
-/// check would treat that as "SDM active" and mis-classify the card.
-fn is_sdm_functionally_active(sdm: Option<&ntag424::types::file_settings::Sdm>) -> bool {
-    sdm.is_some_and(|s| !matches!(s.picc_data(), PiccData::None) || s.file_read().is_some())
-}
 
 fn classify_card_state(
     auth_delay: bool,

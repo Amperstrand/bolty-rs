@@ -4,7 +4,9 @@ use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
 use ntag424::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 
-use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
+use crate::common::{
+    AuthRetry, gen_rnd_a, is_auth_delay, is_sdm_functionally_active, map_ntag_error,
+};
 
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
@@ -71,7 +73,7 @@ where
             .await
             .context("failed to read file settings with factory K0")?;
 
-        let has_sdm = settings.sdm.is_some();
+        let has_sdm = is_sdm_functionally_active(settings.sdm.as_ref());
         let mut buf = [0u8; 256];
         let len = session
             .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
