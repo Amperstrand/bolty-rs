@@ -44,7 +44,7 @@ uses `RUSTUP_TOOLCHAIN` override to bypass `rust-toolchain.toml`.
 
 ### Host-side unit tests
 
-164 tests across the workspace, all hardware-free:
+Tests across the workspace are all hardware-free:
 
 ```bash
 cargo test --workspace --exclude bolty-esp32
@@ -52,7 +52,7 @@ cargo test --workspace --exclude bolty-esp32
 
 ### Integration tests with MockTransport
 
-`bolty-cli` includes 11 integration tests that simulate the full NTAG424
+`bolty-cli` includes integration tests that simulate the full NTAG424
 protocol (AES-EV2 auth, file settings, key change, NDEF read/write, GetVersion)
 via `MockTransport`:
 

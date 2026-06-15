@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bolty_ntag::{PiccData, SessionError};
 
-const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
+const AUTH_RETRY_DELAYS: &[u64] = &[5, 15, 30];
 
 /// Returns `true` when SDM has at least one active feature (PICC data or
 /// file-read MAC).
@@ -51,8 +51,11 @@ impl AuthRetry {
 
     pub(crate) fn exhausted_msg() -> String {
         format!(
-            "authentication failed after {} attempts — auth delay persisted. \
-             Wait 30s for the card to reset, then retry.",
+            "authentication failed after {} attempts — auth delay persists.\n\
+             The NTAG424 tracks consecutive failures (SeqFailCtr). After 50, the card\n\
+             blocks auth (91AD). Each failed attempt makes it worse.\n\n\
+             Recovery: remove the card from the reader for 2 seconds, place it back,\n\
+             then retry immediately with the correct key.",
             1 + AUTH_RETRY_DELAYS.len()
         )
     }
@@ -74,7 +77,11 @@ where
 {
     match e {
         bolty_ntag::Error::AuthenticationDelay => {
-            anyhow::anyhow!("authentication delay — wait 30s for the card to reset, then retry.")
+            anyhow::anyhow!(
+                "authentication delay (91AD) — too many consecutive failures.\n\
+                 Recovery: remove card from reader for 2 seconds, place back, retry.\n\
+                 Do NOT keep retrying with the wrong key — each failure makes it worse."
+            )
         }
         bolty_ntag::Error::WrongCardType { vendor, card_type } => anyhow::anyhow!(
             "Card is not NTAG424 DNA (vendor=0x{vendor:02X}, type=0x{card_type:02X})"

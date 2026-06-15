@@ -249,8 +249,8 @@ From empirical testing and proxmark3 community experience:
 ## 8. Safety Checklist for Card Operations
 
 ### Before ANY write operation:
-- [x] Card UID read and matches expected value *(automatic via preflight_check)*
-- [x] Card version confirms NTAG424 DNA *(automatic via preflight_check)*
+- [x] Card UID read and matches expected value *(automatic via `preflight`)*
+- [x] Card version confirms NTAG424 DNA *(automatic via `preflight`)*
 - [ ] Card state detected via `diagnose` (not AUTH_DELAY, not INCONSISTENT)
 - [ ] Correct issuer key for this card UID
 - [x] Audit logging enabled (`/tmp/bolty-audit.log`)
@@ -310,7 +310,7 @@ From empirical testing and proxmark3 community experience:
 10. ✅ Pre-flight check: burn/wipe verify card responds + is NTAG424 DNA before any modification APDUs
 11. ✅ Per-key version verification: after each K1-K4 change/reset, GetKeyVersion confirms the version was set correctly before proceeding to the next key
 12. ✅ Dry-run mode: `--dry-run` flag previews planned actions (derived keys, URL, steps) without sending any APDUs
-13. ✅ MockTransport: 11 integration tests cover full burn/wipe/reburn cycle, diagnose, keyver, picc — all hardware-free
+13. ✅ MockTransport: integration tests cover full burn/wipe/reburn cycle, diagnose, keyver, picc — all hardware-free
 14. ✅ Dry-run unit tests verify card state preservation on both factory and provisioned cards
 
 ### Remaining Safety Gaps
@@ -318,8 +318,8 @@ From empirical testing and proxmark3 community experience:
 2. ⚠️ No circuit breaker for repeated auth failures
 
 ### Resolved Gaps
-- ✅ ~~Mock transport doesn't exist~~ → MockTransport with 11 integration tests (commit `a61d7d8`)
-- ✅ ~~No pre-flight diagnose check~~ → `preflight_check()` verifies NTAG424 DNA before burn/wipe (commit `1228bbf`)
+- ✅ ~~Mock transport doesn't exist~~ → MockTransport with integration tests
+- ✅ ~~No pre-flight diagnose check~~ → `preflight()` verifies NTAG424 DNA before burn/wipe
 - ✅ ~~No `--dry-run` mode~~ → `--dry-run` on both burn and wipe (commit `1228bbf`)
 - ✅ ~~No per-key verification~~ → GetKeyVersion readback after each K1-K4 change (commit `eec9e5c`)
 

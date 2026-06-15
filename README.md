@@ -6,7 +6,7 @@
 
 - Core Bolt Card workflows: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`
 - Desktop CLI (`bolty-cli`) with full card lifecycle: burn/wipe/diagnose with pre-flight safety checks, per-key verification, and `--dry-run` mode
-- 173 hardware-free tests including 14 integration tests via MockTransport (full NTAG424 protocol simulation)
+- Comprehensive hardware-free test suite including integration tests via MockTransport (full NTAG424 protocol simulation)
 - Both supported boards build and run from the same firmware crate with compile-time board selection
 - WiFi/REST/OTA are optional capabilities, not baseline requirements
 - Dependency versions are pinned exactly and the workspace `Cargo.lock` is intended to be tracked for reproducible firmware builds

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Pre-commit hook: fmt check + clippy on staged files
+# Pre-commit hook: fmt check + clippy + unit tests
 # Install: git config core.hooksPath .githooks
 
 set -euo pipefail
 
-# Use stable toolchain for host-side checks (bypasses rust-toolchain.toml esp requirement)
 export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
 
 echo "[pre-commit] Running cargo fmt --check..."
@@ -16,6 +15,12 @@ fi
 echo "[pre-commit] Running clippy (host crates only, excluding bolty-esp32)..."
 if ! cargo clippy --workspace --exclude bolty-esp32 -- -D warnings 2>&1; then
     echo "[pre-commit] ❌ Clippy check failed. Fix warnings and re-stage."
+    exit 1
+fi
+
+echo "[pre-commit] Running unit tests (host crates only)..."
+if ! cargo test --workspace --exclude bolty-esp32 --lib 2>&1; then
+    echo "[pre-commit] ❌ Unit tests failed. Fix failures and re-stage."
     exit 1
 fi
 
