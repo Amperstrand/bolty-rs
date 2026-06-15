@@ -20,13 +20,57 @@ pub use mfrc522::Error as Mfrc522Error;
 
 pub const DEFAULT_I2C_ADDRESS: u8 = 0x28;
 
+/// Higher-level error type providing semantic context over [`Mfrc522Error`].
+///
+/// [`Mfrc522Error`] remains the [`PcdTransceiver::Error`] associated type for
+/// backward compatibility; use [`Error::from`] to convert.
+#[derive(Debug)]
+pub enum Error<E> {
+    Communication(E),
+    Timeout,
+    Protocol,
+    BufferOverflow,
+}
+
+impl<E: core::fmt::Debug> core::fmt::Display for Error<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Error::Communication(e) => write!(f, "MFRC522 communication error: {e:?}"),
+            Error::Timeout => write!(f, "MFRC522 timeout"),
+            Error::Protocol => write!(f, "MFRC522 protocol error"),
+            Error::BufferOverflow => write!(f, "MFRC522 buffer overflow"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> core::error::Error for Error<E> {}
+
+impl<E> From<Mfrc522Error<E>> for Error<E> {
+    fn from(e: Mfrc522Error<E>) -> Self {
+        match e {
+            Mfrc522Error::Comm(inner) => Error::Communication(inner),
+            Mfrc522Error::Timeout => Error::Timeout,
+            Mfrc522Error::Protocol => Error::Protocol,
+            Mfrc522Error::BufferOverflow | Mfrc522Error::NoRoom => Error::BufferOverflow,
+            // All remaining variants (Bcc, Collision, Crc, IncompleteFrame,
+            // Overheating, Parity, Wr, Nak, Proprietary) are NFC protocol
+            // level issues.
+            _ => Error::Protocol,
+        }
+    }
+}
+
 pub struct Mfrc522Transceiver<I2C: I2c> {
-    pub mfrc522: Mfrc522<I2cInterface<I2C>, Initialized>,
+    mfrc522: Mfrc522<I2cInterface<I2C>, Initialized>,
 }
 
 impl<I2C: I2c> Mfrc522Transceiver<I2C> {
     pub fn new(mfrc522: Mfrc522<I2cInterface<I2C>, Initialized>) -> Self {
         Self { mfrc522 }
+    }
+
+    pub fn raw(&mut self) -> &mut Mfrc522<I2cInterface<I2C>, Initialized> {
+        &mut self.mfrc522
     }
 
     pub fn from_i2c(i2c: I2C, address: u8) -> Result<Self, Mfrc522Error<I2C::Error>> {
@@ -112,8 +156,6 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
         self.mfrc522
             .rmw_register(Register::CollReg, |value| value & !0x80)?;
 
-        // SAFETY: len is clamped via .min(fifo.buffer.len()) in each arm.
-        #[allow(clippy::indexing_slicing)]
         let response = match frame {
             Frame::Short(data) => {
                 let fifo = self.mfrc522.transceive::<2>(data.as_slice(), 7, 0)?;
@@ -121,7 +163,10 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
                     return Err(Mfrc522Error::Protocol);
                 }
                 let len = fifo.valid_bytes.min(fifo.buffer.len());
-                fifo.buffer[..len].to_vec()
+                fifo.buffer
+                    .get(..len)
+                    .ok_or(Mfrc522Error::BufferOverflow)?
+                    .to_vec()
             }
             Frame::BitOriented(data) => {
                 let tx_last_bits = data.get(1).copied().unwrap_or_default() & 0x07;
@@ -132,7 +177,10 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
                     return Err(Mfrc522Error::Protocol);
                 }
                 let len = fifo.valid_bytes.min(fifo.buffer.len());
-                fifo.buffer[..len].to_vec()
+                fifo.buffer
+                    .get(..len)
+                    .ok_or(Mfrc522Error::BufferOverflow)?
+                    .to_vec()
             }
             Frame::Standard(data) => {
                 let fifo = match self.mfrc522.transceive::<64>(data.as_slice(), 0, 0) {
@@ -147,7 +195,10 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
                     return Err(Mfrc522Error::Protocol);
                 }
                 let len = fifo.valid_bytes.min(fifo.buffer.len());
-                fifo.buffer[..len].to_vec()
+                fifo.buffer
+                    .get(..len)
+                    .ok_or(Mfrc522Error::BufferOverflow)?
+                    .to_vec()
             }
         };
 
