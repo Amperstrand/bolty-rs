@@ -2,6 +2,7 @@
 name = "bolty-esp32"
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 description = "Bolty NFC bolt card firmware for ESP32 + MFRC522"
 
 [[bin]]
