@@ -97,6 +97,37 @@ fn burn_programs_ndef_sdm_and_keys() {
 }
 
 #[test]
+fn reburn_replaces_existing_keys() {
+    let first_keys = test_keys();
+    let second_keys: KeySet = [[0xAA; 16], [0xBB; 16], [0xCC; 16], [0xDD; 16], [0xEE; 16]];
+
+    let mut transport = MockTransport::new();
+
+    block_on(burn(
+        &mut transport,
+        &burn_params(burn_lnurl(), first_keys),
+        [0x13; 16],
+    ))
+    .unwrap();
+
+    assert_eq!(transport.keys(), &first_keys);
+    assert_eq!(transport.key_versions(), &[0x42; 5]);
+
+    let reburn_params = BurnParams {
+        lnurl: burn_lnurl(),
+        keys: second_keys,
+        key_version: 0x99,
+        current_key: first_keys[0],
+        previous_keys: first_keys,
+    };
+
+    block_on(burn(&mut transport, &reburn_params, [0x27; 16])).unwrap();
+
+    assert_eq!(transport.keys(), &second_keys);
+    assert_eq!(transport.key_versions(), &[0x99; 5]);
+}
+
+#[test]
 fn wipe_restores_factory_keys_and_zeros_ndef() {
     let keys = test_keys();
     let key_versions = [0x42; 5];

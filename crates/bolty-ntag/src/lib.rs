@@ -21,7 +21,10 @@ use ntag424::{
     SessionError, Transport, Uid, Version,
     key_diversification::diversify_ntag424,
     sdm::{SdmUrlOptions, SdmVerification, Verifier, sdm_url_config},
-    types::{ResponseStatus, file_settings::CryptoMode},
+    types::{
+        ResponseStatus,
+        file_settings::{CryptoMode, Sdm},
+    },
 };
 
 pub use bolty_common::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
@@ -72,7 +75,20 @@ pub enum Error<T: core::error::Error + core::fmt::Debug> {
     SdmUrl(ntag424::sdm::SdmUrlError),
     Session(SessionError<T>),
     AuthenticationDelay,
-    WrongCardType { vendor: u8, card_type: u8 },
+    WrongCardType {
+        vendor: u8,
+        card_type: u8,
+    },
+    NdefVerificationFailed {
+        written: usize,
+        read_back: usize,
+    },
+    KeyVersionMismatch {
+        key_number: u8,
+        expected: u8,
+        actual: u8,
+    },
+    SdmNotActive,
 }
 
 impl<T: core::error::Error + core::fmt::Debug> From<SessionError<T>> for Error<T> {
@@ -207,60 +223,106 @@ pub async fn burn<T: Transport>(
     let uid = session.get_selected_uid(transport).await?;
     let uid_fixed = uid_to_fixed(&uid);
 
-    let mut session = session
+    let session = session
         .authenticate_aes(transport, KeyNumber::Key0, &params.current_key, rnd_a)
         .await?;
+
+    let (settings, s) = session.get_file_settings(transport, File::Ndef).await?;
+    let mut session = if settings.sdm.is_some() {
+        let update = settings.into_update().with_sdm(Sdm::disabled());
+        s.change_file_settings(transport, File::Ndef, &update)
+            .await?
+    } else {
+        s
+    };
 
     session
         .write_file_plain(transport, File::Ndef, 0, &plan.ndef_bytes)
         .await?;
 
+    let mut read_buf = [0u8; 256];
+    let read_len = session
+        .read_file_plain(transport, File::Ndef, 0, 0, &mut read_buf)
+        .await?;
+    // SAFETY: read_buf is [u8; 256], NDEF templates are always <= 256 bytes.
+    #[allow(clippy::indexing_slicing)]
+    if read_len < plan.ndef_bytes.len() || read_buf[..plan.ndef_bytes.len()] != plan.ndef_bytes[..]
+    {
+        return Err(Error::NdefVerificationFailed {
+            written: plan.ndef_bytes.len(),
+            read_back: read_len,
+        });
+    }
+
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
-    let update = settings.into_update().with_sdm(plan.sdm_settings);
     let session = session
-        .change_file_settings(transport, File::Ndef, &update)
+        .change_file_settings(
+            transport,
+            File::Ndef,
+            &settings.into_update().with_sdm(plan.sdm_settings),
+        )
         .await?;
 
-    let session = session
-        .change_key(
-            transport,
+    let (verify_settings, mut session) = session.get_file_settings(transport, File::Ndef).await?;
+    if verify_settings.sdm.is_none() {
+        return Err(Error::SdmNotActive);
+    }
+
+    let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16], &[u8; 16]); 4] = [
+        (
             NonMasterKeyNumber::Key1,
+            KeyNumber::Key1,
             &params.keys[1],
-            params.key_version,
             &params.previous_keys[1],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
+        ),
+        (
             NonMasterKeyNumber::Key2,
+            KeyNumber::Key2,
             &params.keys[2],
-            params.key_version,
             &params.previous_keys[2],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
+        ),
+        (
             NonMasterKeyNumber::Key3,
+            KeyNumber::Key3,
             &params.keys[3],
-            params.key_version,
             &params.previous_keys[3],
-        )
-        .await?;
-    let session = session
-        .change_key(
-            transport,
+        ),
+        (
             NonMasterKeyNumber::Key4,
+            KeyNumber::Key4,
             &params.keys[4],
-            params.key_version,
             &params.previous_keys[4],
-        )
-        .await?;
+        ),
+    ];
+
+    for (key_no, kn, new_key, old_key) in key_updates.iter() {
+        let s = session
+            .change_key(transport, *key_no, new_key, params.key_version, old_key)
+            .await?;
+        let (v, s2) = s.get_key_version(transport, *kn).await?;
+        if v != params.key_version {
+            return Err(Error::KeyVersionMismatch {
+                key_number: *kn as u8,
+                expected: params.key_version,
+                actual: v,
+            });
+        }
+        session = s2;
+    }
 
     let _session = session
         .change_master_key(transport, &params.keys[0], params.key_version)
         .await?;
+
+    let verify_session = Session::default()
+        .authenticate_aes(transport, KeyNumber::Key0, &params.keys[0], rnd_a)
+        .await?;
+    let (final_settings, _) = verify_session
+        .get_file_settings(transport, File::Ndef)
+        .await?;
+    if final_settings.sdm.is_none() {
+        return Err(Error::SdmNotActive);
+    }
 
     Ok(BurnResult { uid: uid_fixed })
 }
