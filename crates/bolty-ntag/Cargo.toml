@@ -5,7 +5,7 @@ edition = "2024"
 description = "Bolt card NTAG424 operations: burn, wipe, verify, key derivation"
 
 [dependencies]
-bolty-common = { path = "../bolty-common" }
+bolty-core = { path = "../bolty-core" }
 ntag424 = { workspace = true }
 
 [lints]

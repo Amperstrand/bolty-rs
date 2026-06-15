@@ -27,7 +27,7 @@ use ntag424::{
     },
 };
 
-pub use bolty_common::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
+pub use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
 
 pub type KeySet = [[u8; 16]; 5];
 
