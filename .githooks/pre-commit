@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
-# Pre-commit hook: fmt check + clippy + unit tests
+# Pre-commit hook: fmt check + clippy + unit tests + secret scan
 # Install: git config core.hooksPath .githooks
 
 set -euo pipefail
 
 export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}"
+
+echo "[pre-commit] Scanning staged files for potential secrets..."
+SECRET_PATTERN='[0-9a-fA-F]\{32\}'
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -vE '\.(lock|toml)$|Cargo\.|target/|test|fixture|mock|AGENTS|\.md$' || true)
+if [ -n "$STAGED" ]; then
+    SECRETS=$(echo "$STAGED" | xargs grep -In "$SECRET_PATTERN" 2>/dev/null || true)
+    if [ -n "$SECRETS" ]; then
+        echo "[pre-commit] ⚠️  Potential 16-byte hex keys found in staged files:"
+        echo "$SECRETS"
+        echo ""
+        echo "If these are real AES keys (not test vectors or constants),"
+        echo "DO NOT commit them. Unstage with 'git reset HEAD <file>'."
+        echo "To override: git commit --no-verify (use sparingly)."
+        exit 1
+    fi
+fi
 
 echo "[pre-commit] Running cargo fmt --check..."
 if ! cargo fmt --all -- --check 2>&1; then
