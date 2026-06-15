@@ -1,14 +1,10 @@
 use anyhow::Context;
-use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK};
+use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
-use ntag424::{
-    AuthenticatedSession, File, KeyNumber, NonMasterKeyNumber, Session, Transport,
-    types::file_settings::{PiccData, Sdm},
-};
-use std::time::Duration;
+use ntag424::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 
-use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, preflight_check};
+use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
 
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
@@ -21,7 +17,9 @@ pub async fn cmd_wipe<T: Transport>(
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let uid_fixed = preflight_check(transport).await?;
+    let uid_fixed = bolty_ntag::preflight(transport)
+        .await
+        .map_err(map_ntag_error)?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     if let Some(expected) = confirm_uid {
@@ -60,9 +58,10 @@ where
         return Ok(());
     }
 
-    // Probe card state: try factory K0 first, then derived K0
+    // Factory K0 probe: detect already-wiped cards (single attempt, no retry).
+    // If factory K0 works and the card is clean, return early.
+    // If factory K0 works but card has residual state, bail with instructions.
     let rnd_a = gen_rnd_a()?;
-    // Factory K0 failure means card has derived keys — fall through to derived-K0 auth below.
     if let Ok(session) = Session::default()
         .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
         .await
@@ -78,6 +77,7 @@ where
             .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
             .await
             .context("failed to read NDEF with factory K0")?;
+        #[allow(clippy::indexing_slicing)]
         let has_ndef = len >= 2 && (buf[0] != 0x00 || buf[1] != 0x00);
 
         if !has_sdm && !has_ndef {
@@ -92,8 +92,11 @@ where
         );
     }
 
+    // Derived K0 auth with AuthRetry (handles auth delay backoff).
+    // The library re-authenticates internally, but we probe first to get
+    // past any auth delay and give a clear error message on failure.
     println!("Authenticating with derived K0...");
-    let session = {
+    {
         let mut retry = AuthRetry::new();
         let result = loop {
             let rnd_a = gen_rnd_a()?;
@@ -101,191 +104,35 @@ where
                 .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
                 .await
             {
-                Ok(s) => break Some(s),
+                Ok(_) => break true,
                 Err(e) if is_auth_delay(&e) => match retry.next_delay() {
                     Some(d) => {
                         tokio::time::sleep(d).await;
                     }
                     None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
                 },
-                Err(_) => break None,
+                Err(_) => break false,
             }
         };
-        match result {
-            Some(s) => s,
-            None => {
-                anyhow::bail!(
-                    "derived K0 authentication failed — wrong issuer key or card not burned"
-                );
-            }
+        if !result {
+            anyhow::bail!("derived K0 authentication failed — wrong issuer key or card not burned");
         }
-    };
+    }
 
-    // Clear SDM by explicitly setting disabled SDM (not just into_update which preserves it)
-    println!("Clearing SDM settings...");
-    let (settings, session) = session
-        .get_file_settings(transport, File::Ndef)
-        .await
-        .context("failed to read file settings")?;
-    let update = settings.into_update().with_sdm(Sdm::disabled());
-    let mut session = session
-        .change_file_settings(transport, File::Ndef, &update)
-        .await
-        .context("failed to clear file settings")?;
-
-    let empty_ndef = [0x00u8, 0x00];
-    session
-        .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
-        .await
-        .context("failed to write empty NDEF")?;
-
-    // Reset K1-K4 to factory with per-key verification
-    #[allow(clippy::type_complexity)]
-    let key_steps: [(NonMasterKeyNumber, KeyNumber, &[u8; 16], &[u8; 16], &str); 4] = [
-        (
-            NonMasterKeyNumber::Key1,
-            KeyNumber::Key1,
-            &FACTORY_KEY,
-            keys.k1.as_bytes(),
-            "K1",
-        ),
-        (
-            NonMasterKeyNumber::Key2,
-            KeyNumber::Key2,
-            &FACTORY_KEY,
-            keys.k2.as_bytes(),
-            "K2",
-        ),
-        (
-            NonMasterKeyNumber::Key3,
-            KeyNumber::Key3,
-            &FACTORY_KEY,
-            keys.k3.as_bytes(),
-            "K3",
-        ),
-        (
-            NonMasterKeyNumber::Key4,
-            KeyNumber::Key4,
-            &FACTORY_KEY,
-            keys.k4.as_bytes(),
-            "K4",
-        ),
+    // Delegate to library: it handles SDM disable, NDEF clear, key reset, verification.
+    let keyset: bolty_ntag::KeySet = [
+        *keys.k0.as_bytes(),
+        *keys.k1.as_bytes(),
+        *keys.k2.as_bytes(),
+        *keys.k3.as_bytes(),
+        *keys.k4.as_bytes(),
     ];
 
-    let mut session = session;
-    // SAFETY: i from enumerate, key_steps[..i] always valid.
-    #[allow(clippy::indexing_slicing)]
-    for (i, (key_no, kn, new_key, old_key, label)) in key_steps.iter().enumerate() {
-        println!("Resetting {label}...");
-        match session
-            .change_key(transport, *key_no, new_key, KEY_VERSION_BLANK, old_key)
-            .await
-        {
-            Ok(s) => {
-                let (v, s2) = s
-                    .get_key_version(transport, *kn)
-                    .await
-                    .with_context(|| format!("failed to read back {label} version"))?;
-                if v != KEY_VERSION_BLANK {
-                    anyhow::bail!(
-                        "{label} version mismatch: expected {KEY_VERSION_BLANK:#04X}, got {v:#04X}.\n\
-                         Card state: partially wiped (reset: [{}])\n\
-                         Recovery: re-run burn, then wipe again",
-                        key_steps[..i]
-                            .iter()
-                            .map(|(_, _, _, _, l)| *l)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-                println!("  ✓ {label} reset to factory (v{v:#04X})");
-                session = s2;
-            }
-            Err(e) => {
-                let already_reset: Vec<&str> =
-                    key_steps[..i].iter().map(|(_, _, _, _, l)| *l).collect();
-                anyhow::bail!(
-                    "Failed to reset {label}: {e:#}\n\
-                     Card state: partially wiped (reset: [{}])\n\
-                     Recovery: re-run burn, then wipe again",
-                    already_reset.join(", ")
-                );
-            }
-        }
+    let rnd_a = gen_rnd_a()?;
+    println!("\nWiping card...");
+    if let Err(e) = bolty_ntag::wipe(transport, &keyset, rnd_a).await {
+        return Err(map_ntag_error(e));
     }
-
-    println!("Resetting K0 (master key)...");
-    session
-        .change_master_key(transport, &FACTORY_KEY, KEY_VERSION_BLANK)
-        .await
-        .context("failed to reset master key")?;
-
-    // --- Post-wipe verification ---
-    println!("\nVerifying wipe...");
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    let verify_session = {
-        let mut retry = AuthRetry::new();
-        let result = loop {
-            let rnd_a = gen_rnd_a()?;
-            match Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
-                .await
-            {
-                Ok(s) => break Some(s),
-                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
-                    Some(d) => {
-                        tokio::time::sleep(d).await;
-                    }
-                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
-                },
-                Err(e) => {
-                    anyhow::bail!(
-                        "POST-WIPE VERIFICATION FAILED: Cannot authenticate with factory K0.\n\
-                         Card may be in an inconsistent state.\n\
-                         Error: {e:#}"
-                    );
-                }
-            }
-        };
-        match result {
-            Some(s) => s,
-            None => unreachable!("auth loop Err arm bails before reaching here"),
-        }
-    };
-
-    let (settings, mut verify_session) = verify_session
-        .get_file_settings(transport, File::Ndef)
-        .await
-        .context("wipe verification: cannot read file settings")?;
-    if let Some(ref sdm) = settings.sdm {
-        let has_picc = !matches!(sdm.picc_data(), PiccData::None);
-        let has_mac = sdm.file_read().is_some();
-        if has_picc || has_mac {
-            anyhow::bail!(
-                "POST-WIPE WARNING: SDM still functionally active (picc={}, mac={})!",
-                has_picc,
-                has_mac
-            );
-        }
-    }
-
-    let mut buf = [0u8; 256];
-    let len = verify_session
-        .read_file_plain(transport, File::Ndef, 0, 0, &mut buf)
-        .await
-        .context("wipe verification: cannot read NDEF")?;
-    #[allow(clippy::indexing_slicing)]
-    if len < 2 || buf[0] != 0x00 || buf[1] != 0x00 {
-        anyhow::bail!(
-            "POST-WIPE WARNING: NDEF not empty ({} bytes: {})",
-            len,
-            crate::to_hex(&buf[..len.min(32)])
-        );
-    }
-    println!("  ✓ Factory K0 works");
-    println!("  ✓ SDM cleared");
-    println!("  ✓ NDEF empty");
 
     println!("\n✅ Card wiped and verified successfully!");
     Ok(())
@@ -306,7 +153,7 @@ mod tests {
             .await
             .expect("burn to provision card for wipe dry-run test");
 
-        let keys_before = transport.keys().clone();
+        let keys_before = *transport.keys();
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 

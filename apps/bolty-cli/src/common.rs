@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ntag424::{Session, SessionError, Transport, Uid};
+use ntag424::{SessionError, Uid};
 
 const AUTH_RETRY_DELAYS: &[u64] = &[2, 5];
 
@@ -59,33 +59,40 @@ impl Default for AuthRetry {
     }
 }
 
-pub(crate) async fn preflight_check<T: Transport>(transport: &mut T) -> anyhow::Result<[u8; 7]>
+/// Map a `bolty_ntag::Error` to a user-friendly `anyhow::Error` message.
+///
+/// Used by burn.rs and wipe.rs to translate library errors into actionable
+/// CLI messages with recovery instructions.
+pub(crate) fn map_ntag_error<T>(e: bolty_ntag::Error<T>) -> anyhow::Error
 where
-    T::Error: std::error::Error + Send + Sync + 'static,
+    T: std::error::Error + Send + Sync + 'static,
 {
-    let session = Session::default();
-
-    let uid = session
-        .get_selected_uid(transport)
-        .await
-        .map_err(|e| anyhow::anyhow!("pre-flight: card not responding ({e})"))?;
-    let uid_fixed = uid_to_fixed(&uid);
-
-    let version = session
-        .get_version(transport)
-        .await
-        .map_err(|e| anyhow::anyhow!("pre-flight: cannot read card version ({e})"))?;
-
-    if version.hw_vendor_id() != 0x04 || version.hw_type() != 0x04 {
-        anyhow::bail!(
-            "pre-flight: card is not NTAG424 DNA (vendor={:02X}, type={:02X}). \
-             Refusing to modify non-NTAG424 card.",
-            version.hw_vendor_id(),
-            version.hw_type()
-        );
+    match e {
+        bolty_ntag::Error::AuthenticationDelay => {
+            anyhow::anyhow!("authentication delay — wait 30s for the card to reset, then retry.")
+        }
+        bolty_ntag::Error::WrongCardType { vendor, card_type } => anyhow::anyhow!(
+            "Card is not NTAG424 DNA (vendor=0x{vendor:02X}, type=0x{card_type:02X})"
+        ),
+        bolty_ntag::Error::NdefVerificationFailed { written, read_back } => anyhow::anyhow!(
+            "NDEF verification failed: wrote {written} bytes, read back {read_back}.\n\
+             Recovery: the card may be in a partially-written state. Re-run the operation."
+        ),
+        bolty_ntag::Error::KeyVersionMismatch {
+            key_number,
+            expected,
+            actual,
+        } => anyhow::anyhow!(
+            "Key {key_number} version mismatch: expected {expected:#04X}, got {actual:#04X}.\n\
+             Recovery: re-run the operation to overwrite the mismatched key."
+        ),
+        bolty_ntag::Error::SdmVerificationFailed => {
+            anyhow::anyhow!("SDM verification failed.\nRecovery: re-run the operation.")
+        }
+        bolty_ntag::Error::SdmUrl(e) => anyhow::anyhow!("SDM URL config error: {e}"),
+        bolty_ntag::Error::Session(e) => anyhow::anyhow!("operation failed: {e}"),
+        bolty_ntag::Error::Transport(e) => anyhow::anyhow!("transport error: {e}"),
     }
-
-    Ok(uid_fixed)
 }
 
 pub(crate) struct NdefUri {
