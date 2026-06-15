@@ -4,8 +4,10 @@ use crate::service::{BoltyService, ServiceStatus, WorkflowResult};
 use bolty_core::{
     assessment::{CardAssessment, CardState},
     config::{BoltyConfig, IssuerConfig},
+    derivation::BoltcardDeterministicDeriver,
     issuer::assess_card,
-    secret::CardKeys,
+    secret::{AesKey, CardKeys},
+    uid::CardUid,
 };
 use bolty_mfrc522::{Mfrc522Transceiver, Mfrc522Transport};
 use ntag424::KeyNumber;
@@ -234,13 +236,6 @@ where
         Ok(assessment)
     }
 
-    fn current_burn_key(&self, uid: Option<[u8; 7]>) -> [u8; 16] {
-        match (uid, self.status.last_uid, self.authenticated_key0) {
-            (Some(current_uid), Some(last_uid), Some(key)) if current_uid == last_uid => key,
-            _ => bolty_ntag::FACTORY_KEY,
-        }
-    }
-
     pub(super) fn picc(&mut self) -> Result<PiccResult, WorkflowResult> {
         let keys = self.keys.clone();
         let keys_loaded = keys.is_some();
@@ -359,37 +354,85 @@ where
     I2C: embedded_hal::i2c::I2c,
     I2C::Error: core::fmt::Debug,
 {
-    fn burn(&mut self, keys: &CardKeys, lnurl: &str) -> WorkflowResult {
-        let key_version = self
-            .current_config
-            .pending_issuer
-            .as_ref()
-            .map(|_| IssuerConfig::default().key_version)
-            .unwrap_or(IssuerConfig::default().key_version);
-
-        // Must compute key before activate_transport() — borrow checker constraint.
-        let current_key = self.current_burn_key(None);
+    fn burn(
+        &mut self,
+        issuer: Option<&AesKey>,
+        keys: Option<&CardKeys>,
+        lnurl: &str,
+    ) -> WorkflowResult {
+        let key_version = IssuerConfig::default().key_version;
 
         let mut transport = match self.activate_transport() {
             Ok(transport) => transport,
             Err(err) => return err,
         };
 
+        let card_keys = if let Some(issuer_key) = issuer {
+            let uid_fixed = match copy_uid7(transport.uid()) {
+                Some(uid) => uid,
+                None => return workflow_error("unsupported uid length"),
+            };
+            let derived = BoltcardDeterministicDeriver::derive_keys(
+                issuer_key.as_bytes(),
+                CardUid::from(uid_fixed),
+                key_version as u32,
+            );
+            CardKeys {
+                k0: derived.k0.clone(),
+                k1: derived.k1.clone(),
+                k2: derived.k2.clone(),
+                k3: derived.k3.clone(),
+                k4: derived.k4.clone(),
+            }
+        } else if let Some(keys) = keys {
+            keys.clone()
+        } else {
+            return workflow_error("missing keys or issuer");
+        };
+
+        let keyset = card_keys_to_keyset(&card_keys);
+
+        let factory_works = block_on(ntag424::Session::default().authenticate_aes(
+            &mut transport,
+            KeyNumber::Key0,
+            &bolty_ntag::FACTORY_KEY,
+            RND_A,
+        ))
+        .is_ok();
+
+        let (current_key, previous_keys) = if factory_works {
+            (bolty_ntag::FACTORY_KEY, [bolty_ntag::FACTORY_KEY; 5])
+        } else {
+            let derived_works = block_on(ntag424::Session::default().authenticate_aes(
+                &mut transport,
+                KeyNumber::Key0,
+                &keyset[0],
+                RND_A,
+            ))
+            .is_ok();
+
+            if derived_works {
+                (keyset[0], keyset)
+            } else {
+                return WorkflowResult::AuthFailed;
+            }
+        };
+
         let params = bolty_ntag::BurnParams {
             lnurl,
-            keys: card_keys_to_keyset(keys),
+            keys: keyset,
             key_version,
             current_key,
-            previous_keys: [bolty_ntag::FACTORY_KEY; 5],
+            previous_keys,
         };
 
         match block_on(bolty_ntag::burn(&mut transport, &params, RND_A)) {
             Ok(result) => {
                 self.status.last_uid = Some(result.uid);
                 self.status.nfc_ready = true;
-                self.keys = Some(keys.clone());
-                self.authenticated_key0 = Some(*keys.k0.as_bytes());
-                self.current_config.pending_keys = Some(keys.clone());
+                self.keys = Some(card_keys.clone());
+                self.authenticated_key0 = Some(*card_keys.k0.as_bytes());
+                self.current_config.pending_keys = Some(card_keys);
                 self.current_config.lnurl = copy_lnurl(lnurl);
                 self.sync_config();
                 WorkflowResult::Success
@@ -398,21 +441,41 @@ where
         }
     }
 
-    fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult {
-        let Some(keys) = expected_keys else {
-            return WorkflowResult::WipeRefused;
-        };
-
-        log::info!("wipe: k0={:02X?}", keys.k0.as_bytes());
-
+    fn wipe(&mut self, issuer: Option<&AesKey>, keys: Option<&CardKeys>) -> WorkflowResult {
         let mut transport = match self.activate_transport() {
             Ok(transport) => transport,
             Err(err) => return err,
         };
 
+        let card_keys = if let Some(issuer_key) = issuer {
+            let key_version = IssuerConfig::default().key_version;
+            let uid_fixed = match copy_uid7(transport.uid()) {
+                Some(uid) => uid,
+                None => return workflow_error("unsupported uid length"),
+            };
+            let derived = BoltcardDeterministicDeriver::derive_keys(
+                issuer_key.as_bytes(),
+                CardUid::from(uid_fixed),
+                key_version as u32,
+            );
+            CardKeys {
+                k0: derived.k0.clone(),
+                k1: derived.k1.clone(),
+                k2: derived.k2.clone(),
+                k3: derived.k3.clone(),
+                k4: derived.k4.clone(),
+            }
+        } else if let Some(keys) = keys {
+            keys.clone()
+        } else {
+            return WorkflowResult::WipeRefused;
+        };
+
+        log::info!("wipe: k0={:02X?}", card_keys.k0.as_bytes());
+
         match block_on(bolty_ntag::wipe(
             &mut transport,
-            &card_keys_to_keyset(keys),
+            &card_keys_to_keyset(&card_keys),
             RND_A,
         )) {
             Ok(result) => {

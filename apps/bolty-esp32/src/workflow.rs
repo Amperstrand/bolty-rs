@@ -41,15 +41,19 @@ pub fn dispatch_command<S: BoltyService>(
             WorkflowResult::Success
         }
         Command::Burn => {
-            let Some(keys) = config.pending_keys.as_ref() else {
-                return workflow_error("missing keys");
-            };
             let Some(lnurl) = config.lnurl.as_ref() else {
                 return workflow_error("missing lnurl");
             };
-            service.burn(keys, lnurl.as_str())
+            if config.pending_keys.is_none() && config.pending_issuer.is_none() {
+                return workflow_error("missing keys or issuer");
+            }
+            service.burn(
+                config.pending_issuer.as_ref(),
+                config.pending_keys.as_ref(),
+                lnurl.as_str(),
+            )
         }
-        Command::Wipe => service.wipe(config.pending_keys.as_ref()),
+        Command::Wipe => service.wipe(config.pending_issuer.as_ref(), config.pending_keys.as_ref()),
         Command::Inspect => match service.inspect() {
             Ok(_) => WorkflowResult::Success,
             Err(err) => err,
@@ -82,6 +86,9 @@ mod tests {
         inspect_calls: usize,
         check_calls: usize,
         last_burn_lnurl: Option<LnurlString>,
+        last_burn_had_issuer: bool,
+        last_burn_had_keys: bool,
+        last_wipe_had_issuer: bool,
         last_wipe_had_keys: bool,
         inspect_result: Option<Result<CardAssessment, WorkflowResult>>,
         check_result: WorkflowResult,
@@ -97,6 +104,9 @@ mod tests {
                 inspect_calls: 0,
                 check_calls: 0,
                 last_burn_lnurl: None,
+                last_burn_had_issuer: false,
+                last_burn_had_keys: false,
+                last_wipe_had_issuer: false,
                 last_wipe_had_keys: false,
                 inspect_result: None,
                 check_result: WorkflowResult::Success,
@@ -107,15 +117,23 @@ mod tests {
     }
 
     impl BoltyService for MockService {
-        fn burn(&mut self, _keys: &CardKeys, lnurl: &str) -> WorkflowResult {
+        fn burn(
+            &mut self,
+            issuer: Option<&AesKey>,
+            keys: Option<&CardKeys>,
+            lnurl: &str,
+        ) -> WorkflowResult {
             self.burn_calls += 1;
             self.last_burn_lnurl = Some(lnurl_string(lnurl));
+            self.last_burn_had_issuer = issuer.is_some();
+            self.last_burn_had_keys = keys.is_some();
             self.burn_result.clone()
         }
 
-        fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult {
+        fn wipe(&mut self, issuer: Option<&AesKey>, keys: Option<&CardKeys>) -> WorkflowResult {
             self.wipe_calls += 1;
-            self.last_wipe_had_keys = expected_keys.is_some();
+            self.last_wipe_had_issuer = issuer.is_some();
+            self.last_wipe_had_keys = keys.is_some();
             self.wipe_result.clone()
         }
 
@@ -175,13 +193,13 @@ mod tests {
     }
 
     #[test]
-    fn burn_requires_keys_and_lnurl() {
+    fn burn_requires_keys_or_issuer_and_lnurl() {
         let mut service = MockService::default();
         let mut config = BoltyConfig::default();
 
         assert_eq!(
             dispatch_command(Command::Burn, &mut service, &mut config),
-            workflow_error("missing keys")
+            workflow_error("missing keys or issuer")
         );
 
         config.pending_keys = Some(CardKeys::zeroed());
@@ -189,6 +207,27 @@ mod tests {
             dispatch_command(Command::Burn, &mut service, &mut config),
             workflow_error("missing lnurl")
         );
+    }
+
+    #[test]
+    fn burn_works_with_issuer_only() {
+        let mut service = MockService {
+            burn_result: WorkflowResult::Success,
+            ..MockService::default()
+        };
+        let mut config = BoltyConfig {
+            lnurl: Some(lnurl_string("https://example.com/pay")),
+            pending_issuer: Some(AesKey::new([0xAA; 16])),
+            ..BoltyConfig::default()
+        };
+
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            WorkflowResult::Success
+        );
+        assert_eq!(service.burn_calls, 1);
+        assert!(service.last_burn_had_issuer);
+        assert!(!service.last_burn_had_keys);
     }
 
     #[test]

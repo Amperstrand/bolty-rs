@@ -1,7 +1,7 @@
 use bolty_core::{
     assessment::CardAssessment,
     config::{ErrorString, LnurlString},
-    secret::CardKeys,
+    secret::{AesKey, CardKeys},
 };
 
 /// Result of a card workflow operation.
@@ -18,8 +18,13 @@ pub enum WorkflowResult {
 /// The shared service layer. Serial, REST, GUI, and OTA all call this.
 /// Implementors provide the card I/O; bolty-core provides the policy.
 pub trait BoltyService {
-    fn burn(&mut self, keys: &CardKeys, lnurl: &str) -> WorkflowResult;
-    fn wipe(&mut self, expected_keys: Option<&CardKeys>) -> WorkflowResult;
+    fn burn(
+        &mut self,
+        issuer: Option<&AesKey>,
+        keys: Option<&CardKeys>,
+        lnurl: &str,
+    ) -> WorkflowResult;
+    fn wipe(&mut self, issuer: Option<&AesKey>, keys: Option<&CardKeys>) -> WorkflowResult;
     fn inspect(&mut self) -> Result<CardAssessment, WorkflowResult>;
     fn check_blank(&mut self) -> WorkflowResult;
     fn get_status(&self) -> ServiceStatus;
