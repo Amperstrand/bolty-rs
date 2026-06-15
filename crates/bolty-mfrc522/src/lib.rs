@@ -146,7 +146,14 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
                 fifo.buffer[..len].to_vec()
             }
             Frame::Standard(data) => {
-                let fifo = self.mfrc522.transceive::<64>(data.as_slice(), 0, 0)?;
+                let fifo = match self.mfrc522.transceive::<64>(data.as_slice(), 0, 0) {
+                    Ok(f) => f,
+                    Err(Mfrc522Error::Crc) => {
+                        log_crc_error(&mut self.mfrc522);
+                        return Err(Mfrc522Error::Crc);
+                    }
+                    Err(e) => return Err(e),
+                };
                 if fifo.valid_bits != 0 {
                     return Err(Mfrc522Error::Protocol);
                 }
@@ -292,4 +299,16 @@ fn frame_wait_time_ms(ats: &Ats) -> u32 {
         let fwt_us = 302u64 * (1u64 << fwi);
         (fwt_us / 1000 + 10) as u32
     }
+}
+
+fn log_crc_error<I2C: I2c>(mfrc522: &mut Mfrc522<I2cInterface<I2C>, Initialized>) {
+    let irq = mfrc522.read_register(Register::ComIrqReg).unwrap_or(0xFF);
+    let err = mfrc522.read_register(Register::ErrorReg).unwrap_or(0xFF);
+    let level = mfrc522.read_register(Register::FIFOLevelReg).unwrap_or(0) as usize;
+    log::warn!(
+        "MFRC522 CRC error: ComIrq=0x{:02X} Err=0x{:02X} FIFO={} bytes",
+        irq,
+        err,
+        level
+    );
 }
