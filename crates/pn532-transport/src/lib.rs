@@ -61,6 +61,7 @@ mod xtensa {
 
     use embedded_hal::digital::OutputPin;
     use esp_idf_hal::delay::Delay;
+    use pn532::nb;
     use pn532::{
         CountDown, Interface, IntoDuration, Pn532, Request,
         requests::{BorrowedRequest, Command, SAMMode},
@@ -107,7 +108,7 @@ mod xtensa {
     impl<IF, Timer, RST, const BUF: usize> Pn532Device<Pn532<IF, Timer, BUF>, RST>
     where
         IF: Interface,
-        Timer: CountDown,
+        Timer: CountDown<Time = Duration>,
         RST: OutputPin,
     {
         pub fn new(pn532: Pn532<IF, Timer, BUF>, rst_pin: RST) -> Self {
