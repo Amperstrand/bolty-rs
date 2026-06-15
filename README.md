@@ -4,12 +4,13 @@
 
 ## Current state
 
-- Core Bolt Card workflows: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`
-- Desktop CLI (`bolty-cli`) with full card lifecycle: burn/wipe/diagnose with pre-flight safety checks, per-key verification, and `--dry-run` mode
+- Full Bolt Card lifecycle: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`, `try-key`, `scan-keys`
+- Desktop CLI (`bolty-cli`) with pre-flight safety checks, per-key verification, `--dry-run` mode, and card recovery tools
+- ESP32 firmware with serial console, optional WiFi/REST API (port 80, mDNS as `bolty.local`), and OTA updates
 - Comprehensive hardware-free test suite including integration tests via MockTransport (full NTAG424 protocol simulation)
-- Both supported boards build and run from the same firmware crate with compile-time board selection
-- WiFi/REST/OTA are optional capabilities, not baseline requirements
-- Dependency versions are pinned exactly and the workspace `Cargo.lock` is intended to be tracked for reproducible firmware builds
+- Both supported boards (M5StickC Plus, M5Atom Matrix) build from the same firmware crate with compile-time board selection
+- Hardware-verified on PCSC (ACS ACR1252) and M5StickC Plus (MFRC522 I2C)
+- Dependency versions pinned exactly, `Cargo.lock` tracked for reproducible builds
 
 ## Workspace architecture
 
@@ -97,6 +98,12 @@ cargo run -p bolty-cli -- keyver --issuer-key <KEY>
 
 # Wipe card (factory reset)
 cargo run -p bolty-cli -- wipe --issuer-key <KEY>
+
+# Card recovery: try a specific raw key
+cargo run -p bolty-cli -- try-key --key 11111111111111111111111111111111
+
+# Card recovery: scan all likely key candidates
+cargo run -p bolty-cli -- scan-keys --issuer-key <KEY>
 ```
 
 All APDU exchanges are logged to `/tmp/bolty-audit.log`. See [`docs/card-safety.md`](docs/card-safety.md) for the complete safety reference.

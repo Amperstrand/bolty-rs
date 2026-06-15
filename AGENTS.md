@@ -146,9 +146,25 @@ Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → 
 - SDM MAC verification: ✅ `mac=true` with standard `[[{mac}` URL template
 - `standardize_url_template` fix working correctly
 
-### M5StickC Plus (Hades2001) — WORKING WITH CAVEAT
-Full cycle tested: burn → inspect(provisioned) → wipe → inspect(blank)
-- Card UID: `04455FFA967380`
+### M5StickC Plus (Hades2001) — FULLY WORKING
+- Card UID: `040C60FA967380` (current)
 - Serial port: `/dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0`
-- **BUG**: Background polling spams auth errors after wipe (2/sec), causing
-  auth delay on the card. Must be fixed.
+- Burn → inspect(provisioned) → wipe → inspect(blank): ✅
+- WiFi: SSID "2", IP 192.168.13.236, REST API port 80, mDNS bolty.local ✅
+- Polling bug: FIXED (commit 18a9b37 — no more auth spam)
+
+### ESP32 Build Commands (Ubuntu 192.168.13.218)
+```bash
+# One-time setup:
+cargo install espup espflash
+espup install
+
+# Build firmware:
+cd /home/ubuntu/src/bolty-rs
+. ~/export-esp.sh
+cargo +esp build --release -p bolty-esp32 --features 'board-m5stick,wifi,rest'
+
+# Flash:
+espflash flash --port /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0 \
+  target/xtensa-esp32-espidf/release/bolty-esp32
+```

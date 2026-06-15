@@ -17,12 +17,17 @@ The `bolty-cli` desktop application needs `libpcsclite-dev` (Debian/Ubuntu) or
 
 ### ESP32 firmware development
 
-ESP32 builds require the `esp` Xtensa toolchain via `rustup`:
+ESP32 builds require the Xtensa toolchain via `espup`:
 
 ```bash
-rustup toolchain install esp
-rustup component add rust-src --toolchain esp
+cargo install espup espflash
+espup install
+. ~/export-esp.sh  # source every new terminal
 cargo +esp build --release -p bolty-esp32 --features "board-m5stick"
+# With WiFi + REST API:
+cargo +esp build --release -p bolty-esp32 --features "board-m5stick,wifi,rest"
+# Flash to device:
+espflash flash --port /dev/ttyUSB0 target/xtensa-esp32-espidf/release/bolty-esp32
 ```
 
 On macOS, set `RUSTUP_TOOLCHAIN=1.95.0` (or your host toolchain version) when
@@ -31,14 +36,19 @@ toolchain that isn't installed.
 
 ### Git hooks
 
-Pre-commit hooks enforce `cargo fmt --check` and `cargo clippy` on host crates:
+Pre-commit hook runs 4 checks on every commit:
+
+1. **Secret scan** — flags 32-char hex strings (potential AES keys) in source files
+2. **cargo fmt --check** — formatting enforcement
+3. **cargo clippy** — lint enforcement (host crates only, excludes bolty-esp32)
+4. **cargo test --lib** — unit tests must pass
 
 ```bash
-git config core.hooksPath .githooks
+git config core.hooksPath .githooks  # one-time setup
 ```
 
-The hook excludes `bolty-esp32` from clippy (it needs the esp toolchain) and
-uses `RUSTUP_TOOLCHAIN` override to bypass `rust-toolchain.toml`.
+Override with `git commit --no-verify` (use sparingly). The hook uses
+`RUSTUP_TOOLCHAIN` override to bypass `rust-toolchain.toml`.
 
 ## Testing
 
