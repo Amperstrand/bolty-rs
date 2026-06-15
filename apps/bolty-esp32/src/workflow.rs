@@ -26,7 +26,8 @@ pub fn dispatch_command<S: BoltyService>(
         | Command::Picc
         | Command::Diagnose
         | Command::DeriveKeys
-        | Command::Issuer => WorkflowResult::Success,
+        | Command::Issuer
+        | Command::HwInfo => WorkflowResult::Success,
         Command::SetKeys(keys) => {
             config.pending_keys = Some(keys);
             WorkflowResult::Success
@@ -273,6 +274,7 @@ mod tests {
             Command::Diagnose,
             Command::DeriveKeys,
             Command::Issuer,
+            Command::HwInfo,
         ] {
             assert_eq!(
                 dispatch_command(command, &mut service, &mut config),

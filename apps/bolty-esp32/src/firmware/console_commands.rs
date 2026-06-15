@@ -21,10 +21,12 @@ use crate::wifi::WifiError;
 #[cfg(feature = "ota")]
 use esp_idf_hal::reset::restart;
 
+#[cfg(feature = "rest")]
+use super::REST_PORT;
 use super::serial_console::SerialConsole;
 use super::service::Esp32BoltyService;
 use super::utils::{CounterDisplay, diagnose_state_label, ndef_ascii, push_uid_hex};
-use super::{MAX_LINE_LEN, REST_PORT, WifiManager};
+use super::{MAX_LINE_LEN, WifiManager};
 
 pub(super) fn handle_line<I2C>(
     serial: &mut SerialConsole,
@@ -198,6 +200,10 @@ pub(super) fn handle_line<I2C>(
             print_diagnose(serial, &mut service);
             return;
         }
+        Command::HwInfo => {
+            print_hwinfo(serial, &service);
+            return;
+        }
         _ => {}
     }
 
@@ -242,7 +248,7 @@ pub(super) fn print_boot_banner(serial: &mut SerialConsole) {
 }
 
 fn print_help(serial: &mut SerialConsole) {
-    serial.line("Commands: help status uid i2cscan keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
+    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
     #[cfg(feature = "wifi")]
     serial.line("WiFi: wifi <ssid> <password> | wifi off");
     #[cfg(feature = "ota")]
@@ -269,6 +275,39 @@ where
     }
     serial.ok(line.as_str());
     set_display_ok("i2cscan", line.as_str());
+}
+
+fn print_hwinfo<I2C>(serial: &mut SerialConsole, service: &Esp32BoltyService<I2C>)
+where
+    I2C: embedded_hal::i2c::I2c,
+{
+    let hw = service.get_hwinfo();
+
+    serial.line("=== Hardware Info ===");
+
+    let mut line1 = String::<MAX_LINE_LEN>::new();
+    let _ = write!(
+        line1,
+        "display_init={} i2c_baudrate={}Hz nfc_ready={}",
+        if hw.display_init_ok { "ok" } else { "FAIL" },
+        hw.i2c_baudrate,
+        hw.nfc_ready,
+    );
+    serial.line(line1.as_str());
+
+    let mut line2 = String::<MAX_LINE_LEN>::new();
+    let _ = line2.push_str("i2c_devices: ");
+    if hw.last_i2c_scan.is_empty() {
+        let _ = line2.push_str("none (check cable, power, pull-ups)");
+    } else {
+        for (i, &addr) in hw.last_i2c_scan.iter().enumerate() {
+            if i > 0 {
+                let _ = line2.push_str(", ");
+            }
+            let _ = write!(line2, "0x{addr:02X}");
+        }
+    }
+    serial.ok(line2.as_str());
 }
 
 fn print_picc<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)
@@ -562,6 +601,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::Inspect => "inspect",
         Command::Picc => "picc",
         Command::Diagnose => "diagnose",
+        Command::HwInfo => "hwinfo",
         Command::Check => "check",
         Command::DummyBurn => "dummyburn",
         Command::Reset => "reset",

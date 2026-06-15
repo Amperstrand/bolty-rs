@@ -35,6 +35,7 @@ pub enum Command {
     Diagnose,
     DeriveKeys,
     Issuer,
+    HwInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,6 +134,10 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     if command.eq_ignore_ascii_case("reset") {
         expect_no_args(parts)?;
         return Ok(Command::Reset);
+    }
+    if command.eq_ignore_ascii_case("hwinfo") {
+        expect_no_args(parts)?;
+        return Ok(Command::HwInfo);
     }
 
     Err(CommandError::UnknownCommand)
@@ -389,6 +394,12 @@ mod tests {
             parse_command("issuer 00 extra"),
             Err(CommandError::InvalidArgs)
         );
+    }
+
+    #[test]
+    fn parses_hwinfo_command() {
+        assert_eq!(parse_command("hwinfo"), Ok(Command::HwInfo));
+        assert_eq!(parse_command("HWINFO"), Ok(Command::HwInfo));
     }
 
     #[test]

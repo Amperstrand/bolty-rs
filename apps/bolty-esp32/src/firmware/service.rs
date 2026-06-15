@@ -54,6 +54,15 @@ where
     authenticated_key0: Option<[u8; 16]>,
     pub(super) last_card: CardAssessment,
     status: ServiceStatus,
+    display_init_ok: bool,
+    i2c_baudrate: u32,
+}
+
+pub(super) struct HwInfo {
+    pub(super) display_init_ok: bool,
+    pub(super) i2c_baudrate: u32,
+    pub(super) last_i2c_scan: Vec<u8>,
+    pub(super) nfc_ready: bool,
 }
 
 impl<I2C> Esp32BoltyService<I2C>
@@ -66,6 +75,8 @@ where
         raw_i2c: Option<I2C>,
         last_i2c_scan: Vec<u8>,
         current_config: BoltyConfig,
+        display_init_ok: bool,
+        i2c_baudrate: u32,
     ) -> Self {
         let nfc_ready = transceiver.is_some();
         let mut service = Self {
@@ -81,6 +92,8 @@ where
                 nfc_ready,
                 lnurl: None,
             },
+            display_init_ok,
+            i2c_baudrate,
         };
         service.sync_config();
         service
@@ -108,6 +121,15 @@ where
             self.last_i2c_scan = scan_i2c_bus(i2c);
         }
         self.last_i2c_scan.clone()
+    }
+
+    pub(super) fn get_hwinfo(&self) -> HwInfo {
+        HwInfo {
+            display_init_ok: self.display_init_ok,
+            i2c_baudrate: self.i2c_baudrate,
+            last_i2c_scan: self.last_i2c_scan.clone(),
+            nfc_ready: self.status.nfc_ready,
+        }
     }
 
     fn activate_transport(&mut self) -> Result<Mfrc522Transport<'_, I2C>, WorkflowResult> {
@@ -142,7 +164,7 @@ where
             });
         let issuers = issuer.as_ref().map(core::slice::from_ref).unwrap_or(&[]);
 
-        let assessment = assess_card(&uid, key_versions, issuers);
+        let assessment = assess_card(bolty_core::uid::CardUid::from(uid), key_versions, issuers);
         self.authenticated_key0 = Some(*key);
         self.last_card = assessment.clone();
         self.status.last_uid = Some(uid);

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::service::{BoltyService, WorkflowResult};
@@ -13,6 +14,8 @@ use esp_idf_hal::{
 use esp_idf_sys as _;
 use heapless::String;
 use log::info;
+
+use core::fmt::Write as _;
 
 #[cfg(feature = "display-st7789")]
 use crate::display;
@@ -40,13 +43,14 @@ const BOARD_NAME: &str = "M5Atom";
 const BOARD_NAME: &str = "M5StickC Plus";
 
 pub(super) const RND_A: [u8; 16] = [0u8; 16];
-const I2C_BAUDRATE_HZ: u32 = 400_000;
+const I2C_BAUDRATE_HZ: u32 = 100_000;
 pub(super) const MAX_LINE_LEN: usize = 512;
 pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
 const WATCHDOG_TIMEOUT_SECS: u64 = 5;
+static DISPLAY_INIT_OK: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "rest")]
 pub(super) const REST_PORT: u16 = 80;
 
@@ -58,33 +62,6 @@ pub fn main() {
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,
         Err(_) => fatal_halt("peripherals already taken"),
-    };
-
-    let mut twdt_driver = {
-        let config = watchdog::config::Config {
-            duration: core::time::Duration::from_secs(WATCHDOG_TIMEOUT_SECS),
-            ..watchdog::config::Config::new()
-        };
-        match watchdog::TWDTDriver::new(peripherals.twdt, &config) {
-            Ok(driver) => Some(driver),
-            Err(e) => {
-                log::warn!("watchdog init failed: {e}");
-                None
-            }
-        }
-    };
-    let mut wdt = match twdt_driver.as_mut() {
-        Some(driver) => match driver.watch_current_task() {
-            Ok(sub) => {
-                info!("watchdog subscribed ({WATCHDOG_TIMEOUT_SECS}s)");
-                Some(sub)
-            }
-            Err(e) => {
-                log::warn!("watchdog subscribe failed: {e}");
-                None
-            }
-        },
-        None => None,
     };
 
     #[cfg(feature = "led-matrix")]
@@ -110,6 +87,7 @@ pub fn main() {
                 BOARD_NAME,
             )
         };
+        DISPLAY_INIT_OK.store(result.is_ok(), Ordering::SeqCst);
         if let Err(e) = result {
             log::error!("Display init failed: {e}");
         }
@@ -160,11 +138,14 @@ pub fn main() {
     let mut serial = SerialConsole::new();
     let initial_config = BoltyConfig::default();
     let config = Arc::new(Mutex::new(initial_config.clone()));
+    let display_ok = DISPLAY_INIT_OK.load(Ordering::SeqCst);
     let service = Arc::new(Mutex::new(Esp32BoltyService::new(
         xcvr,
         raw_i2c,
-        initial_i2c_scan,
+        initial_i2c_scan.clone(),
         initial_config,
+        display_ok,
+        I2C_BAUDRATE_HZ,
     )));
 
     #[cfg(feature = "display-st7789")]
@@ -184,6 +165,34 @@ pub fn main() {
     let mut line = String::<MAX_LINE_LEN>::new();
     let mut next_poll_at = millis();
     let mut card_announced = false;
+
+    // Hardware diagnostics on serial console (visible even if boot logs were missed)
+    {
+        let mut diag = String::<256>::new();
+        let _ = write!(
+            diag,
+            "hw: board={} i2c={}Hz display={} nfc={}",
+            BOARD_NAME,
+            I2C_BAUDRATE_HZ,
+            if display_ok { "ok" } else { "FAIL" },
+            if nfc_ready { "ok" } else { "missing" },
+        );
+        serial.line(diag.as_str());
+
+        let mut scan_line = String::<128>::new();
+        let _ = scan_line.push_str("hw: i2c_scan=");
+        if initial_i2c_scan.is_empty() {
+            let _ = scan_line.push_str("none");
+        } else {
+            for (i, &addr) in initial_i2c_scan.iter().enumerate() {
+                if i > 0 {
+                    let _ = scan_line.push_str(",");
+                }
+                let _ = write!(scan_line, "0x{addr:02X}");
+            }
+        }
+        serial.line(scan_line.as_str());
+    }
 
     info!("=== Bolty Ready ===");
     print_boot_banner(&mut serial);
@@ -223,10 +232,6 @@ pub fn main() {
         if now >= next_poll_at {
             poll_card(&mut serial, &service, &mut card_announced);
             next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
-        }
-
-        if let Some(ref mut wdt) = wdt {
-            let _ = wdt.feed();
         }
 
         FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
