@@ -216,7 +216,13 @@ pub async fn burn<T: Transport>(
     params: &BurnParams<'_>,
     rnd_a: [u8; 16],
 ) -> Result<BurnResult, Error<T::Error>> {
-    let plan = sdm_url_config(params.lnurl, CryptoMode::Aes, SdmUrlOptions::new())?;
+    // Bolt Card standard: K1 = PICC encryption, K2 = MAC verification.
+    let sdm_opts = SdmUrlOptions {
+        picc_key: KeyNumber::Key1,
+        mac_key: KeyNumber::Key2,
+        ..SdmUrlOptions::new()
+    };
+    let plan = sdm_url_config(params.lnurl, CryptoMode::Aes, sdm_opts)?;
 
     let session = Session::default();
 

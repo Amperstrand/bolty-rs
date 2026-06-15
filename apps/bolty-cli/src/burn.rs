@@ -47,7 +47,12 @@ where
     }
 
     if dry_run {
-        let ndef_size = sdm_url_config(url, CryptoMode::Aes, SdmUrlOptions::new())
+        let sdm_opts = SdmUrlOptions {
+            picc_key: KeyNumber::Key1,
+            mac_key: KeyNumber::Key2,
+            ..SdmUrlOptions::new()
+        };
+        let ndef_size = sdm_url_config(url, CryptoMode::Aes, sdm_opts)
             .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?
             .ndef_bytes
             .len();
