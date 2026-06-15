@@ -253,6 +253,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bolty-pn532"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "log",
+ "ntag424",
+ "pn532-transport",
+]
+
+[[package]]
 name = "bounded-integer"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1666,6 +1676,26 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
+
+[[package]]
+name = "pn532"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce656b2f9335bedbd8806597f6f78e644a955366673cd9280a0fb67a0d7b35a1"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "nb 1.1.0",
+]
+
+[[package]]
+name = "pn532-transport"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "esp-idf-hal",
+ "log",
+ "pn532",
+]
 
 [[package]]
 name = "prettyplease"

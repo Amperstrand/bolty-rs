@@ -1,0 +1,15 @@
+[package]
+name = "bolty-pn532"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "PN532 NFC transport for ntag424 Bolt Card operations"
+
+[dependencies]
+pn532-transport = { path = "../pn532-transport" }
+ntag424 = { workspace = true }
+embedded-hal = "=1.0.0"
+log = "=0.4.29"
+
+[lints]
+workspace = true
