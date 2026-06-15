@@ -57,7 +57,7 @@ impl<I2C: I2c> Mfrc522Transceiver<I2C> {
         Err(Mfrc522Error::Timeout)
     }
 
-    fn reset_frontend(&mut self) -> Result<(), Mfrc522Error<I2C::Error>> {
+    pub fn reset_frontend(&mut self) -> Result<(), Mfrc522Error<I2C::Error>> {
         self.mfrc522.write_register(Register::TxModeReg, 0x00)?;
         self.mfrc522.write_register(Register::RxModeReg, 0x00)?;
         self.mfrc522.write_register(Register::ModWidthReg, 0x26)?;
