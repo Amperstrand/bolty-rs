@@ -15,7 +15,9 @@ use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
 use bolty_core::uid::CardUid;
-use ntag424::{File, KeyNumber, Session, Transport};
+use ntag424::{
+    File, KeyNumber, Session, Transport, sdm::Verifier, types::file_settings::CryptoMode,
+};
 
 use crate::common::{
     gen_rnd_a, is_auth_delay, is_sdm_functionally_active, parse_ndef_uri, uid_to_fixed,
@@ -89,11 +91,13 @@ where
     };
 
     // 3. File settings (unauthenticated)
+    let mut sdm_settings = None;
     let has_sdm = match session.get_file_settings(transport, File::Ndef).await {
         Ok(settings) => {
             let active = is_sdm_functionally_active(settings.sdm.as_ref());
             println!("SDM active:     {active}");
             println!("File settings:  {settings:?}");
+            sdm_settings = settings.sdm;
             active
         }
         Err(e) => {
@@ -137,12 +141,24 @@ where
                 match picc_crypto::picc_decrypt_p(keys.k1.as_bytes(), p_hex) {
                     Some(picc) => {
                         let uid_match = picc.uid == uid_fixed;
-                        let cmac_ok = picc_crypto::picc_verify_c(keys.k2.as_bytes(), &picc, c_hex);
+                        let mac_ok = sdm_settings
+                            .as_ref()
+                            .and_then(|sdm| Verifier::try_new(sdm, CryptoMode::Aes).ok())
+                            .and_then(|v| {
+                                let ndef_data = buf.get(..ndef_len).unwrap_or(&[]);
+                                v.verify_with_meta_key(
+                                    ndef_data,
+                                    keys.k2.as_bytes(),
+                                    keys.k1.as_bytes(),
+                                )
+                                .ok()
+                            })
+                            .is_some();
                         println!(
-                            "PICC decrypt:   OK (uid_match={uid_match}, counter={}, cmac={cmac_ok})",
+                            "SDM verify:     uid_match={uid_match}, counter={}, mac={mac_ok}",
                             picc.counter
                         );
-                        uid_match && cmac_ok
+                        uid_match && mac_ok
                     }
                     None => {
                         println!("PICC decrypt:   FAILED (wrong issuer key?)");
