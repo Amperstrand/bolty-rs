@@ -143,7 +143,7 @@ where
     /// Returns `None` if no card is present.
     pub(super) fn poll_safe(&mut self) -> Option<CardAssessment> {
         let mut transport = self.activate_transport().ok()?;
-        let uid = copy_uid7(transport.uid())?;
+        let _uid = copy_uid7(transport.uid())?;
 
         // Unauthenticated reads only — no AES authentication APDUs sent.
         let inspect = block_on(bolty_ntag::safe_inspect(&mut transport, None, None)).ok()?;

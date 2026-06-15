@@ -12,7 +12,7 @@ use bolty_core::{
 };
 use embedded_svc::{
     http::{Headers, Method},
-    io::{Read, Write},
+    io::Write,
 };
 use esp_idf_hal::io::EspIOError;
 use esp_idf_svc::http::server::{
@@ -35,6 +35,7 @@ pub struct RestServer<S>
 where
     S: RestBoltyService + Send + 'static,
 {
+    #[allow(dead_code)]
     server: EspHttpServer<'static>,
     _config: SharedConfig,
     _service: SharedService<S>,

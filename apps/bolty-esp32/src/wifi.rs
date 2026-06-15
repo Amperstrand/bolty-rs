@@ -13,7 +13,9 @@ use log::info;
 #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
 use esp_idf_svc::mdns::EspMdns;
 
+#[allow(dead_code)]
 const MDNS_HOSTNAME: &str = "bolty";
+#[allow(dead_code)]
 const MDNS_INSTANCE_NAME: &str = "Bolty";
 #[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
 const MDNS_HTTP_SERVICE_NAME: &str = "Bolty HTTP";

@@ -28,6 +28,7 @@ pub enum Command {
     Ver,
     KeyVer,
     Check,
+    #[allow(dead_code)]
     DummyBurn,
     Reset,
     Inspect,

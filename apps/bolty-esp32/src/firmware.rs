@@ -1,14 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::service::BoltyService;
 use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
 use esp_idf_hal::{
     delay::FreeRtos,
     i2c::{I2cConfig, I2cDriver},
     peripherals::Peripherals,
-    task::watchdog,
     units::FromValueType,
 };
 use esp_idf_sys as _;
@@ -51,7 +49,6 @@ pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
-const WATCHDOG_TIMEOUT_SECS: u64 = 5;
 static DISPLAY_INIT_OK: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "rest")]
 pub(super) const REST_PORT: u16 = 80;
@@ -309,7 +306,7 @@ fn fatal_halt(context: &str) -> ! {
     log::error!("FATAL: {context} — restarting device");
     FreeRtos::delay_ms(100);
     unsafe { esp_idf_sys::esp_restart() };
-    // Fallback if esp_restart somehow returns (should not happen).
+    #[allow(unreachable_code)]
     loop {
         FreeRtos::delay_ms(RELOG_INTERVAL_MS);
     }
