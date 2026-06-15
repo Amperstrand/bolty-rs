@@ -6,6 +6,7 @@ use bolty_ntag::{
     standardize_url_template,
 };
 
+use crate::audit;
 use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
 
 pub async fn cmd_burn<T: Transport>(
@@ -101,6 +102,7 @@ where
 
         if factory_works {
             println!("  Authenticated with factory K0");
+            audit::log_event("burn: authenticated with factory K0");
             (FACTORY_KEY, [FACTORY_KEY; 5])
         } else {
             println!("  Factory K0 rejected, trying derived K0...");
@@ -124,6 +126,7 @@ where
 
             if derived_works {
                 println!("  Authenticated with derived K0 (re-burn)");
+                audit::log_event(&format!("burn: authenticated with derived K0 v{version}"));
                 let derived_keyset: bolty_ntag::KeySet = [
                     *keys.k0.as_bytes(),
                     *keys.k1.as_bytes(),
@@ -160,10 +163,16 @@ where
 
     let rnd_a = gen_rnd_a()?;
     println!("\nBurning card...");
+    audit::log_event(&format!(
+        "burn: starting — UID={}, version={version}, url={url}",
+        crate::to_hex(uid_fixed)
+    ));
     if let Err(e) = bolty_ntag::burn(transport, &params, rnd_a).await {
+        audit::log_event("burn: FAILED");
         return Err(map_ntag_error(e));
     }
 
+    audit::log_event(&format!("burn: SUCCESS — K0 v{version}, K1-K4 installed"));
     println!("\n✅ Card burned and verified successfully!");
     Ok(())
 }

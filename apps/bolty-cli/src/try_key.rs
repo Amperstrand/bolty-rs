@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bolty_ntag::{KeyNumber, Session, Transport};
 
+use crate::audit;
 use crate::common::gen_rnd_a;
 
 pub async fn cmd_try_key<T: Transport>(
@@ -27,6 +28,7 @@ where
     };
 
     println!("\nTrying K{key_no} = {} ...", crate::to_hex(key));
+    audit::log_event(&format!("try-key: K{key_no} = {}", crate::to_hex(key)));
 
     let rnd_a = gen_rnd_a()?;
     match Session::default()

@@ -52,6 +52,13 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
+/// Write a human-readable event annotation to the audit log.
+/// Use this to mark key operations: "trying derived K0 v1", "burn: writing K2", etc.
+pub fn log_event(msg: &str) {
+    let ts = timestamp();
+    log_entry(&format!("[{ts}] EVENT  {msg}"));
+}
+
 /// A transport wrapper that logs all APDU exchanges to an audit file.
 pub struct LoggingTransport<T> {
     inner: T,

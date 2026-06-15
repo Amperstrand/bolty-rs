@@ -4,6 +4,7 @@ use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
 use bolty_ntag::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 
+use crate::audit;
 use crate::common::{
     AuthRetry, gen_rnd_a, is_auth_delay, is_sdm_functionally_active, map_ntag_error,
 };
@@ -132,10 +133,16 @@ where
 
     let rnd_a = gen_rnd_a()?;
     println!("\nWiping card...");
+    audit::log_event(&format!(
+        "wipe: starting — UID={}, version={version}",
+        crate::to_hex(uid_fixed)
+    ));
     if let Err(e) = bolty_ntag::wipe(transport, &keyset, rnd_a).await {
+        audit::log_event("wipe: FAILED");
         return Err(map_ntag_error(e));
     }
 
+    audit::log_event("wipe: SUCCESS — all keys reset to factory zeros");
     println!("\n✅ Card wiped and verified successfully!");
     Ok(())
 }

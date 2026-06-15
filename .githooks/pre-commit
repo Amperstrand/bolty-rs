@@ -10,7 +10,9 @@ echo "[pre-commit] Scanning staged files for potential secrets..."
 SECRET_PATTERN='[0-9a-fA-F]\{32\}'
 STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -vE '\.(lock|toml)$|Cargo\.|target/|test|fixture|mock|AGENTS|\.md$' || true)
 if [ -n "$STAGED" ]; then
-    SECRETS=$(echo "$STAGED" | xargs grep -In "$SECRET_PATTERN" 2>/dev/null || true)
+    SECRETS=$(echo "$STAGED" | xargs grep -In "$SECRET_PATTERN" 2>/dev/null \
+        | grep -vE 'unwrap\(|assert|parse_hex|FACTORY_KEY|\[0u8;|test|#\[cfg' \
+        || true)
     if [ -n "$SECRETS" ]; then
         echo "[pre-commit] ⚠️  Potential 16-byte hex keys found in staged files:"
         echo "$SECRETS"

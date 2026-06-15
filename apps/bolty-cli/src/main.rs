@@ -10,6 +10,7 @@ mod keyver;
 #[path = "mock_transport.rs"]
 mod mock_transport;
 mod picc;
+mod scan_keys;
 mod transport;
 mod try_key;
 mod ver;
@@ -156,6 +157,14 @@ enum Cli {
         /// Key slot to test (0-4, default 0 = master key)
         #[arg(long, default_value = "0")]
         key_no: u8,
+    },
+
+    /// Scan all likely key candidates against K0 (read-only, no writes).
+    /// Tries factory zeros, derived K0 v0-v3, static test keys, and card key.
+    /// Stops on first match or auth delay.
+    ScanKeys {
+        #[arg(long)]
+        issuer_key: String,
     },
 }
 
@@ -374,6 +383,12 @@ async fn run() -> anyhow::Result<()> {
             let key = parse_hex_16(&key)?;
             let mut transport = connect_transport()?;
             try_key::cmd_try_key(&mut transport, &key, key_no).await?;
+        }
+
+        Cli::ScanKeys { issuer_key } => {
+            let issuer_key = parse_hex_16(&issuer_key)?;
+            let mut transport = connect_transport()?;
+            scan_keys::cmd_scan_keys(&mut transport, &issuer_key).await?;
         }
     }
 
