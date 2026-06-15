@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::service::{BoltyService, WorkflowResult};
+use crate::service::BoltyService;
 use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
 use esp_idf_hal::{
@@ -270,39 +270,23 @@ fn poll_card<I2C>(
         return;
     }
 
-    match service.check_blank() {
-        WorkflowResult::CardNotPresent => {
+    match service.poll_safe() {
+        None => {
             *card_announced = false;
             #[cfg(feature = "display-st7789")]
             display::clear_card();
         }
-        WorkflowResult::Success | WorkflowResult::Error(_) => {
-            if !*card_announced && service.last_card.present {
-                serial.card(&service.last_card);
+        Some(assessment) => {
+            if !*card_announced && assessment.present {
+                serial.card(&assessment);
                 *card_announced = true;
                 #[cfg(feature = "display-st7789")]
                 {
                     let mut uid_hex = heapless::String::<16>::new();
-                    if let Some(uid) = service.last_card.uid.as_ref() {
-                        let _ =
-                            push_uid_hex(&mut uid_hex, &uid[..service.last_card.uid_len as usize]);
+                    if let Some(uid) = assessment.uid.as_ref() {
+                        let _ = push_uid_hex(&mut uid_hex, &uid[..assessment.uid_len as usize]);
                     }
-                    display::set_card(uid_hex.as_str(), card_state_label(service.last_card.state));
-                }
-            }
-        }
-        WorkflowResult::AuthFailed | WorkflowResult::AuthDelay | WorkflowResult::WipeRefused => {
-            if !*card_announced && service.last_card.present {
-                serial.card(&service.last_card);
-                *card_announced = true;
-                #[cfg(feature = "display-st7789")]
-                {
-                    let mut uid_hex = heapless::String::<16>::new();
-                    if let Some(uid) = service.last_card.uid.as_ref() {
-                        let _ =
-                            push_uid_hex(&mut uid_hex, &uid[..service.last_card.uid_len as usize]);
-                    }
-                    display::set_card(uid_hex.as_str(), card_state_label(service.last_card.state));
+                    display::set_card(uid_hex.as_str(), card_state_label(assessment.state));
                 }
             }
         }

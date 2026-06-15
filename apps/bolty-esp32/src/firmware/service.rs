@@ -128,6 +128,55 @@ where
         }
     }
 
+    /// Lightweight unauthenticated card poll for the main loop.
+    ///
+    /// Detects card presence, reads UID, and classifies state using
+    /// unauthenticated reads only (file settings, NDEF). NEVER sends
+    /// AuthenticateAES — this is safe to call every poll cycle without
+    /// incrementing the NTAG424's SeqFailCtr or TotFailCtr.
+    ///
+    /// Returns `None` if no card is present.
+    pub(super) fn poll_safe(&mut self) -> Option<CardAssessment> {
+        let mut transport = self.activate_transport().ok()?;
+        let uid = copy_uid7(transport.uid())?;
+
+        // Unauthenticated reads only — no AES authentication APDUs sent.
+        let inspect = block_on(bolty_ntag::safe_inspect(&mut transport, None, None)).ok()?;
+
+        let state = if let Some(ref settings) = inspect.file_settings {
+            if settings.sdm.is_some()
+                && settings
+                    .sdm
+                    .as_ref()
+                    .map(|sdm| {
+                        !matches!(sdm.picc_data(), bolty_ntag::PiccData::None)
+                            || sdm.file_read().is_some()
+                    })
+                    .unwrap_or(false)
+            {
+                CardState::Provisioned(0)
+            } else {
+                CardState::Blank
+            }
+        } else {
+            CardState::Unknown
+        };
+
+        let assessment = CardAssessment {
+            present: true,
+            uid: uid_storage_from_fixed(&inspect.uid),
+            uid_len: 7,
+            state,
+            ..CardAssessment::default()
+        };
+
+        self.status.last_uid = Some(inspect.uid);
+        self.status.nfc_ready = true;
+        self.last_card = assessment.clone();
+
+        Some(assessment)
+    }
+
     pub(super) fn i2c_scan(&mut self) -> Vec<u8> {
         if let Some(i2c) = self.raw_i2c.as_mut() {
             self.last_i2c_scan = scan_i2c_bus(i2c);
