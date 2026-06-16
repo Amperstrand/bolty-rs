@@ -93,6 +93,9 @@ pub fn main() {
     #[cfg(feature = "wifi")]
     let modem = peripherals.modem;
 
+    #[cfg(feature = "ble")]
+    let modem = peripherals.modem;
+
     #[cfg(feature = "display-st7789")]
     {
         let result = unsafe {
@@ -256,6 +259,24 @@ pub fn main() {
     #[cfg(feature = "display-st7789")]
     display::set_event("ready");
 
+    #[cfg(feature = "ble")]
+    let ble_transport = {
+        log::info!("Initializing BLE transport...");
+        match crate::ble::BleTransport::start(modem) {
+            Ok(t) => {
+                log::info!("BLE transport initialized");
+                if !crate::ble::wait_for_ready(&t, 5000) {
+                    log::warn!("BLE: GATT server not ready after 5s, continuing anyway");
+                }
+                Some(t)
+            }
+            Err(e) => {
+                log::error!("BLE init failed: {e:?}");
+                None
+            }
+        }
+    };
+
     #[cfg(feature = "board-m5stick")]
     let mut buttons: Option<ButtonHandler> = {
         let front = esp_idf_hal::gpio::PinDriver::input(
@@ -331,6 +352,15 @@ pub fn main() {
                         line.clear();
                     }
                 }
+            }
+        }
+
+        #[cfg(feature = "ble")]
+        if let Some(ref bt) = ble_transport {
+            while let Some(cmd) = bt.poll_command() {
+                log::info!("BLE cmd: {cmd}");
+                let response = process_ble_command(&cmd, &service, &config);
+                bt.send_response(&response);
             }
         }
 
@@ -1092,4 +1122,78 @@ fn run_hwtest<I2C>(
         }
     }
     serial.line("[HWTEST] END");
+}
+
+#[cfg(feature = "ble")]
+fn process_ble_command<S: crate::service::BoltyService>(
+    cmd: &str,
+    service: &Arc<Mutex<S>>,
+    config: &Arc<Mutex<BoltyConfig>>,
+) -> heapless::String<512> {
+    use crate::commands::{Command, parse_command};
+    use crate::service::WorkflowResult;
+    use crate::workflow::dispatch_command;
+
+    let mut response = heapless::String::<512>::new();
+
+    match parse_command(cmd) {
+        Ok(command) => {
+            let (mut svc, mut cfg) = match (service.lock(), config.lock()) {
+                (Ok(s), Ok(c)) => (s, c),
+                _ => {
+                    let _ = response.push_str("[FAIL] service unavailable");
+                    return response;
+                }
+            };
+
+            match &command {
+                Command::Uid => {
+                    let result = dispatch_command(command.clone(), &mut svc, &mut cfg);
+                    svc.sync_from(&cfg);
+                    match result {
+                        WorkflowResult::Success => {
+                            let _ = write!(response, "[OK] uid handled");
+                        }
+                        _ => {
+                            let _ = write!(response, "[FAIL] {:?}", result);
+                        }
+                    }
+                }
+                Command::Status => {
+                    let status = svc.get_status();
+                    let _ = write!(
+                        response,
+                        "[OK] nfc={} uid={}",
+                        status.nfc_ready,
+                        status
+                            .last_uid
+                            .map(|u| format!("{:02X?}", u))
+                            .unwrap_or_default()
+                    );
+                }
+                Command::Burn | Command::Wipe => {
+                    let result = dispatch_command(command.clone(), &mut svc, &mut cfg);
+                    svc.sync_from(&cfg);
+                    match result {
+                        WorkflowResult::Success => {
+                            let _ = write!(response, "[OK] {:?}", command);
+                        }
+                        _ => {
+                            let _ = write!(response, "[FAIL] {:?}", result);
+                        }
+                    }
+                }
+                _ => {
+                    let result = dispatch_command(command, &mut svc, &mut cfg);
+                    svc.sync_from(&cfg);
+                    let _ = write!(response, "result: {:?}", result);
+                }
+            }
+        }
+        Err(_) => {
+            let _ = write!(response, "[FAIL] unknown command: {cmd}");
+        }
+    }
+
+    response
 }

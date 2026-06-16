@@ -27,6 +27,9 @@ mod rest;
 #[cfg(feature = "ota")]
 mod ota;
 
+#[cfg(all(target_arch = "xtensa", feature = "ble"))]
+mod ble;
+
 #[cfg(all(target_arch = "xtensa", feature = "display-st7789"))]
 mod display;
 
