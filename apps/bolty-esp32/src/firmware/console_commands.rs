@@ -515,6 +515,10 @@ fn print_command_result<I2C>(
         }
         (Command::SetKeys(_), WorkflowResult::Success) => {
             serial.ok("keys staged");
+            serial.line("[ADVANCED] Raw keys override the standard Bolt Card");
+            serial.line("deterministic key derivation (boltcard.org spec).");
+            serial.line("Prefer: 'issuer <hex>' + 'burn' for correct key derivation.");
+            serial.line("       from CardKey = CMAC(IssuerKey, 2D003F75 || UID || ver)");
             set_display_ok(command_name(command), "keys staged");
         }
         (Command::SetIssuer(_), WorkflowResult::Success) => {
