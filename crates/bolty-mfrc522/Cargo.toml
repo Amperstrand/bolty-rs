@@ -13,5 +13,8 @@ mfrc522 = { workspace = true }
 embedded-hal = "=1.0.0"
 log = "=0.4.29"
 
+[dev-dependencies]
+iso14443 = { workspace = true, features = ["std"] }
+
 [lints]
 workspace = true
