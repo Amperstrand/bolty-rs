@@ -10,6 +10,7 @@ pub struct PcscTransport {
     card: pcsc::Card,
     reader_name: String,
     protocol: pcsc::Protocols,
+    #[allow(dead_code)]
     ctx: pcsc::Context,
 }
 
@@ -101,6 +102,7 @@ impl PcscTransport {
     /// Uses SCardDisconnect(SCARD_UNPOWER_CARD) + SCardConnect() which forces
     /// a full new RF field activation. SCardReconnect(SCARD_UNPOWER_CARD) does
     /// NOT work on ACS ACR1252 — it keeps the card in the same ISO 14443 session.
+    #[allow(dead_code)]
     pub fn power_cycle(self) -> Result<Self, PcscError> {
         let reader_cstr = std::ffi::CString::new(self.reader_name.as_str()).unwrap_or_default();
         let ctx = self.ctx;
