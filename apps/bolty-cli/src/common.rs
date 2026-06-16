@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use bolty_ntag::{PiccData, SessionError};
 
-const AUTH_RETRY_DELAYS: &[u64] = &[5, 15, 30];
+const AUTH_RETRY_DELAYS: &[u64] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 10;
 
 static TOTAL_AUTH_FAILURES: AtomicU32 = AtomicU32::new(0);
@@ -74,10 +74,9 @@ impl AuthRetry {
     pub(crate) fn exhausted_msg() -> String {
         format!(
             "authentication failed after {} attempts — auth delay persists.\n\
-             The NTAG424 tracks consecutive failures (SeqFailCtr). After 50, the card\n\
-             blocks auth (91AD). Each failed attempt makes it worse.\n\n\
-             Recovery: remove the card from the reader for 2 seconds, place it back,\n\
-             then retry immediately with the correct key.",
+             The NTAG424 datasheet says 'keep trying until full delay is spent'.\n\
+             This means sending AuthFirst repeatedly within the SAME connection.\n\
+             If this fails, the card may need a different key — use scan-keys.",
             1 + AUTH_RETRY_DELAYS.len()
         )
     }
@@ -101,8 +100,9 @@ where
         bolty_ntag::Error::AuthenticationDelay => {
             anyhow::anyhow!(
                 "authentication delay (91AD) — too many consecutive failures.\n\
-                 Recovery: remove card from reader for 2 seconds, place back, retry.\n\
-                 Do NOT keep retrying with the wrong key — each failure makes it worse."
+                 Recovery: the NTAG424 datasheet says 'keep trying until full delay\n\
+                 is spent'. Retry AuthFirst rapidly within the same PCSC connection.\n\
+                 Do NOT create new connections between retries."
             )
         }
         bolty_ntag::Error::WrongCardType { vendor, card_type } => anyhow::anyhow!(

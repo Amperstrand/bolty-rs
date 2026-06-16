@@ -116,28 +116,32 @@ management but can still be read (read=Free). Use as read-only test artifact.
 5. **Add `try-key` command to bolty-cli** — test specific raw key without full wipe.
 6. **Track which tool burned each card** — log UID + tool + key type in audit log.
 
-### Auth Delay Recovery (Empirically Verified T4)
+### Auth Delay Recovery (Empirically Verified)
 
-SeqFailCtr is **volatile (RAM)** — resets when card loses RF power.
+SeqFailCtr is **non-volatile (EEPROM)** — it does NOT reset on power loss,
+RF field removal, or reader reboot. Power cycling does NOT clear it.
 
-**Software recovery (no physical card removal needed):**
-```bash
-# Cut USB power to the reader, which cuts the RF antenna:
-echo 1-2 | sudo tee /sys/bus/usb/drivers/usb/unbind
-sleep 5
-echo 1-2 | sudo tee /sys/bus/usb/drivers/usb/bind
-sleep 3
-# SeqFailCtr is now 0 — auth delay cleared.
-```
+**Recovery: "Keep trying" (per NT4H2421Gx datasheet)**
+
+The NTAG424 product data sheet states for AUTHENTICATION_DELAY (0xAD):
+*"Currently not allowed to authenticate. Keep trying until full delay is spent."*
+
+This means: send AuthFirst **repeatedly within the same PCSC connection**.
+Each attempt "spends" part of the delay. Empirically verified: 2-5 rapid
+AuthFirst commands clears the delay.
+
+**CRITICAL: Each new PCSC connection resets the delay state.** Creating a new
+connection per retry does NOT work. The retries must happen within a single
+transport session.
 
 **What does NOT work:**
-- New PCSC connection (warm reset) — card stays powered
+- New PCSC connection (warm reset) — resets delay state
 - `systemctl restart pcscd` — reader keeps antenna on
-- `SCARD_UNPOWER_CARD` — ineffective on ACS ACR1252
-- USB `authorized=0` — VBUS stays powered
-
-**Physical recovery:**
-Remove card from reader, wait 2 seconds, place back. Always works.
+- `SCARD_UNPOWER_CARD` — does not cut RF on ACS ACR1252
+- USB driver unbind/bind — device stays in sysfs, VBUS stays powered
+- USB root hub power cycle — reader reboots but SeqFailCtr persists
+- Physical card removal — does NOT clear SeqFailCtr (non-volatile)
+- Waiting (any duration) — delay is NOT time-based
 
 ### Tools for Recovery
 

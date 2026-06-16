@@ -20,51 +20,44 @@ Each test verifies a specific hypothesis. Tests are categorized by danger level.
 | T14 | ⏸ SKIP | GetKeySettings byte layout — lower priority |
 | T15 | ✅ PASS | Warm reset does NOT clear delay (PCSC reconnect keeps card powered) |
 
-### Key Empirical Findings
+### Key Empirical Findings (Corrected 2026-06-16)
 
 1. **SeqFailCtr threshold is EXACTLY 50** — attempt 50 returns 91AE (processed),
    attempt 51 returns 91AD (blocked). No variance.
 
-2. **SeqFailCtr is VOLATILE (RAM)** — confirmed by T4. USB driver unbind/bind
-   cuts the reader's antenna, removing RF power from the card. SeqFailCtr
-   resets to 0 on power loss.
+2. **SeqFailCtr is NON-VOLATILE (EEPROM)** — persists across ALL power cycling
+   methods tested: PCSC reconnect, pcscd restart, SCARD_UNPOWER_CARD
+   (reconnect and disconnect+connect), USB driver unbind/bind, USB root hub
+   power cycle. Physical card removal has NOT been verified but the spec
+   strongly implies it would also NOT clear SeqFailCtr.
 
-3. **Software-based RF cycling on ACS ACR1252**:
+3. **Auth delay recovery: "Keep trying" within a single PCSC connection.**
+   The NT4H2421Gx product data sheet states: *"AUTHENTICATION_DELAY ADh:
+   Currently not allowed to authenticate. Keep trying until full delay is
+   spent."* Empirically verified: 2-5 rapid AuthFirst commands within a SINGLE
+   PCSC connection clears the delay. Each new PCSC connection RESETS the delay
+   state, so retrying via new connections does NOT work.
 
-   **Confirmed working:**
-   - USB driver unbind/bind → **WORKS** (cuts reader power, clears SeqFailCtr)
-   - Physical card removal → **WORKS** (always works, cuts RF field)
+4. **T4 was misattributed.** The original T4 "success" from USB driver unbind
+   was actually caused by the pyscard script sending AuthFirst within a single
+   connection before the bolty-cli test. The USB unbind was coincidental.
 
-   **Might work (not verified — pyscard protocol issues after reconnect):**
-   - `SCardDisconnect(SCARD_UNPOWER_CARD)` + `SCardConnect()` — the documented
-     PCSC method for unpowering cards. Attempted via pyscard but transmit
-     returned 917E (DESFire protocol framing issue after reconnect). Needs
-     testing through Rust PcscTransport with proper protocol handling.
-   - **This is the proper PCSC way — likely works when implemented correctly.**
-
-   **Confirmed NOT working:**
-   - New PCSC connection / `SCARD_RESET_CARD` (warm reset) → 91AD persists
-   - `systemctl restart pcscd` → 91AD persists (reader keeps antenna powered)
-   - USB `authorized=0` → 91AD persists (VBUS stays powered)
-   - `SCardControl(CM_IOCTL_GET_FEATURE_REQUEST)` → `SCARD_E_UNSUPPORTED_FEATURE`
-   - `uhubctl` → no compatible USB hubs (no per-port power switching)
-
-   **TODO: Add `--reset-card` flag to bolty-cli** that calls
-   `SCardDisconnect(SCARD_UNPOWER_CARD)` + reconnect through Rust
-   PcscTransport. This would verify the documented PCSC unpower method.
-
-4. **Per-key counters ARE independent** — 10 failed K0 auths do not affect
+5. **Per-key counters ARE independent** — 10 failed K0 auths do not affect
    K1 auth. K1 still returns 91AE (processed) when K0's SeqFailCtr = 10.
 
-5. **SDM works during K0 auth delay** — SDM uses K1 (PICC encrypt) and K2
+6. **SDM works during K0 auth delay** — SDM uses K1 (PICC encrypt) and K2
    (MAC), which are independent of K0. During auth delay:
    - p=/c= values change on every read ✅
    - Diagnose shows `mac=true` ✅
    - Card state correctly shows PROVISIONED ✅
    - A card in auth delay can still process payments but can't be re-keyed.
 
-6. **Free read works during auth delay** — diagnose successfully reads UID,
+7. **Free read works during auth delay** — diagnose successfully reads UID,
    version, file settings, and NDEF content. Only K0 authentication is blocked.
+
+8. **SCARD_UNPOWER_CARD does not cut RF on ACS ACR1252.** Both
+   `SCardReconnect(UnpowerCard)` and `SCardDisconnect(UnpowerCard) +
+   SCardConnect()` return success but do not interrupt the RF field.
 
 ## Safety Classification
 

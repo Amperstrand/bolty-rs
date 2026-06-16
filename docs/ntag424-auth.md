@@ -105,14 +105,22 @@ Tracks **consecutive** failures since the last successful authentication.
 
 **Threshold behavior:**
 - **0-49**: Normal operation. AuthFirst returns `91AF` (challenge).
-- **50-99**: Auth delay active. AuthFirst returns `91AD`. Delay increases gradually.
-- **100-255**: Maximum delay. AuthFirst still returns `91AD`.
+- **50-255**: Auth delay active. AuthFirst returns `91AD`. The card says:
+  "Keep trying until full delay is spent" (NT4H2421Gx datasheet §10.4).
 
-**Confirmed volatile (RAM):** Resets when card loses RF power. Verified
-empirically in T4 — USB driver unbind/bind (`echo 1-2 | sudo tee
-/sys/bus/usb/drivers/usb/unbind && sleep 5 && echo 1-2 | sudo tee
-/sys/bus/usb/drivers/usb/bind`) cuts reader antenna and clears auth delay.
-Physical card removal also works. PCSC warm reset and pcscd restart do NOT.
+**Non-volatile (EEPROM):** SeqFailCtr persists across power cycles and RF field
+removal. Power cycling the reader does NOT clear it. Physical card removal does
+NOT clear it. The delay is NOT time-based — waiting does not clear it.
+
+**Recovery: "Keep trying"** — the NT4H2421Gx product data sheet states for
+AUTHENTICATION_DELAY (0xAD): *"Currently not allowed to authenticate. Keep
+trying until full delay is spent."*
+
+This means the reader must send AuthFirst **repeatedly within the same PCSC
+connection** (not new connections). Each attempt "spends" part of the delay.
+Empirically verified: 2-5 rapid AuthFirst commands within a single connection
+clears the delay. Each new PCSC connection resets the delay state, so
+creating a new connection per retry does NOT work.
 
 #### TotFailCtr — Total Failure Counter (2 bytes)
 
@@ -150,12 +158,15 @@ Tracks cumulative time spent in delayed responses during auth delay.
 | Action | SeqFailCtr | TotFailCtr | SpentTimeCtr |
 |---|---|---|---|
 | Successful auth | → 0 | -= 10 | unchanged |
-| Power cycle (RF field removal) | → 0 (likely) | unchanged | → 0 (likely) |
+| "Keep trying" (rapid AuthFirst in same connection) | delay clears | unchanged | increases |
+| Power cycle (reader unplug, card removal) | **unchanged** | unchanged | unchanged |
 | `Cmd.ChangeKey` | → 0 | → 0 | → 0 |
-| No action (waiting) | unchanged | unchanged | unchanged |
+| Waiting (no commands) | **unchanged** | unchanged | unchanged |
 
-> **Important:** Waiting does NOT decrease any counter. Only successful auth or
-> ChangeKey can reduce TotFailCtr. Power cycling only helps with SeqFailCtr.
+> **Critical correction:** SeqFailCtr is NON-VOLATILE. Power cycling does NOT
+> clear it. Waiting does NOT clear it. The ONLY recovery is "keep trying" —
+> sending AuthFirst repeatedly within the same PCSC connection until the delay
+> is "spent" (per NT4H2421Gx datasheet).
 
 ## 3. Card Lifecycle States
 
