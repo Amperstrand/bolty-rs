@@ -16,7 +16,7 @@ pub(crate) fn record_auth_failure() {
     if count >= CIRCUIT_BREAKER_THRESHOLD {
         eprintln!("🛑 CIRCUIT BREAKER: {count} total auth failures. Aborting to protect the card.");
         eprintln!("   TotFailCtr permanently locks the key at 1000 failures. Each attempt adds 1.");
-        eprintln!("   Recovery: power cycle card, use scan-keys to find the correct key.");
+        eprintln!("   Recovery: use try-key to clear delay (rapid retry), then scan-keys.");
         std::process::exit(6);
     }
 }

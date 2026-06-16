@@ -70,10 +70,9 @@ where
             }
             AuthResult::AuthDelay => {
                 println!("  ⚠️  auth delay (91AD) — stopping scan");
-                println!("  Remove card from reader for 2 seconds, place back,");
-                println!("  then re-run scan-keys.");
+                println!("  Use try-key to clear delay (rapid retry within same connection).");
                 audit::log_event("scan-keys: AUTH DELAY detected, aborting");
-                anyhow::bail!("auth delay triggered during scan — power cycle card and retry");
+                anyhow::bail!("auth delay triggered during scan — use try-key to clear delay");
             }
             AuthResult::Error(e) => {
                 println!("  ⚠️  error: {e}");

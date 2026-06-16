@@ -76,8 +76,10 @@ Three per-key counters track authentication failures:
 ### Recovery Plan (When Card Is Back On Reader)
 
 **Step 1 — Power cycle the card:**
-Remove card from reader, wait 2 seconds, place back. This should reset SeqFailCtr
-to 0, clearing the immediate auth delay.
+Remove card from reader, wait 2 seconds, place back. **This does NOT clear
+SeqFailCtr** (non-volatile). Instead, use "keep trying" — send AuthFirst
+repeatedly within the same PCSC connection (2-5 attempts clears the delay).
+The bolty-cli `try-key` command does this automatically (up to 20 rapid retries).
 
 **Step 2 — Try static test key FIRST:**
 ```bash

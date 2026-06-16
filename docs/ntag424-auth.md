@@ -464,7 +464,109 @@ command. You can only infer the state from behavior:
 - `91AD` → SeqFailCtr ≥ 50
 - Permanent auth failure across power cycles → TotFailCtr ≥ 1000
 
-## 9. References
+## 9. Gotchas & Misconceptions
+
+Everything below was learned the hard way — through hours of debugging,
+wrong assumptions, and empirical testing on real NTAG424 DNA hardware.
+
+### Misconception 1: "Remove the card from the reader to clear auth delay"
+
+**WRONG.** SeqFailCtr is non-volatile (EEPROM). Removing the card from the
+RF field does NOT reset it. We tested: PCSC reconnect, pcscd restart,
+SCARD_UNPOWER_CARD, USB driver unbind, USB root hub power cycle — none
+cleared the delay.
+
+**Correct:** Send AuthFirst repeatedly within the same PCSC connection
+("keep trying"). Clears in 2-5 attempts.
+
+### Misconception 2: "Wait for the delay to expire"
+
+**WRONG.** The delay is NOT time-based. We waited 30+ minutes with zero
+commands sent — delay persisted. The AN12196 mentions SpentTimeCtr but
+it tracks delay units consumed by "keep trying", not wall-clock time.
+
+### Misconception 3: "SCARD_UNPOWER_CARD cuts RF power"
+
+**WRONG on ACS ACR1252.** Both `SCardReconnect(UnpowerCard)` and
+`SCardDisconnect(UnpowerCard) + SCardConnect()` return success but do NOT
+cut the reader's RF antenna. The antenna stays energized. This may differ
+on other readers, but on the ACR1252 with Linux CCID, PCSC power commands
+are purely logical — they don't affect the physical RF field.
+
+### Misconception 4: "USB driver unbind cuts reader power"
+
+**WRONG.** `echo 1-2 > /sys/bus/usb/drivers/usb/unbind` removes the USB
+device *driver* but the device stays in sysfs with VBUS power. The reader's
+antenna remains active. We confirmed this by checking `/sys/bus/usb/devices/`
+during unbind — the device entry persisted.
+
+### Misconception 5: "Each new PCSC connection retries the auth"
+
+**WRONG and critical.** Each new `SCardConnect()` resets the card's delay
+state. If you get 91AD, disconnect, reconnect, and try again — you start
+from scratch. The delay will never clear this way. **All retries must happen
+within the same PCSC connection**, without disconnecting.
+
+### Misconception 6: "Auth delay bricks the card"
+
+**PARTIALLY WRONG.** Auth delay (91AD) is temporary and always recoverable
+via "keep trying". What IS permanent is TotFailCtr ≥ 1000 — that permanently
+locks the key with no recovery. But reaching TotFailCtr=1000 requires 1000
+total failures across all sessions, which is hard to reach accidentally.
+
+### Gotcha 1: pyscard needs Le=00 for DESFire commands
+
+The pyscard `SCardTransmit` returns 917E (LENGTH_ERROR) for NTAG424
+AuthFirst unless the APDU includes `Le=00` at the end:
+```
+[0x90, 0x71, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]  ← Le=00 at end
+```
+The Rust `pcsc` crate handles this automatically. This caused hours of
+confusion — pyscard appeared broken when it was just a missing Le byte.
+
+### Gotcha 2: ACS ACR1252 has two reader slots
+
+pyscard's `readers()` returns both `[ACR1252 Dual Reader SAM]` and
+`[ACR1252 Dual Reader PICC]`. Always select the PICC slot for card
+operations. Connecting to the SAM slot fails with "NoCardException".
+
+### Gotcha 3: M5StickC polling bug causes auth delay
+
+The M5StickC firmware's background polling loop authenticates every 500ms.
+After a wipe, it tries stale keys against the factory card, accumulating
+~2 failures/second. After 25 seconds (50 failures), the card enters auth
+delay. Fixed in commit `18a9b37` — polling now uses lightweight ISO 14443A
+detection without authentication for already-announced cards.
+
+### Gotcha 4: Card can have unknown keys after burn/wipe cycles
+
+A card burned by one tool (e.g., M5StickC with static test keys) cannot
+be recovered by another tool using different keys (e.g., bolty-cli with
+derived keys). The card's K0 is whatever the burning tool wrote. Use
+`scan-keys` to try common candidates, or `try-key` with specific raw keys.
+
+## 10. Empirically Verified Facts (2026-06-16)
+
+All claims below were tested on real NTAG424 DNA hardware (card UID
+`04866ffa967380`, ACS ACR1252 reader, Ubuntu 22.04, pcscd CCID).
+
+| Claim | Source | Status |
+|---|---|---|
+| SeqFailCtr threshold is exactly 50 | T3 empirical | ✅ Verified |
+| SeqFailCtr is non-volatile (EEPROM) | T4 empirical | ✅ Verified |
+| "Keep trying" clears delay in 2-5 attempts | pyscard + bolty-cli | ✅ Verified |
+| Per-key counters are independent | T6 empirical | ✅ Verified |
+| SDM works during auth delay | T8 empirical | ✅ Verified |
+| Free read works during auth delay | T7 empirical | ✅ Verified |
+| Warm reset does NOT clear delay | T15 empirical | ✅ Verified |
+| SCARD_UNPOWER_CARD does NOT cut RF | Rust + pyscard | ✅ Verified |
+| USB unbind does NOT cut RF | sysfs inspection | ✅ Verified |
+| Waiting does NOT clear delay | 30+ min test | ✅ Verified |
+| New connections reset delay state | bolty-cli vs pyscard | ✅ Verified |
+| TotFailCtr permanent lock at 1000 | NT4H2421Gx datasheet | 📖 Spec only |
+| Physical card removal does NOT clear delay | NT4H2421Gx datasheet + spec logic | 📖 Inferred |
+
+## 11. References
 
 - NXP AN12196 §7.4 — FailedAuthentications Counter feature
 - NXP NTAG424 DNA Product Data Sheet Rev. 3.0 §10.5 — AuthenticateEV2First
