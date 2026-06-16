@@ -123,7 +123,33 @@ CONFIG_ESP_HTTPS_SERVER_ENABLE=y
 
 ## Comparison with Original C++ Bolty
 
-(Research pending — see background task bg_0b2a4c7e)
+The original C++ Bolty ([bitcoin-ring/Bolty](https://github.com/bitcoin-ring/Bolty), commit `9c4da96`) has an explicitly weak security model. The author's own README states:
+
+> *"currently not so much, so be careful"*
+
+### C++ Bolty Security Model
+
+| Aspect | C++ Bolty | bolty-rs | Improvement |
+|---|---|---|---|
+| **WiFi protocol** | HTTP only (port 80) | HTTP (bearer token) | bolty-rs has token auth on all endpoints |
+| **Auth on burn/wipe** | **NONE** — unprotected | Bearer token required | ✅ bolty-rs secures ALL endpoints |
+| **Auth on setup** | Basic Auth (default: bolty/bolty) | Bearer token (user-configurable) | ✅ No default credentials |
+| **Key storage** | **Plain text** on SPIFFS | **RAM only**, zeroized on drop | ✅ Keys never persisted |
+| **Serial key dumps** | Yes — `dumpconfig()` prints K0-K4 | No — Debug trait redacts | ✅ No key leakage |
+| **BLE** | Not implemented | Read-only whitelist (opt-in) | bolty-rs has BLE with security |
+| **OTA** | Not implemented | HTTPS download (no sig yet) | bolty-rs has OTA (needs signing) |
+| **Backup encryption** | Unencrypted binary dump | N/A (no backup feature) | — |
+
+### What C++ Bolty gets right (that we should match)
+- Physical button access (no PIN needed for trusted local operation)
+- WiFi AP mode with random password for initial setup
+
+### What bolty-rs already does better
+- Token auth on ALL REST endpoints (C++ only protects setup pages)
+- Keys in RAM only (C++ stores plain text on flash)
+- No serial key dumps (C++ prints all keys to console)
+- BLE read-only whitelist (C++ has no BLE)
+- Constant-time token comparison (C++ uses plaintext strcmp)
 
 ## Security Audit Checklist
 
