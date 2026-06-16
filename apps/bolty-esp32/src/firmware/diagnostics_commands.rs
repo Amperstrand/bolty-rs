@@ -14,7 +14,7 @@ use super::service::Esp32BoltyService;
 use super::utils::{CounterDisplay, diagnose_state_label, ndef_ascii, push_uid_hex};
 
 pub(super) fn print_help(serial: &mut SerialConsole) {
-    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
+    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check crashlog");
     #[cfg(feature = "board-m5stick")]
     serial.line("Buttons: button-mode [simple|legacy]");
     #[cfg(feature = "wifi")]

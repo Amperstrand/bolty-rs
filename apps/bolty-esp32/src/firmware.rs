@@ -187,6 +187,30 @@ pub fn main() {
     let mut heartbeat_at = millis();
     let mut card_announced = false;
 
+    let boot_count = nvs::load_boot_count().saturating_add(1);
+    nvs::save_boot_count(boot_count);
+
+    let reset_reason = unsafe { esp_idf_sys::esp_reset_reason() };
+    let reset_label = match reset_reason {
+        1 => "POWERON",
+        3 => "SW_RESET",
+        4 => "PANIC",
+        5 => "INT_WDT",
+        6 => "TASK_WDT",
+        7 => "WDT",
+        8 => "DEEPSLEEP",
+        9 => "BROWNOUT",
+        _ => "UNKNOWN",
+    };
+
+    let abnormal = matches!(reset_reason, 4 | 5 | 6 | 7 | 9);
+    if abnormal {
+        nvs::save_crash_info(reset_reason as u8, boot_count.saturating_sub(1));
+        log::warn!("ABNORMAL RESET: {} (boot {})", reset_label, boot_count - 1);
+    }
+
+    serial.line(&format!("[BOOT] #{boot_count} reason={reset_label}"));
+
     // Hardware diagnostics on serial console (visible even if boot logs were missed)
     {
         let mut diag = String::<256>::new();
@@ -271,7 +295,9 @@ pub fn main() {
                 b'\r' => {}
                 b'\n' => {
                     if !line.is_empty() {
-                        if line.trim().eq_ignore_ascii_case("hwtest") {
+                        if line.trim().eq_ignore_ascii_case("crashlog") {
+                            run_crashlog(&mut serial);
+                        } else if line.trim().eq_ignore_ascii_case("hwtest") {
                             run_hwtest(&mut serial, &mut buttons, &service);
                         } else {
                             handle_line(
@@ -816,6 +842,43 @@ fn neopixel_off(pin: esp_idf_hal::gpio::Gpio27) {
     if let Err(e) = tx.send_and_wait(encoder, &black, &TransmitConfig::default()) {
         log::warn!("NeoPixel write failed: {e:?}");
     }
+}
+
+fn run_crashlog(serial: &mut SerialConsole) {
+    let boot_count = nvs::load_boot_count();
+    let reset_reason = unsafe { esp_idf_sys::esp_reset_reason() };
+
+    serial.line("[CRASHLOG]");
+    serial.line(&format!("  Boot count: {}", boot_count));
+    serial.line(&format!(
+        "  This boot reason: {}",
+        match reset_reason {
+            1 => "POWERON",
+            3 => "SW_RESET",
+            4 => "PANIC",
+            5 => "INT_WDT",
+            6 => "TASK_WDT",
+            7 => "WDT",
+            8 => "DEEPSLEEP",
+            9 => "BROWNOUT",
+            _ => "UNKNOWN",
+        }
+    ));
+
+    if let Some((reason, prev_boot)) = nvs::load_crash_info() {
+        let label = match reason {
+            4 => "PANIC",
+            5 => "INT_WDT",
+            6 => "TASK_WDT",
+            7 => "WDT",
+            9 => "BROWNOUT",
+            _ => "UNKNOWN",
+        };
+        serial.line(&format!("  Last crash: {} on boot #{}", label, prev_boot));
+    } else {
+        serial.line("  Last crash: none");
+    }
+    serial.line("[CRASHLOG] END");
 }
 
 fn run_hwtest<I2C>(
