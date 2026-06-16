@@ -3,6 +3,45 @@
 Systematic hardware verification of every claim in `docs/ntag424-auth.md`.
 Each test verifies a specific hypothesis. Tests are categorized by danger level.
 
+## Test Results Summary (2026-06-16)
+
+| Test | Status | Result |
+|---|---|---|
+| T1 | ✅ PASS | Factory auth works, card BLANK |
+| T2 | ✅ PASS | Wrong key → 91AE, recovery with correct key → 9100 |
+| T3 | ✅ PASS | **Threshold is EXACTLY 50** (attempts 1-50 = 91AE, 51+ = 91AD) |
+| T4 | 🔶 BLOCKED | All software RF cycling failed. Needs physical card removal. |
+| T5 | ⏸ PENDING | Blocked on T4 |
+| T6 | ⏸ PENDING | Blocked on T4 |
+| T7 | ✅ PASS | Free read works during delay (diagnose returns full card info) |
+| T8 | ⏸ PENDING | Blocked on T4 (needs provisioned card in delay) |
+| T9-T12 | ⏸ PENDING | Blocked on T4 |
+| T13 | 🚫 DO NOT RUN | Permanent lock — irreversible |
+| T14 | ⏸ PENDING | |
+| T15 | ✅ PASS | Warm reset does NOT clear delay (PCSC reconnect keeps card powered) |
+
+### Key Empirical Findings
+
+1. **SeqFailCtr threshold is EXACTLY 50** — attempt 50 returns 91AE (processed),
+   attempt 51 returns 91AD (blocked). No variance.
+
+2. **SeqFailCtr accumulates across PCSC connections** — each bolty-cli invocation
+   creates a new PCSC connection, but the card stays powered and SeqFailCtr
+   keeps climbing. The RF field is continuous across connections.
+
+3. **Software RF power cycling does NOT work on ACS ACR1252**:
+   - New PCSC connection (warm reset) → 91AD persists
+   - `systemctl restart pcscd` → 91AD persists
+   - `SCARD_UNPOWER_CARD` → unsupported or ineffective
+   - CCID escape commands → `SCARD_E_UNSUPPORTED_FEATURE`
+   - **Only physical card removal can cut RF power**
+
+4. **Free read works during auth delay** — diagnose successfully reads UID,
+   version, file settings, and NDEF content. Only K0 authentication is blocked.
+
+5. **Card state correctly classified** — `diagnose` reports `AUTH_DELAY` when
+   factory K0 returns 91AD.
+
 ## Safety Classification
 
 | Level | Symbol | Description |
