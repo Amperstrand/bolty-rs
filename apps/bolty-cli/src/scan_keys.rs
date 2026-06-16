@@ -6,7 +6,7 @@ use bolty_core::uid::CardUid;
 use bolty_ntag::{KeyNumber, Session, Transport};
 
 use crate::audit;
-use crate::common::gen_rnd_a;
+use crate::common::{gen_rnd_a, record_auth_failure};
 
 pub async fn cmd_scan_keys<T: Transport>(
     transport: &mut T,
@@ -64,6 +64,7 @@ where
                 return Ok(());
             }
             AuthResult::WrongKey => {
+                record_auth_failure();
                 println!("  ❌ rejected");
                 audit::log_event(&format!("scan-keys: REJECTED {label}"));
             }

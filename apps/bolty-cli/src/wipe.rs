@@ -7,6 +7,7 @@ use bolty_ntag::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 use crate::audit;
 use crate::common::{
     AuthRetry, gen_rnd_a, is_auth_delay, is_sdm_functionally_active, map_ntag_error,
+    record_auth_failure,
 };
 
 pub async fn cmd_wipe<T: Transport>(
@@ -114,7 +115,10 @@ where
                     }
                     None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
                 },
-                Err(_) => break false,
+                Err(_) => {
+                    record_auth_failure();
+                    break false;
+                }
             }
         };
         if !result {

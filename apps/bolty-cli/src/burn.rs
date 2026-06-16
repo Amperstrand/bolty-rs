@@ -7,7 +7,7 @@ use bolty_ntag::{
 };
 
 use crate::audit;
-use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error};
+use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error, record_auth_failure};
 
 pub async fn cmd_burn<T: Transport>(
     transport: &mut T,
@@ -95,7 +95,10 @@ where
                         }
                         None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
                     },
-                    Err(_) => break false,
+                    Err(_) => {
+                        record_auth_failure();
+                        break false;
+                    }
                 }
             }
         };
@@ -120,7 +123,10 @@ where
                         }
                         None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
                     },
-                    Err(_) => break false,
+                    Err(_) => {
+                        record_auth_failure();
+                        break false;
+                    }
                 }
             };
 

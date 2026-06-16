@@ -1,8 +1,30 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use bolty_ntag::{PiccData, SessionError};
 
 const AUTH_RETRY_DELAYS: &[u64] = &[5, 15, 30];
+const CIRCUIT_BREAKER_THRESHOLD: u32 = 10;
+
+static TOTAL_AUTH_FAILURES: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn record_auth_failure() {
+    let count = TOTAL_AUTH_FAILURES.fetch_add(1, Ordering::SeqCst) + 1;
+    if count == 3 {
+        eprintln!("  ⚠️  {count} total auth failures in this session. TotFailCtr is accumulating.");
+    }
+    if count >= CIRCUIT_BREAKER_THRESHOLD {
+        eprintln!("🛑 CIRCUIT BREAKER: {count} total auth failures. Aborting to protect the card.");
+        eprintln!("   TotFailCtr permanently locks the key at 1000 failures. Each attempt adds 1.");
+        eprintln!("   Recovery: power cycle card, use scan-keys to find the correct key.");
+        std::process::exit(6);
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn auth_failure_count() -> u32 {
+    TOTAL_AUTH_FAILURES.load(Ordering::SeqCst)
+}
 
 /// Returns `true` when SDM has at least one active feature (PICC data or
 /// file-read MAC).
