@@ -13,7 +13,11 @@ pub struct Pn532Transport<PN532, RST> {
     uid: Option<Vec<u8>>,
 }
 
-impl<PN532, RST> Pn532Transport<PN532, RST> {
+impl<PN532, RST> Pn532Transport<PN532, RST>
+where
+    PN532: pn532_transport::Pn532Ops,
+    RST: embedded_hal::digital::OutputPin,
+{
     pub fn new(device: Pn532Device<PN532, RST>) -> Self {
         Self { device, uid: None }
     }
@@ -43,7 +47,11 @@ impl<PN532, RST> Pn532Transport<PN532, RST> {
     }
 }
 
-impl<PN532, RST> Transport for Pn532Transport<PN532, RST> {
+impl<PN532, RST> Transport for Pn532Transport<PN532, RST>
+where
+    PN532: pn532_transport::Pn532Ops,
+    RST: embedded_hal::digital::OutputPin,
+{
     type Error = Error;
     type Data = Vec<u8>;
 
