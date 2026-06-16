@@ -1585,7 +1585,6 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 [[package]]
 name = "mfrc522"
 version = "0.8.0"
-source = "git+https://github.com/Amperstrand/mfrc522-rs.git?branch=ai-experiments#bc3ebfb1bd0884eabba9dd20f59b602ccc6b137b"
 dependencies = [
  "embedded-hal 1.0.0",
  "heapless 0.8.0",

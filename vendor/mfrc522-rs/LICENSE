@@ -1,0 +1,7 @@
+MIT OR Apache-2.0
+
+This crate is a fork of the upstream `mfrc522` Rust driver (v0.8.0),
+with patches for ESP32 I2C communication, timer configuration, and
+register access patterns.
+
+SPDX-License-Identifier: MIT OR Apache-2.0
