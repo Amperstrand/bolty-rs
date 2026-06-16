@@ -7,7 +7,7 @@ use core::time::Duration;
 
 use esp_idf_hal::{
     delay::FreeRtos,
-    i2c::{APBTickType, I2cConfig, I2cDriver},
+    i2c::{I2cConfig, I2cDriver},
     peripherals::Peripherals,
     units::FromValueType,
 };
@@ -135,9 +135,7 @@ pub fn main() {
         peripherals.i2c0,
         i2c_sda,
         i2c_scl,
-        &I2cConfig::new()
-            .baudrate(I2C_BAUDRATE_HZ.Hz())
-            .timeout(APBTickType::from(Duration::from_millis(500))),
+        &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
     ) {
         Ok(i2c) => i2c,
         Err(e) => fatal_halt(&format!("I2C0 init failed: {e:?}")),
