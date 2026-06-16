@@ -30,35 +30,41 @@ where
     println!("\nTrying K{key_no} = {} ...", crate::to_hex(key));
     audit::log_event(&format!("try-key: K{key_no} = {}", crate::to_hex(key)));
 
-    let rnd_a = gen_rnd_a()?;
-    match Session::default()
-        .authenticate_aes(transport, target_key, key, rnd_a)
-        .await
-    {
-        Ok(_) => {
-            println!("✅ Key accepted!");
-            if key_no == 0 {
-                println!("Card can be wiped with this key. Run:");
-                println!("  bolty-cli wipe --issuer-key <derive-from-this-key>");
+    for attempt in 1..=20u32 {
+        let rnd_a = gen_rnd_a()?;
+        match Session::default()
+            .authenticate_aes(transport, target_key, key, rnd_a)
+            .await
+        {
+            Ok(_) => {
+                println!("✅ Key accepted!");
+                if key_no == 0 {
+                    println!("Card can be wiped with this key. Run:");
+                    println!("  bolty-cli wipe --issuer-key <derive-from-this-key>");
+                }
+                return Ok(());
             }
-        }
-        Err(bolty_ntag::SessionError::ErrorResponse(
-            bolty_ntag::ResponseStatus::AuthenticationError,
-        )) => {
-            println!("❌ Key rejected (wrong key).");
-            println!("The key on the card does not match. Try a different key.");
-        }
-        Err(bolty_ntag::SessionError::ErrorResponse(
-            bolty_ntag::ResponseStatus::AuthenticationDelay,
-        )) => {
-            println!("⚠️  Auth delay active (91AD).");
-            println!("Too many consecutive failures. Remove card from reader");
-            println!("for 2 seconds, place back, then retry.");
-        }
-        Err(e) => {
-            anyhow::bail!("unexpected error: {e:?}");
+            Err(bolty_ntag::SessionError::ErrorResponse(
+                bolty_ntag::ResponseStatus::AuthenticationError,
+            )) => {
+                println!("❌ Key rejected (wrong key).");
+                return Ok(());
+            }
+            Err(bolty_ntag::SessionError::ErrorResponse(
+                bolty_ntag::ResponseStatus::AuthenticationDelay,
+            )) => {
+                if attempt <= 3 || attempt % 5 == 0 {
+                    println!("  Auth delay (91AD) — keep trying ({attempt}/20)...");
+                }
+                continue;
+            }
+            Err(e) => {
+                anyhow::bail!("unexpected error: {e:?}");
+            }
         }
     }
 
+    println!("⚠️  Auth delay persists after 20 rapid attempts.");
+    println!("The card may need a different key or have extensive TotFailCtr.");
     Ok(())
 }
