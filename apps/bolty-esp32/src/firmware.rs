@@ -117,13 +117,6 @@ pub fn main() {
     #[cfg(feature = "board-m5stick")]
     let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
 
-    #[cfg(feature = "board-m5stick")]
-    let (i2c_sda_pin, i2c_scl_pin) = (32i32, 33i32);
-    #[cfg(feature = "board-m5atom")]
-    let (i2c_sda_pin, i2c_scl_pin) = (26i32, 32i32);
-
-    recover_i2c_bus(i2c_scl_pin, i2c_sda_pin);
-
     FreeRtos::delay_ms(50);
 
     let mut i2c = match I2cDriver::new(
