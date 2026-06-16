@@ -347,52 +347,24 @@ before running more tests.
 
 ---
 
-## T13: Permanent lock at TotFailCtr = 1000 🔴 SACRIFICIAL CARD ONLY
+## T13: Permanent lock at TotFailCtr = 1000 — DO NOT RUN 🔴
 
-**Hypothesis:** When TotFailCtr reaches 1000 (default TotFailCtrLimit), the key
-is permanently disabled and can never be used again.
+**NEVER RUN THIS TEST. This will permanently and irreversibly brick the card.**
 
-**⚠️ THIS TEST WILL DESTROY A CARD. Only run on a card you will throw away.**
+The AN12196 spec states: "when TotFailCtrLimit is reached, related key cannot
+be used for Authentication anymore." ChangeKey (the only counter reset) requires
+K0 auth, creating a circular dependency with no recovery:
 
-**Procedure:**
-1. Use a SACRIFICIAL card (never use again after this test)
-2. Send wrong-key attempts continuously until one of:
-   - The card stops accepting even correct key after power cycle
-   - 1000+ total failures have been sent
-3. After the test, try to recover with correct key + power cycle
+- K0 TotFailCtr ≥ 1000 → K0 cannot authenticate
+- K0 cannot authenticate → Cannot run ChangeKey
+- Cannot run ChangeKey → Cannot reset TotFailCtr
+- **Card permanently bricked for all key management**
 
-**Script (runs ~8 minutes at 2 attempts/second):**
-```bash
-echo "⚠️ SACRIFICIAL CARD TEST — card will be permanently locked"
-echo "Press Ctrl+C within 5 seconds to abort..."
-sleep 5
+The card can still be read (NDEF free read), but can never be burned, wiped,
+or re-keyed. It is permanently read-only.
 
-for i in $(seq 1 1100); do
-  result=$(bolty-cli try-key --key FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF 2>&1)
-  symbol=$(echo "$result" | grep -oE '✅|❌|⚠️')
-  echo "[$i] $symbol"
-  
-  # If we see ⚠️ consistently and it never clears, TotFailCtr may be locked
-  if [ "$i" -gt 1000 ]; then
-    echo "Past 1000 failures. Testing if key is permanently locked..."
-    # Power cycle needed — script pauses
-    echo "Remove card, wait 2 seconds, replace, then press ENTER"
-    read
-    result=$(bolty-cli try-key --key 00000000000000000000000000000000 2>&1)
-    if echo "$result" | grep -q '✅'; then
-      echo "Key still works — TotFailCtr < 1000"
-    elif echo "$result" | grep -q '⚠️'; then
-      echo "🔒 KEY PERMANENTLY LOCKED — TotFailCtr ≥ 1000"
-      echo "Card is bricked for K0. Read access may still work."
-      break
-    fi
-  fi
-  sleep 0.5
-done
-```
-
-**Expected:** After ~1000 total failures, K0 becomes permanently locked.
-Even after power cycle + correct key, auth returns 91AD or 91AE permanently.
+This test is documented for completeness only. The behavior is confirmed by
+the spec — no empirical verification is worth sacrificing a card.
 
 ---
 
@@ -466,4 +438,4 @@ After running each test, fill in:
 | 8 | Does ChangeKey reset all counters? | T12 | Medium |
 | 9 | Does warm reset ≠ cold reset? | T15 | High |
 | 10 | What's in GetKeySettings bytes? | T14 | Medium |
-| 11 | Does permanent lock happen at 1000? | T13 | Low (sacrificial) |
+| 11 | Does permanent lock happen at 1000? | T13 | ~~Low~~ **DO NOT RUN** — spec confirms irreversible |
