@@ -19,6 +19,8 @@ board-m5stick = ["nfc-mfrc522", "display-st7789"]
 wifi = []
 rest = ["wifi"]
 ota = ["wifi"]
+# BLE is opt-in — has NO authentication by default. See issue #34.
+# Enable with: --features "board-m5stick,ble"
 ble = []
 
 [dependencies]

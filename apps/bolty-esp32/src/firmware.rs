@@ -1128,34 +1128,55 @@ fn run_hwtest<I2C>(
 fn process_ble_command<S: crate::service::BoltyService>(
     cmd: &str,
     service: &Arc<Mutex<S>>,
-    config: &Arc<Mutex<BoltyConfig>>,
+    _config: &Arc<Mutex<BoltyConfig>>,
 ) -> String {
     use crate::commands::{Command, parse_command};
-    use crate::service::WorkflowResult;
-    use crate::workflow::dispatch_command;
 
     let Ok(mut svc) = service.lock() else {
         return "[FAIL] service unavailable".to_string();
     };
-    let Ok(mut cfg) = config.lock() else {
-        return "[FAIL] config unavailable".to_string();
+
+    let Ok(command) = parse_command(cmd) else {
+        return format!("[FAIL] unknown command: {cmd}");
     };
 
-    match parse_command(cmd) {
-        Ok(command) => match &command {
-            Command::Status => {
-                let status = svc.get_status();
-                format!("[OK] nfc={} uid={:?}", status.nfc_ready, status.last_uid)
+    match command {
+        Command::Status => {
+            let status = svc.get_status();
+            format!(
+                "[OK] nfc={} uid={}",
+                status.nfc_ready,
+                status
+                    .last_uid
+                    .map(|u| format!("{u:02X?}"))
+                    .unwrap_or_else(|| "---".into())
+            )
+        }
+        Command::Uid => {
+            let status = svc.get_status();
+            format!(
+                "[OK] {}",
+                status
+                    .last_uid
+                    .map(|u| format!("{u:02X?}"))
+                    .unwrap_or_else(|| "no card".into())
+            )
+        }
+        Command::Inspect | Command::Diagnose | Command::Picc | Command::Check => {
+            use crate::service::WorkflowResult;
+            use crate::workflow::dispatch_command;
+            let mut cfg = _config.lock().unwrap();
+            match dispatch_command(command, &mut svc, &mut cfg) {
+                WorkflowResult::Success => "[OK] done".to_string(),
+                other => format!("[FAIL] {other:?}"),
             }
-            Command::Burn | Command::Wipe | Command::Uid | Command::Inspect | Command::Check => {
-                let result = dispatch_command(command, &mut svc, &mut cfg);
-                format!("result: {result:?}")
-            }
-            _ => {
-                let result = dispatch_command(command, &mut svc, &mut cfg);
-                format!("result: {result:?}")
-            }
-        },
-        Err(_) => format!("[FAIL] unknown command: {cmd}"),
+        }
+        Command::Burn
+        | Command::Wipe
+        | Command::SetKeys(_)
+        | Command::SetIssuer(_)
+        | Command::SetUrl(_)
+        | Command::SetToken(_) => "[FAIL] write commands blocked via BLE (issue #34)".to_string(),
+        _ => "[FAIL] command not available via BLE".to_string(),
     }
 }
