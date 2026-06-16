@@ -205,6 +205,28 @@ pub(super) fn handle_line<I2C>(
             }
             return;
         }
+        Command::SetToken(token) => {
+            let mut config = match config.lock() {
+                Ok(c) => c,
+                Err(_) => {
+                    serial.fail("config unavailable");
+                    return;
+                }
+            };
+            match token {
+                Some(t) => {
+                    config.rest_read_token = Some(t.clone());
+                    config.rest_write_token = Some(t);
+                    serial.ok("token set");
+                }
+                None => {
+                    config.rest_read_token = None;
+                    config.rest_write_token = None;
+                    serial.ok("token cleared");
+                }
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -399,6 +421,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::WifiOff => "wifi off",
         Command::Ota { .. } => "ota",
         Command::ButtonMode | Command::ButtonModeSet(_) => "button-mode",
+        Command::SetToken(_) => "token",
     }
 }
 

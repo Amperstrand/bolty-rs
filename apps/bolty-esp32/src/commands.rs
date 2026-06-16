@@ -67,6 +67,8 @@ pub enum Command {
     ButtonMode,
     /// Set button mode.
     ButtonModeSet(ButtonMode),
+    /// Set REST API bearer token. None = open access.
+    SetToken(Option<bolty_core::config::RestTokenString>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,8 +175,20 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     if command.eq_ignore_ascii_case("button-mode") {
         return parse_button_mode_command(parts);
     }
-
-    Err(CommandError::UnknownCommand)
+    if command.eq_ignore_ascii_case("token") {
+        let arg = parts.next();
+        match arg {
+            None => Err(CommandError::MissingArgs),
+            Some("off") | Some("none") | Some("clear") => Ok(Command::SetToken(None)),
+            Some(val) => {
+                let mut token = bolty_core::config::RestTokenString::new();
+                token.push_str(val).map_err(|_| CommandError::InvalidArgs)?;
+                Ok(Command::SetToken(Some(token)))
+            }
+        }
+    } else {
+        Err(CommandError::UnknownCommand)
+    }
 }
 
 pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
