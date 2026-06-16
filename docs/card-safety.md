@@ -251,34 +251,35 @@ From empirical testing and proxmark3 community experience:
 ### Before ANY write operation:
 - [x] Card UID read and matches expected value *(automatic via `preflight`)*
 - [x] Card version confirms NTAG424 DNA *(automatic via `preflight`)*
-- [ ] Card state detected via `diagnose` (not AUTH_DELAY, not INCONSISTENT)
-- [ ] Correct issuer key for this card UID
+- [x] Card state detected via auth probe (not AUTH_DELAY — burn/wipe `[0/7]` step catches this) *(automatic)*
+- [ ] Correct issuer key for this card UID *(user responsibility — wrong key → auth fails)*
 - [x] Audit logging enabled (`/tmp/bolty-audit.log`)
 
 ### Before burn:
 - [x] Pre-flight check passed *(automatic)*
-- [ ] State is BLANK or PROVISIONED (with matching issuer key)
-- [ ] SDM URL template is valid
-- [ ] All 5 keys can be derived from issuer key + UID
-- [ ] Card is on the reader and stable (not being moved)
-- [ ] Run with `--dry-run` first to preview
+- [x] State is BLANK or PROVISIONED *(automatic — `[0/7]` step checks card state)*
+- [x] SDM URL template is valid *(automatic — URL must contain {picc} and {mac})*
+- [x] All 5 keys can be derived from issuer key + UID *(automatic via BoltcardDeterministicDeriver)*
+- [ ] Card is on the reader and stable (not being moved) *(user responsibility)*
+- [x] Run with `--dry-run` first to preview *(available)*
 
 ### Before wipe:
 - [x] Pre-flight check passed *(automatic)*
-- [ ] State is PROVISIONED (with matching issuer key)
-- [ ] Derived K0 matches card K0
-- [ ] No authentication delay active
-- [ ] Run with `--dry-run` first to preview
+- [x] State is PROVISIONED *(automatic — refuses wipe on BLANK cards)*
+- [x] Derived K0 matches card K0 *(automatic — auth fails if wrong key)*
+- [x] No authentication delay active *(automatic — AuthRetry "keep trying" clears delay)*
+- [x] Run with `--dry-run` first to preview *(available)*
 
 ### During burn/wipe:
 - [x] Per-key version verified after each K1-K4 change *(automatic)*
 - [x] NDEF write verified by readback *(automatic in burn)*
 - [x] SDM configuration verified after enable *(automatic in burn)*
+- [x] Circuit breaker limits total auth failures *(automatic — 10 failures max)*
 
 ### After ANY operation:
 - [x] Post-operation verification completed *(automatic: auth with new/old K0)*
-- [ ] Audit log reviewed for unexpected APDU responses
-- [ ] Card state re-verified with `diagnose` or `keyver`
+- [ ] Audit log reviewed for unexpected APDU responses *(user responsibility)*
+- [ ] Card state re-verified with `diagnose` or `keyver` *(user responsibility)*
 
 ---
 

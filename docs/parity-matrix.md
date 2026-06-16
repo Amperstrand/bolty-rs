@@ -50,10 +50,10 @@ The following features have been verified end-to-end on real hardware with card 
 | Serial command parser / dispatcher surface | serial_commands.h | bolty-core | commands | ✅ DONE |
 | Serial PICC inspection command | serial_commands.h | bolty-core | commands | ✅ DONE |
 | Serial inspect workflow | serial_commands.h | bolty-core | commands | ✅ DONE |
-| Serial derivekeys workflow | serial_commands.h | bolty-core | commands | ⬜ OUT OF SCOPE (Wave 5+) |
-| Serial diagnose workflow | serial_commands.h | bolty-core | commands | ⬜ OUT OF SCOPE (Wave 5+) |
-| Serial recoverkey workflow | serial_commands.h | bolty-core | commands | ⬜ OUT OF SCOPE (Wave 5+) |
-| Serial ChangeKey self-test (`testck`) | serial_commands.h | bolty-core | commands | ⬜ OUT OF SCOPE (Wave 5+) |
+| Serial derivekeys workflow | serial_commands.h | bolty-core | commands | ✅ DONE (firmware + CLI) |
+| Serial diagnose workflow | serial_commands.h | bolty-core | commands | ✅ DONE (firmware + CLI) |
+| Serial recoverkey workflow | serial_commands.h | bolty-core | commands | ✅ SUPERSEDED (`try-key` + `scan-keys` are better) |
+| Serial ChangeKey self-test (`testck`) | serial_commands.h | bolty-core | commands | ⬜ MISSING — see docs/feature-parity-plan.md |
 | Serial WiFi command (`wifi <ssid> <pass>` / `wifi off`) | serial_commands.h | bolty-core | commands | ✅ DONE (T16) |
 | Burn/wipe/check/session/job constants | bolt.h | bolty-core | orchestration | ✅ DONE |
 | Key version constants and hardware type constants | bolt.h | bolty-core | types | ✅ DONE |
@@ -89,13 +89,13 @@ The following features have been verified end-to-end on real hardware with card 
 | REST UID endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST keys endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST URL endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
-| REST key version endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ OUT OF SCOPE (Wave 5+) |
+| REST key version endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
 | REST blank-check endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST burn endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST wipe endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
-| REST NDEF endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ OUT OF SCOPE (Wave 5+) |
-| REST job endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ OUT OF SCOPE (Wave 5+) |
-| HTTP server bootstrap + URI registration + mDNS | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17, HTTP not HTTPS) |
+| REST NDEF endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
+| REST job endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
+| HTTP server bootstrap + URI registration + mDNS | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17, HTTPS via on-device TLS cert) |
 | OTA firmware download + flash | ota.h | bolty-esp32 | ota | ✅ DONE (T18, no sig verification) |
 | WiFi connection management | bolt.h + serial_commands.h | bolty-esp32 | wifi | ✅ DONE (T16) |
 | LED/status display | gui.h / hardware_config.h / led.h | bolty-esp32 | led | ⬜ OUT OF SCOPE |
