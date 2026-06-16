@@ -32,6 +32,9 @@ use service::Esp32BoltyService;
 mod console_commands;
 use console_commands::{handle_line, print_boot_banner};
 
+mod card_operations;
+mod diagnostics_commands;
+
 mod nvs;
 
 #[cfg(not(feature = "wifi"))]
