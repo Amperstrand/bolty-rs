@@ -17,6 +17,12 @@ use core::fmt::Write as _;
 
 #[cfg(feature = "display-st7789")]
 use crate::display;
+#[cfg(feature = "board-m5stick")]
+use crate::button::{self, ButtonEvent, ButtonHandler};
+#[cfg(feature = "board-m5stick")]
+use crate::commands::ButtonMode;
+#[cfg(feature = "board-m5stick")]
+use crate::service::BoltyService;
 #[cfg(feature = "wifi")]
 use crate::wifi::WifiManager;
 
@@ -52,9 +58,18 @@ pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
+const BATTERY_UPDATE_INTERVAL_MS: u64 = 5000;
 static DISPLAY_INIT_OK: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "rest")]
 pub(super) const REST_PORT: u16 = 80;
+
+#[cfg(feature = "board-m5stick")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LegacyOp {
+    Idle,
+    Burn,
+    Wipe,
+}
 
 pub fn main() {
     esp_idf_sys::link_patches();
@@ -203,6 +218,44 @@ pub fn main() {
     #[cfg(feature = "display-st7789")]
     display::set_event("ready");
 
+    #[cfg(feature = "board-m5stick")]
+    let mut buttons: Option<ButtonHandler> = {
+        let front = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio37);
+        let side = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio39);
+        match (front, side) {
+            (Ok(f), Ok(s)) => {
+                log::info!("Buttons: GPIO37 front + GPIO39 side");
+                Some(ButtonHandler::new(f, s))
+            }
+            (front_err, side_err) => {
+                if let Err(ref e) = front_err {
+                    log::warn!("GPIO37 front button failed: {e:?}");
+                }
+                if let Err(ref e) = side_err {
+                    log::warn!("GPIO39 side button failed: {e:?}");
+                }
+                None
+            }
+        }
+    };
+
+    #[cfg(feature = "board-m5stick")]
+    {
+        let saved_mode = nvs::load_button_mode();
+        let mode = saved_mode
+            .as_deref()
+            .and_then(ButtonMode::from_str)
+            .unwrap_or(ButtonMode::Simple);
+        button::set_button_mode(mode);
+        log::info!("Button mode: {:?}", mode);
+    }
+
+    #[cfg(feature = "board-m5stick")]
+    let mut legacy_op = LegacyOp::Idle;
+
+    #[cfg(feature = "display-st7789")]
+    let mut next_battery_update = millis();
+
     loop {
         while let Some(byte) = serial.read_byte_nonblocking() {
             match byte {
@@ -235,6 +288,28 @@ pub fn main() {
         if now >= next_poll_at {
             poll_card(&mut serial, &service, &mut card_announced);
             next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
+        }
+
+        #[cfg(feature = "display-st7789")]
+        if now >= next_battery_update {
+            display::update_battery();
+            next_battery_update = now.saturating_add(BATTERY_UPDATE_INTERVAL_MS);
+        }
+
+        #[cfg(feature = "board-m5stick")]
+        if let Some(ref mut handler) = buttons {
+            let (front_event, side_event) = handler.poll(now);
+            if front_event != ButtonEvent::None || side_event != ButtonEvent::None {
+                handle_button_events(
+                    front_event,
+                    side_event,
+                    &mut serial,
+                    &service,
+                    &config,
+                    &mut wifi_manager,
+                    &mut legacy_op,
+                );
+            }
         }
 
         FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
@@ -293,6 +368,277 @@ fn poll_card<I2C>(
                 }
             }
         }
+    }
+}
+
+#[cfg(feature = "board-m5stick")]
+fn handle_button_events<I2C>(
+    front: ButtonEvent,
+    side: ButtonEvent,
+    serial: &mut SerialConsole,
+    service: &Arc<Mutex<Esp32BoltyService<I2C>>>,
+    config: &Arc<Mutex<BoltyConfig>>,
+    wifi_manager: &mut Option<WifiManager>,
+    legacy_op: &mut LegacyOp,
+) where
+    I2C: embedded_hal::i2c::I2c + Send + 'static,
+    I2C::Error: core::fmt::Debug,
+{
+    use bolty_core::assessment::CardState;
+
+    let mode = button::get_button_mode();
+
+    match mode {
+        ButtonMode::Simple => {
+            if front == ButtonEvent::Click {
+                do_smart_action(serial, service, config);
+            } else if front == ButtonEvent::LongPress {
+                toggle_wifi_button(wifi_manager, serial);
+            }
+            if side == ButtonEvent::Click {
+                show_button_status(serial, service);
+            } else if side == ButtonEvent::LongPress {
+                enter_deep_sleep();
+            }
+        }
+        ButtonMode::Legacy => {
+            if front == ButtonEvent::Click {
+                *legacy_op = match *legacy_op {
+                    LegacyOp::Idle => LegacyOp::Burn,
+                    LegacyOp::Burn => LegacyOp::Wipe,
+                    LegacyOp::Wipe => LegacyOp::Idle,
+                };
+                #[cfg(feature = "display-st7789")]
+                display::set_mode(match *legacy_op {
+                    LegacyOp::Idle => display::DisplayMode::Idle,
+                    LegacyOp::Burn => display::DisplayMode::Burn,
+                    LegacyOp::Wipe => display::DisplayMode::Wipe,
+                });
+                let label = match *legacy_op {
+                    LegacyOp::Idle => "mode: idle",
+                    LegacyOp::Burn => "mode: burn",
+                    LegacyOp::Wipe => "mode: wipe",
+                };
+                serial.line(label);
+            } else if front == ButtonEvent::LongPress {
+                toggle_wifi_button(wifi_manager, serial);
+            }
+            if side == ButtonEvent::Click {
+                match *legacy_op {
+                    LegacyOp::Burn => do_burn_button(serial, service, config),
+                    LegacyOp::Wipe => do_wipe_button(serial, service, config),
+                    LegacyOp::Idle => serial.fail("no action (idle mode)"),
+                }
+            } else if side == ButtonEvent::LongPress {
+                enter_deep_sleep();
+            }
+        }
+    }
+
+    fn do_smart_action<I2C2>(
+        serial: &mut SerialConsole,
+        service: &Arc<Mutex<Esp32BoltyService<I2C2>>>,
+        config: &Arc<Mutex<BoltyConfig>>,
+    ) where
+        I2C2: embedded_hal::i2c::I2c + Send + 'static,
+        I2C2::Error: core::fmt::Debug,
+    {
+        let svc = match service.lock() {
+            Ok(s) => s,
+            Err(_) => {
+                serial.fail("service unavailable");
+                return;
+            }
+        };
+        match svc.last_card.state {
+            CardState::Blank => {
+                drop(svc);
+                do_burn_button(serial, service, config);
+            }
+            CardState::Provisioned(_) => {
+                drop(svc);
+                do_wipe_button(serial, service, config);
+            }
+            _ => {
+                serial.fail("no card or unknown state");
+            }
+        }
+    }
+
+    fn do_burn_button<I2C2>(
+        serial: &mut SerialConsole,
+        service: &Arc<Mutex<Esp32BoltyService<I2C2>>>,
+        config: &Arc<Mutex<BoltyConfig>>,
+    ) where
+        I2C2: embedded_hal::i2c::I2c + Send + 'static,
+        I2C2::Error: core::fmt::Debug,
+    {
+        let mut config = match config.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                serial.fail("config unavailable");
+                return;
+            }
+        };
+        let mut svc = match service.lock() {
+            Ok(s) => s,
+            Err(_) => {
+                serial.fail("service unavailable");
+                return;
+            }
+        };
+
+        if config.pending_issuer.is_none() && config.pending_keys.is_none() {
+            serial.fail("no issuer or keys");
+            return;
+        }
+        let lnurl = config
+            .lnurl
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        if lnurl.is_empty() {
+            serial.fail("no lnurl configured");
+            return;
+        }
+
+        let result = svc.burn(
+            config.pending_issuer.as_ref(),
+            config.pending_keys.as_ref(),
+            lnurl,
+        );
+        svc.sync_from(&config);
+        report_button_result(serial, "burn", result);
+    }
+
+    fn do_wipe_button<I2C2>(
+        serial: &mut SerialConsole,
+        service: &Arc<Mutex<Esp32BoltyService<I2C2>>>,
+        config: &Arc<Mutex<BoltyConfig>>,
+    ) where
+        I2C2: embedded_hal::i2c::I2c + Send + 'static,
+        I2C2::Error: core::fmt::Debug,
+    {
+        let config = match config.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                serial.fail("config unavailable");
+                return;
+            }
+        };
+        let mut svc = match service.lock() {
+            Ok(s) => s,
+            Err(_) => {
+                serial.fail("service unavailable");
+                return;
+            }
+        };
+
+        if config.pending_issuer.is_none() && config.pending_keys.is_none() {
+            serial.fail("no issuer or keys");
+            return;
+        }
+
+        let result = svc.wipe(
+            config.pending_issuer.as_ref(),
+            config.pending_keys.as_ref(),
+        );
+        report_button_result(serial, "wipe", result);
+    }
+
+    fn report_button_result(serial: &mut SerialConsole, action: &str, result: crate::service::WorkflowResult) {
+        use crate::service::WorkflowResult;
+        match result {
+            WorkflowResult::Success => {
+                let mut msg = heapless::String::<32>::new();
+                let _ = write!(msg, "[OK] {action} complete (button)");
+                serial.line(msg.as_str());
+                #[cfg(feature = "display-st7789")]
+                {
+                    display::set_event(&format!("{action} ok"));
+                    display::set_mode(display::DisplayMode::Idle);
+                }
+            }
+            ref err => {
+                #[cfg(feature = "display-st7789")]
+                display::set_mode(display::DisplayMode::Error);
+
+                let mut msg = heapless::String::<64>::new();
+                let _ = match err {
+                    WorkflowResult::CardNotPresent => write!(msg, "[FAIL] {action}: no card"),
+                    WorkflowResult::AuthFailed => write!(msg, "[FAIL] {action}: auth failed"),
+                    WorkflowResult::AuthDelay => write!(msg, "[FAIL] {action}: auth delay"),
+                    WorkflowResult::WipeRefused => write!(msg, "[FAIL] {action}: refused"),
+                    WorkflowResult::Error(e) => write!(msg, "[FAIL] {action}: {}", e.as_str()),
+                    WorkflowResult::Success => unreachable!(),
+                };
+                serial.line(msg.as_str());
+            }
+        }
+    }
+
+    fn show_button_status<I2C2>(
+        serial: &mut SerialConsole,
+        service: &Arc<Mutex<Esp32BoltyService<I2C2>>>,
+    ) where
+        I2C2: embedded_hal::i2c::I2c,
+        I2C2::Error: core::fmt::Debug,
+    {
+        let svc = match service.lock() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let status = svc.get_status();
+        serial.card(&svc.last_card);
+        let mut line = heapless::String::<96>::new();
+        let _ = write!(
+            line,
+            "[INFO] nfc={} lnurl={}",
+            if status.nfc_ready { "ok" } else { "--" },
+            status.lnurl.as_ref().map(|l| l.as_str()).unwrap_or("none"),
+        );
+        serial.line(line.as_str());
+    }
+
+    fn toggle_wifi_button(wifi_manager: &mut Option<WifiManager>, serial: &mut SerialConsole) {
+        #[cfg(feature = "wifi")]
+        {
+            if let Some(ref mut manager) = wifi_manager {
+                if manager.is_connected() {
+                    match manager.disconnect() {
+                        Ok(()) => {
+                            #[cfg(feature = "display-st7789")]
+                            display::clear_wifi();
+                            serial.line("[OK] wifi off (button)");
+                        }
+                        Err(_) => serial.fail("wifi disconnect failed"),
+                    }
+                } else {
+                    serial.fail("wifi not configured (use serial)");
+                }
+            } else {
+                serial.fail("wifi unavailable");
+            }
+        }
+        #[cfg(not(feature = "wifi"))]
+        {
+            let _ = wifi_manager;
+            serial.fail("wifi not enabled");
+        }
+    }
+
+    fn enter_deep_sleep() -> ! {
+        log::info!("Deep sleep (wake: side button GPIO39)");
+        #[cfg(feature = "display-st7789")]
+        display::set_event("sleep");
+        unsafe {
+            esp_idf_sys::esp_sleep_enable_ext0_wakeup(
+                esp_idf_sys::gpio_num_t_GPIO_NUM_39,
+                0,
+            );
+            esp_idf_sys::esp_deep_sleep_start();
+        }
+        loop {}
     }
 }
 

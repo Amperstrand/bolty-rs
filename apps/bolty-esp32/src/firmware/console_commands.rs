@@ -3,10 +3,12 @@ use core::fmt::Write as _;
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    commands::{Command, CommandError, parse_command},
+    commands::{ButtonMode, Command, CommandError, parse_command},
     service::{BoltyService, WorkflowResult},
     workflow::dispatch_command,
 };
+#[cfg(feature = "board-m5stick")]
+use crate::button;
 use bolty_core::config::BoltyConfig;
 use heapless::String;
 
@@ -172,6 +174,38 @@ pub(super) fn handle_line<I2C>(
         serial.fail("wifi feature disabled");
         set_display_fail(command_name(&command), "wifi feature disabled");
         return;
+    }
+
+    match &command {
+        Command::ButtonMode => {
+            #[cfg(feature = "board-m5stick")]
+            {
+                let mode = button::get_button_mode();
+                serial.ok(match mode {
+                    ButtonMode::Simple => "button mode: simple",
+                    ButtonMode::Legacy => "button mode: legacy",
+                });
+            }
+            #[cfg(not(feature = "board-m5stick"))]
+            serial.fail("buttons not available on this board");
+            return;
+        }
+        Command::ButtonModeSet(mode) => {
+            #[cfg(feature = "board-m5stick")]
+            {
+                button::set_button_mode(*mode);
+                super::nvs::save_button_mode(mode.as_str());
+                serial.ok("button mode set");
+                set_display_ok("button-mode", "mode set");
+            }
+            #[cfg(not(feature = "board-m5stick"))]
+            {
+                let _ = mode;
+                serial.fail("buttons not available on this board");
+            }
+            return;
+        }
+        _ => {}
     }
 
     let command_copy = command.clone();
@@ -364,6 +398,7 @@ fn command_name(command: &Command) -> &'static str {
         Command::SetWifi { .. } => "wifi",
         Command::WifiOff => "wifi off",
         Command::Ota { .. } => "ota",
+        Command::ButtonMode | Command::ButtonModeSet(_) => "button-mode",
     }
 }
 

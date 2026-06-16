@@ -15,6 +15,8 @@ use super::utils::{CounterDisplay, diagnose_state_label, ndef_ascii, push_uid_he
 
 pub(super) fn print_help(serial: &mut SerialConsole) {
     serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check");
+    #[cfg(feature = "board-m5stick")]
+    serial.line("Buttons: button-mode [simple|legacy]");
     #[cfg(feature = "wifi")]
     serial.line("WiFi: wifi <ssid> <password> | wifi off");
     #[cfg(feature = "ota")]

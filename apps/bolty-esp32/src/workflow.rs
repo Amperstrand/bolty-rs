@@ -27,7 +27,9 @@ pub fn dispatch_command<S: BoltyService>(
         | Command::Diagnose
         | Command::DeriveKeys
         | Command::Issuer
-        | Command::HwInfo => WorkflowResult::Success,
+        | Command::HwInfo
+        | Command::ButtonMode
+        | Command::ButtonModeSet(_) => WorkflowResult::Success,
         Command::SetKeys(keys) => {
             config.pending_keys = Some(keys);
             WorkflowResult::Success
@@ -314,6 +316,8 @@ mod tests {
             Command::DeriveKeys,
             Command::Issuer,
             Command::HwInfo,
+            Command::ButtonMode,
+            Command::ButtonModeSet(crate::commands::ButtonMode::Simple),
         ] {
             assert_eq!(
                 dispatch_command(command, &mut service, &mut config),

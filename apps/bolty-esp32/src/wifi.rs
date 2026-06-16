@@ -68,6 +68,10 @@ impl WifiManager {
         })
     }
 
+    pub fn is_connected(&self) -> bool {
+        self.wifi.is_connected().unwrap_or(false)
+    }
+
     pub fn connect(
         &mut self,
         ssid: &WifiSsidString,

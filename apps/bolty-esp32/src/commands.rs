@@ -3,6 +3,32 @@ use bolty_core::{
     secret::{AesKey, CardKeys},
 };
 
+/// Button input mode for physical button behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonMode {
+    Simple,
+    Legacy,
+}
+
+impl ButtonMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ButtonMode::Simple => "simple",
+            ButtonMode::Legacy => "legacy",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("simple") {
+            Some(ButtonMode::Simple)
+        } else if s.eq_ignore_ascii_case("legacy") {
+            Some(ButtonMode::Legacy)
+        } else {
+            None
+        }
+    }
+}
+
 /// All commands the firmware accepts over serial.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -37,6 +63,10 @@ pub enum Command {
     DeriveKeys,
     Issuer,
     HwInfo,
+    /// Query current button mode.
+    ButtonMode,
+    /// Set button mode.
+    ButtonModeSet(ButtonMode),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +169,9 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     if command.eq_ignore_ascii_case("hwinfo") {
         expect_no_args(parts)?;
         return Ok(Command::HwInfo);
+    }
+    if command.eq_ignore_ascii_case("button-mode") {
+        return parse_button_mode_command(parts);
     }
 
     Err(CommandError::UnknownCommand)
@@ -259,6 +292,21 @@ fn parse_key_arg(value: Option<&str>) -> Result<[u8; 16], CommandError> {
         return Err(CommandError::MissingArgs);
     };
     parse_hex_key(value).ok_or(CommandError::InvalidArgs)
+}
+
+fn parse_button_mode_command<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<Command, CommandError> {
+    match parts.next() {
+        None => Ok(Command::ButtonMode),
+        Some(arg) => {
+            let mode = ButtonMode::from_str(arg).ok_or(CommandError::InvalidArgs)?;
+            if parts.next().is_some() {
+                return Err(CommandError::InvalidArgs);
+            }
+            Ok(Command::ButtonModeSet(mode))
+        }
+    }
 }
 
 fn expect_no_args<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<(), CommandError> {
@@ -401,6 +449,31 @@ mod tests {
     fn parses_hwinfo_command() {
         assert_eq!(parse_command("hwinfo"), Ok(Command::HwInfo));
         assert_eq!(parse_command("HWINFO"), Ok(Command::HwInfo));
+    }
+
+    #[test]
+    fn parses_button_mode_command() {
+        assert_eq!(parse_command("button-mode"), Ok(Command::ButtonMode));
+        assert_eq!(
+            parse_command("button-mode simple"),
+            Ok(Command::ButtonModeSet(ButtonMode::Simple))
+        );
+        assert_eq!(
+            parse_command("BUTTON-MODE LEGACY"),
+            Ok(Command::ButtonModeSet(ButtonMode::Legacy))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_button_mode() {
+        assert_eq!(
+            parse_command("button-mode invalid"),
+            Err(CommandError::InvalidArgs)
+        );
+        assert_eq!(
+            parse_command("button-mode simple extra"),
+            Err(CommandError::InvalidArgs)
+        );
     }
 
     #[test]

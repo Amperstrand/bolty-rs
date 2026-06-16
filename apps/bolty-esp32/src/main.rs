@@ -30,6 +30,9 @@ mod ota;
 #[cfg(all(target_arch = "xtensa", feature = "display-st7789"))]
 mod display;
 
+#[cfg(all(target_arch = "xtensa", feature = "board-m5stick"))]
+mod button;
+
 #[cfg(all(
     target_arch = "xtensa",
     feature = "board-m5atom",

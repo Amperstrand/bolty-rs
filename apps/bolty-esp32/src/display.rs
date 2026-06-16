@@ -56,6 +56,9 @@ struct ScreenState {
     event: heapless::String<EVENT_LEN>,
     last_cmd: heapless::String<EVENT_LEN>,
     last_result: heapless::String<EVENT_LEN>,
+    mode: DisplayMode,
+    battery_pct: u8,
+    usb_power: bool,
 }
 
 impl ScreenState {
@@ -69,6 +72,9 @@ impl ScreenState {
             event: heapless::String::new(),
             last_cmd: heapless::String::new(),
             last_result: heapless::String::new(),
+            mode: DisplayMode::Idle,
+            battery_pct: 255,
+            usb_power: false,
         }
     }
 }
@@ -76,6 +82,16 @@ impl ScreenState {
 static mut SPI_BUFFER: [u8; SPI_BUFFER_SIZE] = [0u8; SPI_BUFFER_SIZE];
 
 static SCREEN: std::sync::Mutex<Option<Screen>> = std::sync::Mutex::new(None);
+
+static I2C1_DRIVER: std::sync::Mutex<Option<I2cDriver<'static>>> = std::sync::Mutex::new(None);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DisplayMode {
+    Idle,
+    Burn,
+    Wipe,
+    Error,
+}
 
 fn axp192_write_reg(
     i2c: &mut I2cDriver<'_>,
@@ -169,7 +185,10 @@ pub unsafe fn init(
     init_axp192(&mut axp)?;
     info!("Display init: AXP192 done, waiting 200ms for power rails...");
     FreeRtos::delay_ms(200);
-    drop(axp);
+
+    if let Ok(mut guard) = I2C1_DRIVER.lock() {
+        *guard = Some(axp);
+    }
 
     info!("Display init: configuring SPI2 (20MHz, Mode0)...");
     let spi_driver = SpiDriver::new(
@@ -254,6 +273,38 @@ pub unsafe fn init(
     Ok(())
 }
 
+pub fn read_battery_mv() -> Option<u32> {
+    let mut guard = I2C1_DRIVER.lock().ok()?;
+    let i2c = guard.as_mut()?;
+
+    let mut reg78 = [0u8; 1];
+    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, BLOCK).ok()?;
+
+    let mut reg79 = [0u8; 1];
+    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, BLOCK).ok()?;
+
+    let raw = ((reg78[0] as u32) << 4) | ((reg79[0] as u32) >> 4);
+    Some((raw * 11) / 10)
+}
+
+pub fn is_usb_powered() -> bool {
+    let Ok(mut guard) = I2C1_DRIVER.lock() else {
+        return false;
+    };
+    let Some(i2c) = guard.as_mut() else {
+        return false;
+    };
+
+    let mut reg01 = [0u8; 1];
+    if i2c
+        .write_read(AXP192_ADDRESS, &[0x01], &mut reg01, BLOCK)
+        .is_err()
+    {
+        return false;
+    }
+    reg01[0] & (1 << 5) != 0
+}
+
 fn with_screen<F: FnOnce(&mut Screen)>(f: F) {
     if let Ok(mut guard) = SCREEN.lock() {
         if let Some(screen) = guard.as_mut() {
@@ -308,6 +359,44 @@ fn redraw(screen: &mut Screen) {
     let lh = 12i32;
     let x = 2i32;
     let max = (LCD_H_RES as usize) / 6;
+
+    let (bar_color, mode_label) = match state.mode {
+        DisplayMode::Idle => (Rgb565::new(0, 40, 0), "IDLE"),
+        DisplayMode::Burn => (Rgb565::new(31, 41, 0), "BURN"),
+        DisplayMode::Wipe => (Rgb565::new(31, 0, 20), "WIPE"),
+        DisplayMode::Error => (Rgb565::CSS_RED, "ERR"),
+    };
+
+    let _ = Rectangle::new(Point::new(0, 0), Size::new(LCD_H_RES as u32, lh as u32))
+        .into_styled(
+            embedded_graphics::primitives::PrimitiveStyleBuilder::new()
+                .fill_color(bar_color)
+                .build(),
+        )
+        .draw(display);
+
+    let bar_style = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(Rgb565::WHITE)
+        .background_color(bar_color)
+        .build();
+    let _ = Text::with_baseline(mode_label, Point::new(x, 0), bar_style, Baseline::Top)
+        .draw(display);
+
+    let mut batt = heapless::String::<12>::new();
+    if state.battery_pct == 255 {
+        let _ = write!(batt, "  USB");
+    } else {
+        let _ = write!(
+            batt,
+            "{}%{}",
+            state.battery_pct,
+            if state.usb_power { "+" } else { "" }
+        );
+    }
+    let batt_x = (LCD_H_RES as i32) - (batt.len() as i32 * 6) - 2;
+    let _ = Text::with_baseline(&batt, Point::new(batt_x, 0), bar_style, Baseline::Top)
+        .draw(display);
 
     clear_line(display, lh);
     let mut l1 = heapless::String::<32>::new();
@@ -469,6 +558,34 @@ pub fn set_command_result(cmd: &str, result: &str) {
             }
         }
 
+        s.dirty = true;
+    });
+}
+
+pub fn set_mode(mode: DisplayMode) {
+    with_screen(|s| {
+        s.state.mode = mode;
+        s.dirty = true;
+    });
+}
+
+pub fn update_battery() {
+    let (pct, usb) = match read_battery_mv() {
+        Some(mv) => {
+            let computed = if mv <= 3000 {
+                0u8
+            } else if mv >= 4200 {
+                100u8
+            } else {
+                ((mv - 3000) / 12) as u8
+            };
+            (computed, is_usb_powered())
+        }
+        None => (255u8, false),
+    };
+    with_screen(|s| {
+        s.state.battery_pct = pct;
+        s.state.usb_power = usb;
         s.dirty = true;
     });
 }
