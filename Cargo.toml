@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "15d01c439492f6da5a0ce5cd273976cfeddf4ee5", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
+ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", branch = "ai-experiments", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", branch = "ai-experiments" }
 iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", branch = "ai-experiments", features = ["alloc"] }
 

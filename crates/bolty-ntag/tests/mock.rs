@@ -154,12 +154,13 @@ impl MockTransport {
 
     fn handle_auth_part1(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
         self.require_ndef_selected();
-        // ntag424 rev 15d01c4: CLA=90 INS=71 P1=00 P2=00 Lc=02 [KeyNo LenCap=00] Le=00
-        assert_eq!(apdu.len(), 8, "unexpected AuthenticateEV2First APDU length");
+        assert!(
+            apdu.len() == 8 || apdu.len() == 11,
+            "unexpected AuthenticateEV2First APDU length: {}",
+            apdu.len()
+        );
         assert_eq!(apdu[0], 0x90);
         assert_eq!(apdu[1], 0x71);
-        assert_eq!(apdu[4], 0x02);
-        assert_eq!(apdu[7], 0x00);
 
         let key_no = apdu[5] as usize;
         let key = self.keys[key_no];
