@@ -490,7 +490,7 @@ fn handle_button_events<I2C>(
         I2C2: embedded_hal::i2c::I2c + Send + 'static,
         I2C2::Error: core::fmt::Debug,
     {
-        let mut config = match config.lock() {
+        let config = match config.lock() {
             Ok(c) => c,
             Err(_) => {
                 serial.fail("config unavailable");
@@ -649,7 +649,6 @@ fn handle_button_events<I2C>(
             esp_idf_sys::esp_sleep_enable_ext0_wakeup(esp_idf_sys::gpio_num_t_GPIO_NUM_39, 0);
             esp_idf_sys::esp_deep_sleep_start();
         }
-        loop {}
     }
 }
 
@@ -664,7 +663,7 @@ fn recover_i2c_bus(scl_pin: i32, sda_pin: i32) {
 
     let mask = |pin: i32| -> u64 { 1u64 << pin };
 
-    let mut sda_cfg = gpio_config_t {
+    let sda_cfg = gpio_config_t {
         pin_bit_mask: mask(sda_pin),
         mode: GPIO_MODE_INPUT as u32,
         pull_up_en: 1,
@@ -688,7 +687,7 @@ fn recover_i2c_bus(scl_pin: i32, sda_pin: i32) {
 
     log::warn!("I2C recovery: SDA stuck LOW — sending 9 SCL clock pulses");
 
-    let mut scl_cfg = gpio_config_t {
+    let scl_cfg = gpio_config_t {
         pin_bit_mask: mask(scl_pin),
         mode: GPIO_MODE_OUTPUT as u32,
         pull_up_en: 1,

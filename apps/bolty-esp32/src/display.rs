@@ -519,6 +519,7 @@ pub fn clear_card() {
     });
 }
 
+#[allow(dead_code)]
 pub fn set_wifi(ip: &str) {
     with_screen(|s| {
         s.state.wifi_ip.clear();
@@ -527,6 +528,7 @@ pub fn set_wifi(ip: &str) {
     });
 }
 
+#[allow(dead_code)]
 pub fn clear_wifi() {
     with_screen(|s| {
         if !s.state.wifi_ip.is_empty() {

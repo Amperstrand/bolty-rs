@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::button;
 use crate::{
     commands::{ButtonMode, Command, CommandError, parse_command},
-    service::{BoltyService, WorkflowResult},
+    service::WorkflowResult,
     workflow::dispatch_command,
 };
 use bolty_core::config::BoltyConfig;
