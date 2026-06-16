@@ -105,7 +105,7 @@ After repeated failed authentication attempts, the card enters Authentication De
 - Returns status code `91AE` (Authentication Error) with delay indicator
 - Card refuses all authenticated commands for a period
 - Delay duration escalates with consecutive failures
-- Delay resets after a successful authentication or power cycle (card removal)
+- Delay clears after a successful authentication or by "keep trying" (rapid AuthFirst within same connection)
 
 **Typical trigger**: Probing with wrong keys during state detection.
 
@@ -190,7 +190,7 @@ Wipe is the INVERSE of burn. The same safety properties apply: K0 is changed las
 - NTAG424 maintains an internal failed-auth counter
 - After repeated failures, card returns `ResponseStatus::AuthenticationDelay`
 - Card refuses all subsequent auth attempts until delay expires
-- Delay is cleared by: (a) successful auth, (b) power cycle (remove from reader)
+- Delay is cleared by: (a) successful auth, (b) "keep trying" — rapid AuthFirst retries within same PCSC connection
 
 ### Triggers in bolty-rs
 1. **Burn on wrong card**: Factory K0 fails → derived K0 fails = 2 failed auths

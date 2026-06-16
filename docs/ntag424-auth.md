@@ -190,7 +190,7 @@ stateDiagram-v2
 
     Provisioned --> AuthDelay: ≥50 consecutive\nfailed auths (SeqFailCtr)
 
-    AuthDelay --> Provisioned: power cycle +\ncorrect key auth\n(SeqFailCtr resets)
+    AuthDelay --> Provisioned: "keep trying"\n(rapid AuthFirst in same\nconnection) + correct key
 
     AuthDelay --> AuthDelay: continued failed auths\n(SeqFailCtr stays ≥50)
 
@@ -198,7 +198,7 @@ stateDiagram-v2
 
     HalfWiped --> AuthDelay: ≥50 consecutive\nfailed auths
 
-    AuthDelay --> HalfWiped: power cycle +\ncorrect key auth
+    AuthDelay --> HalfWiped: "keep trying"\n+ correct key
 
     PermanentlyLocked --> [*]: key slot permanently\ndisabled — no recovery\nwithout K0 auth
 
@@ -222,7 +222,7 @@ stateDiagram-v2
         Card returns 91AD
         for ALL auth attempts
         SeqFailCtr ≥ 50
-        Recovery: power cycle
+        Recovery: "keep trying"
     end note
 
     note right of PermanentlyLocked
@@ -263,7 +263,7 @@ flowchart TD
     CheckTotFail -->|"≥ 1000"| PermanentLock[⚠️ KEY PERMANENTLY LOCKED\nKey disabled forever\nOnly ChangeKey can reset\nbut requires K0 auth]
     CheckTotFail -->|"< 1000"| ReadyForRetry([Ready for next attempt\nbut SeqFailCtr is climbing])
 
-    Return91AD --> Blocked([Auth blocked\nMust power cycle card\nor wait for ChangeKey])
+    Return91AD --> Blocked([Auth blocked\n"Keep trying" — send AuthFirst\nrepeatedly in same connection\nuntil delay is spent])
 
     style Return91AD fill:#ff9900,color:#000
     style Return91AE fill:#ff6666,color:#fff
@@ -359,7 +359,7 @@ flowchart TD
     CheckThreshold -->|"No (< 5)"| Backoff[Wait with backoff\n5s, 15s, 30s]
     Backoff --> Attempt
 
-    CheckThreshold -->|"Yes (≥ 5)"| Abort[ABORT operation\nReport cumulative failures\nWarn about TotFailCtr\nSuggest scan-keys or\npower cycle]
+    CheckThreshold -->|"Yes (≥ 5)"| Abort[ABORT operation\nReport cumulative failures\nWarn about TotFailCtr\nSuggest scan-keys for\nrecovery]
     Abort --> Stop([Stop — do NOT retry])
 
     style Reset fill:#00cc66,color:#fff

@@ -10,7 +10,7 @@ Each test verifies a specific hypothesis. Tests are categorized by danger level.
 | T1 | ✅ PASS | Factory auth works, card BLANK |
 | T2 | ✅ PASS | Wrong key → 91AE, recovery with correct key → 9100 |
 | T3 | ✅ PASS | **Threshold is EXACTLY 50** (attempts 1-50 = 91AE, 51+ = 91AD) |
-| T4 | ✅ PASS | **SeqFailCtr IS volatile** — USB driver unbind/bind clears auth delay |
+| T4 | ✅ PASS | **"Keep trying" clears delay** — rapid AuthFirst in same connection (2-5 attempts) |
 | T5 | ✅ N/A | Cannot definitively test without approaching permanent lock (1000) |
 | T6 | ✅ PASS | **Per-key counters ARE independent** — 10 K0 failures don't block K1 |
 | T7 | ✅ PASS | Free read works during delay (diagnose returns full card info) |
@@ -158,7 +158,7 @@ bolty-cli try-key --key 00000000000000000000000000000000 --key-no 0
 
 ---
 
-## T4: SeqFailCtr is volatile — power cycle resets it 🟡
+## T4: SeqFailCtr recovery — "keep trying" method 🟡
 
 **Hypothesis:** Physically removing the card from the RF field resets SeqFailCtr
 to 0, clearing the auth delay.
@@ -179,8 +179,8 @@ to 0, clearing the auth delay.
    ```
 
 **Expected outcomes:**
-- If SeqFailCtr is volatile: `✅ Key accepted!` (delay cleared)
-- If SeqFailCtr is non-volatile: `⚠️ Auth delay active` (delay persists)
+- If delay clears via "keep trying": `✅ Key accepted!` or `91AF` returned
+- If delay persists after 200 rapid attempts: card may be permanently locked
 
 **This is the most important test** — it determines whether physical card
 removal is a valid recovery strategy.
@@ -484,7 +484,7 @@ After running each test, fill in:
 
 | # | Question | Test | Priority |
 |---|---|---|---|
-| 1 | Does power cycle reset SeqFailCtr? | T4 | **Critical** |
+| 1 | Does "keep trying" clear SeqFailCtr? | T4 | **Critical** |
 | 2 | Is the threshold exactly 50? | T3 | High |
 | 3 | Does delay actually increase 50-255? | T9 | Medium |
 | 4 | Are K0/K1 counters independent? | T6 | High |

@@ -2,7 +2,7 @@
 
 ## Card Recovery: UID 043365FA967380
 
-### Status: RECOVERABLE (try static test key after power cycle)
+### Status: RECOVERABLE (use "keep trying" — rapid AuthFirst in same connection)
 
 A test card with UID `043365FA967380` is stuck in an unknown key state. It cannot
 be authenticated with derived keys. The most likely cause: the card was burned by
@@ -71,7 +71,7 @@ Three per-key counters track authentication failures:
 - After SeqFailCtr >= 50: card returns `91AD` immediately (blocks auth processing)
 - After TotFailCtr >= 1000: **key permanently disabled** (card bricked for that key)
 - Counters are reset by `Cmd.ChangeKey` (requires successful K0 auth first)
-- SeqFailCtr likely resets on RF field removal (volatile) — **try power cycling**
+- SeqFailCtr is non-volatile — "keep trying" (rapid AuthFirst in same connection) clears delay
 
 ### Recovery Plan (When Card Is Back On Reader)
 
@@ -95,7 +95,7 @@ wipe
 **Step 3 — If static key works:**
 Card is now factory blank. Re-burn with bolty-cli using derived keys.
 
-**Step 4 — If static key fails, try other candidates (power cycle between each):**
+**Step 4 — If static key fails, try other candidates:**
 - Derived K0 v0: `68c3abc1d72e8a4f49cf294a9a2813c3`
 - Derived K0 v2, v3 (computed with `--version 2` or `--version 3`)
 - Card key (v1): `b86751eaa2fc214bd3b746caf7db5e51`

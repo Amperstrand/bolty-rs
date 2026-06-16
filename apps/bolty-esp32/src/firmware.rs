@@ -655,8 +655,8 @@ fn handle_button_events<I2C>(
 
 fn recover_i2c_bus(scl_pin: i32, sda_pin: i32) {
     use esp_idf_sys::{
-        esp_rom_delay_us, gpio_config, gpio_get_level, gpio_reset_pin, gpio_set_level,
-        gpio_config_t,
+        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_get_level, gpio_reset_pin,
+        gpio_set_level,
     };
 
     const GPIO_MODE_INPUT: u32 = 1;
@@ -717,7 +717,11 @@ fn recover_i2c_bus(scl_pin: i32, sda_pin: i32) {
     let recovered = unsafe { gpio_get_level(sda_pin) } != 0;
     log::info!(
         "I2C recovery: {}",
-        if recovered { "SDA released — OK" } else { "SDA still LOW — may need power cycle" }
+        if recovered {
+            "SDA released — OK"
+        } else {
+            "SDA still LOW — may need power cycle"
+        }
     );
 
     unsafe {
