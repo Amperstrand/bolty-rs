@@ -430,18 +430,26 @@ async fn run() -> anyhow::Result<()> {
                     })
                     .and_then(|e| e.file_name().into_string().ok());
 
-                if let Some(dev_id) = dev {
+                if let Some(dev_id) = &dev {
                     let unbind = format!("{sysfs}/unbind");
-                    let bind = format!("{sysfs}/bind");
-                    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&unbind) {
-                        let _ = writeln!(f, "{dev_id}");
+                    match std::fs::OpenOptions::new().write(true).open(&unbind) {
+                        Ok(mut f) => {
+                            let _ = writeln!(f, "{dev_id}");
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            let bind = format!("{sysfs}/bind");
+                            if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&bind) {
+                                let _ = writeln!(f, "{dev_id}");
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            println!("done (device {dev_id})");
+                        }
+                        Err(_) => {
+                            println!("permission denied (needs root)");
+                            println!(
+                                "  Run manually: sudo sh -c 'echo {dev_id} > {sysfs}/unbind && sleep 3 && echo {dev_id} > {sysfs}/bind'"
+                            );
+                        }
                     }
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&bind) {
-                        let _ = writeln!(f, "{dev_id}");
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    println!("done (device {dev_id})");
                 } else {
                     println!("ACS reader not found in sysfs");
                 }
