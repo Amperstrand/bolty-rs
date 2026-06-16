@@ -791,10 +791,17 @@ fn run_hwtest<I2C>(
     let mut pass = 0u32;
     let mut total = 0u32;
 
+    #[cfg(feature = "display-st7789")]
+    display::set_mode(display::DisplayMode::Burn);
+    #[cfg(feature = "display-st7789")]
+    display::set_event("HW TEST START");
+
     if let Some(btns) = buttons {
         total += 2;
 
         serial.line("[HWTEST] STEP front_button: PRESS NOW (10s)");
+        #[cfg(feature = "display-st7789")]
+        display::set_event("Press FRONT btn");
         let start = millis();
         let mut detected = false;
         while millis().saturating_sub(start) < 10_000 {
@@ -809,11 +816,17 @@ fn run_hwtest<I2C>(
         if detected {
             serial.line("[HWTEST] STEP front_button: PASS");
             pass += 1;
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("front_btn", "PASS");
         } else {
             serial.line("[HWTEST] STEP front_button: FAIL (timeout)");
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("front_btn", "FAIL");
         }
 
         serial.line("[HWTEST] STEP side_button: PRESS NOW (10s)");
+        #[cfg(feature = "display-st7789")]
+        display::set_event("Press SIDE btn");
         let start = millis();
         let mut detected = false;
         while millis().saturating_sub(start) < 10_000 {
@@ -828,8 +841,12 @@ fn run_hwtest<I2C>(
         if detected {
             serial.line("[HWTEST] STEP side_button: PASS");
             pass += 1;
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("side_btn", "PASS");
         } else {
             serial.line("[HWTEST] STEP side_button: FAIL (timeout)");
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("side_btn", "FAIL");
         }
     } else {
         serial.line("[HWTEST] STEP buttons: SKIP (not initialized)");
@@ -837,6 +854,8 @@ fn run_hwtest<I2C>(
 
     total += 2;
     serial.line("[HWTEST] STEP card_tap: TAP CARD NOW (15s)");
+    #[cfg(feature = "display-st7789")]
+    display::set_event("Tap card now");
     let start = millis();
     let mut card_uid = None;
     while millis().saturating_sub(start) < 15_000 {
@@ -858,16 +877,22 @@ fn run_hwtest<I2C>(
         FreeRtos::delay_ms(100);
     }
     match card_uid {
-        Some(uid) => {
+        Some(ref uid) => {
             serial.line(&format!("[HWTEST] STEP card_tap: PASS uid={uid}"));
             pass += 1;
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("card_tap", "PASS");
         }
         None => {
             serial.line("[HWTEST] STEP card_tap: FAIL (timeout)");
+            #[cfg(feature = "display-st7789")]
+            display::set_command_result("card_tap", "FAIL");
         }
     }
 
     serial.line("[HWTEST] STEP card_remove: REMOVE CARD NOW (10s)");
+    #[cfg(feature = "display-st7789")]
+    display::set_event("Remove card");
     let start = millis();
     let mut removed = false;
     while millis().saturating_sub(start) < 10_000 {
@@ -883,14 +908,28 @@ fn run_hwtest<I2C>(
     if removed {
         serial.line("[HWTEST] STEP card_remove: PASS");
         pass += 1;
+        #[cfg(feature = "display-st7789")]
+        display::set_command_result("card_rm", "PASS");
     } else {
         serial.line("[HWTEST] STEP card_remove: FAIL (timeout)");
+        #[cfg(feature = "display-st7789")]
+        display::set_command_result("card_rm", "FAIL");
     }
 
     if total == pass {
         serial.line(&format!("[HWTEST] RESULT: ALL PASS ({pass}/{total})"));
+        #[cfg(feature = "display-st7789")]
+        {
+            display::set_mode(display::DisplayMode::Idle);
+            display::set_event("ALL TESTS PASS");
+        }
     } else {
         serial.line(&format!("[HWTEST] RESULT: {pass}/{total} PASS"));
+        #[cfg(feature = "display-st7789")]
+        {
+            display::set_mode(display::DisplayMode::Error);
+            display::set_event(&format!("{pass}/{total} PASS"));
+        }
     }
     serial.line("[HWTEST] END");
 }
