@@ -55,7 +55,7 @@ as the default branch:
 |---|---|---|---|
 | Amperstrand/iso14443-rs | Foundation-Devices/iso14443-rs | PcdSession, WTX timeout, protocol fixes | #1–#6 |
 | Amperstrand/mfrc522-rs | crates.io mfrc522 v0.8.0 | I2C support, timer config | #1 |
-| Amperstrand/ntag424 | jannschu/ntag424 (Codeberg) | Pinned rev, bolty-specific patches | — |
+| Amperstrand/ntag424 | jannschu/ntag424 (Codeberg) | Sdm::disabled(), LenCap=0x03 fix | #2–#4 |
 
 ## SPDX
 
