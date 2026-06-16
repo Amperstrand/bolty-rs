@@ -617,7 +617,7 @@ fn handle_button_events<I2C>(
     fn toggle_wifi_button(wifi_manager: &mut Option<WifiManager>, serial: &mut SerialConsole) {
         #[cfg(feature = "wifi")]
         {
-            if let Some(ref mut manager) = wifi_manager {
+            if let Some(manager) = wifi_manager {
                 if manager.is_connected() {
                     match manager.disconnect() {
                         Ok(()) => {
