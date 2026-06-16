@@ -10,34 +10,58 @@
 - [x] Per-key version verification after burn/wipe
 - [x] `--dry-run` mode for all write commands
 - [x] `--confirm-uid` safety flag to prevent wrong-card operations
+- [x] ESP32 burn derives keys from issuer key (matches CLI behavior)
+- [x] Hardware RNG (`esp_fill_random`) for AES authenticate nonce
 
-### Card Recovery
+### Card Recovery & Diagnostics
 - [x] `try-key` command — test raw AES keys against specific slots
 - [x] `scan-keys` command — auto-scan 7 likely candidates in one session
-- [x] Auth delay handling with exponential backoff (5s/15s/30s)
+- [x] Auth delay handling: "keep trying" rapid retry within same connection
 - [x] Audit logging — all key attempts and writes logged to `/tmp/bolty-audit.log`
 - [x] Root cause analysis: M5StickC polling bug identified and fixed
+- [x] Empirical NTAG424 auth delay testing (9 tests, all documented)
+- [x] `crashlog` command — boot count, reset reason, crash history via NVS
 
 ### Platform Support
 - [x] PCSC desktop CLI (ACS ACR1252 verified — full burn/wipe/diagnose cycle)
-- [x] M5StickC Plus firmware (MFRC522 I2C, LCD display, serial console)
+- [x] M5StickC Plus firmware (MFRC522 I2C, ST7789 display, serial console)
 - [x] M5Atom Matrix firmware (MFRC522 I2C, LED matrix)
 - [x] WiFi + REST API (verified — port 80, mDNS `bolty.local`, 7 endpoints)
 - [x] OTA firmware update (implemented, no signature verification yet)
-- [x] PN532 transport support (in progress — new crates added)
+- [x] PN532 NFC reader support (pn532-transport + bolty-pn532 crates)
+- [x] STM32 skeleton (apps/bolty-stm32 — compiles, hardware init pending)
+- [x] Button support (GPIO37 front + GPIO39 side, simple + legacy modes)
+- [x] Display mode bars + battery indicator (AXP192 voltage reading)
+- [x] `hwtest` command — interactive hardware self-test with display feedback
+- [x] `button-mode` command — switch between simple and legacy C++ compat
 
-### Quality
+### Fork Management & DRY
+- [x] iso14443-rs fork: 6 branches, 6 issues, ai-experiments default
+  (PcdSession, WTX timeout, R(ACK) fix, chain recovery, dep pinning)
+- [x] mfrc522-rs fork: ai-experiments default, MIT OR Apache-2.0
+- [x] ntag424 fork: 4 branches, 4 issues, ai-experiments default
+  (Sdm::disabled(), LenCap=0x03 A/B tested on hardware)
+- [x] Cross-project DRY: mfrc522-pcd shared by bolty-rs + ccid-firmware-rs
+- [x] Cross-project DRY: pn532-transport shared by bolty-rs + ccid-firmware-rs
+- [x] All forks documented with LICENSING.md
+
+### Quality & Architecture
 - [x] Comprehensive test suite (unit + integration via MockTransport)
+- [x] PCD↔PICC loopback tests (5 tests, no hardware required)
 - [x] Pre-commit hook: secret scan + fmt + clippy + unit tests
 - [x] CI: GitHub Actions (fmt, clippy, test, cargo-audit, cargo-deny)
 - [x] Zero warnings on both host and ESP32 builds
-- [x] `.gitattributes` for consistent line endings
-- [x] GPL-3.0-or-later license
+- [x] GPL-3.0-or-later license (documented dependency chain)
+- [x] Firmware modularization (console_commands → card_operations + diagnostics)
+- [x] Polling safety: unauthenticated `poll_safe()` — zero auth APDUs
+- [x] Hardware watchdog (TWDT 5s) — auto-reset on I2C hang
+- [x] `keys` command marked as advanced with standard reference
+- [x] NVS persistence: LNURL + button mode survive reboots
 
 ## In Progress
 
-- [ ] PN532 NFC reader support (cross-project transport crate)
-- [ ] iso14443 `ai-experiments` branch integration
+- [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
+- [ ] iso14443-rs upstream contribution (waiting for stability proof)
 
 ## Planned
 
