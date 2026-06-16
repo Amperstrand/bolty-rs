@@ -268,15 +268,19 @@ pub fn main() {
                 b'\r' => {}
                 b'\n' => {
                     if !line.is_empty() {
-                        handle_line(
-                            &mut serial,
-                            line.as_str(),
-                            &service,
-                            &config,
-                            &mut wifi_manager,
-                            #[cfg(feature = "rest")]
-                            &mut rest_server,
-                        );
+                        if line.trim().eq_ignore_ascii_case("hwtest") {
+                            run_hwtest(&mut serial, &mut buttons, &service);
+                        } else {
+                            handle_line(
+                                &mut serial,
+                                line.as_str(),
+                                &service,
+                                &config,
+                                &mut wifi_manager,
+                                #[cfg(feature = "rest")]
+                                &mut rest_server,
+                            );
+                        }
                         line.clear();
                         card_announced = false;
                     }
@@ -726,4 +730,167 @@ fn neopixel_off(pin: esp_idf_hal::gpio::Gpio27) {
     if let Err(e) = tx.send_and_wait(encoder, &black, &TransmitConfig::default()) {
         log::warn!("NeoPixel write failed: {e:?}");
     }
+}
+
+fn run_hwtest<I2C>(
+    serial: &mut SerialConsole,
+    buttons: &mut Option<ButtonHandler>,
+    service: &Arc<Mutex<Esp32BoltyService<I2C>>>,
+) where
+    I2C: embedded_hal::i2c::I2c + Send + 'static,
+    I2C::Error: core::fmt::Debug,
+{
+    use crate::button::ButtonEvent;
+
+    serial.line("[HWTEST] START");
+
+    {
+        let mut svc = service.lock().unwrap();
+        serial.line(&format!("[HWTEST] board={BOARD_NAME}"));
+        serial.line(&format!("[HWTEST] i2c_baudrate={I2C_BAUDRATE_HZ}Hz"));
+        let scan = svc.i2c_scan();
+        let mut scan_str = heapless::String::<128>::new();
+        for &addr in scan.iter() {
+            let _ = write!(scan_str, "0x{addr:02X} ");
+        }
+        serial.line(&format!("[HWTEST] i2c_devices={}", scan_str.trim()));
+        serial.line(&format!(
+            "[HWTEST] nfc={}",
+            if svc.nfc_available() { "ok" } else { "missing" }
+        ));
+        serial.line(&format!(
+            "[HWTEST] display={}",
+            if DISPLAY_INIT_OK.load(Ordering::SeqCst) {
+                "ok"
+            } else {
+                "fail"
+            }
+        ));
+    }
+
+    #[cfg(feature = "display-st7789")]
+    {
+        let mv = display::read_battery_mv();
+        let usb = display::is_usb_powered();
+        serial.line(&format!(
+            "[HWTEST] battery={} usb={}",
+            mv.map(|v| v.to_string()).unwrap_or_else(|| "none".into()),
+            if usb { 1 } else { 0 }
+        ));
+    }
+
+    let mode = button::get_button_mode();
+    serial.line(&format!(
+        "[HWTEST] button_mode={}",
+        match mode {
+            crate::commands::ButtonMode::Simple => "simple",
+            crate::commands::ButtonMode::Legacy => "legacy",
+        }
+    ));
+
+    let mut pass = 0u32;
+    let mut total = 0u32;
+
+    if let Some(btns) = buttons {
+        total += 2;
+
+        serial.line("[HWTEST] STEP front_button: PRESS NOW (10s)");
+        let start = millis();
+        let mut detected = false;
+        while millis().saturating_sub(start) < 10_000 {
+            let (fe, _se) = btns.poll(millis());
+            if fe != ButtonEvent::None {
+                serial.line(&format!("[HWTEST]   event: {fe:?}"));
+                detected = true;
+                break;
+            }
+            FreeRtos::delay_ms(10);
+        }
+        if detected {
+            serial.line("[HWTEST] STEP front_button: PASS");
+            pass += 1;
+        } else {
+            serial.line("[HWTEST] STEP front_button: FAIL (timeout)");
+        }
+
+        serial.line("[HWTEST] STEP side_button: PRESS NOW (10s)");
+        let start = millis();
+        let mut detected = false;
+        while millis().saturating_sub(start) < 10_000 {
+            let (_fe, se) = btns.poll(millis());
+            if se != ButtonEvent::None {
+                serial.line(&format!("[HWTEST]   event: {se:?}"));
+                detected = true;
+                break;
+            }
+            FreeRtos::delay_ms(10);
+        }
+        if detected {
+            serial.line("[HWTEST] STEP side_button: PASS");
+            pass += 1;
+        } else {
+            serial.line("[HWTEST] STEP side_button: FAIL (timeout)");
+        }
+    } else {
+        serial.line("[HWTEST] STEP buttons: SKIP (not initialized)");
+    }
+
+    total += 2;
+    serial.line("[HWTEST] STEP card_tap: TAP CARD NOW (15s)");
+    let start = millis();
+    let mut card_uid = None;
+    while millis().saturating_sub(start) < 15_000 {
+        {
+            let mut svc = service.lock().unwrap();
+            if let Some(assessment) = svc.poll_safe() {
+                if assessment.present {
+                    let mut uid_str = heapless::String::<32>::new();
+                    if let Some(uid) = assessment.uid.as_ref() {
+                        for &b in &uid[..assessment.uid_len as usize] {
+                            let _ = write!(uid_str, "{b:02X}");
+                        }
+                    }
+                    card_uid = Some(uid_str);
+                    break;
+                }
+            }
+        }
+        FreeRtos::delay_ms(100);
+    }
+    match card_uid {
+        Some(uid) => {
+            serial.line(&format!("[HWTEST] STEP card_tap: PASS uid={uid}"));
+            pass += 1;
+        }
+        None => {
+            serial.line("[HWTEST] STEP card_tap: FAIL (timeout)");
+        }
+    }
+
+    serial.line("[HWTEST] STEP card_remove: REMOVE CARD NOW (10s)");
+    let start = millis();
+    let mut removed = false;
+    while millis().saturating_sub(start) < 10_000 {
+        {
+            let mut svc = service.lock().unwrap();
+            if !svc.card_present() {
+                removed = true;
+                break;
+            }
+        }
+        FreeRtos::delay_ms(100);
+    }
+    if removed {
+        serial.line("[HWTEST] STEP card_remove: PASS");
+        pass += 1;
+    } else {
+        serial.line("[HWTEST] STEP card_remove: FAIL (timeout)");
+    }
+
+    if total == pass {
+        serial.line(&format!("[HWTEST] RESULT: ALL PASS ({pass}/{total})"));
+    } else {
+        serial.line(&format!("[HWTEST] RESULT: {pass}/{total} PASS"));
+    }
+    serial.line("[HWTEST] END");
 }
