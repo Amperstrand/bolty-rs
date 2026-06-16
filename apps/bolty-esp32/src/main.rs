@@ -24,6 +24,10 @@ mod wifi;
 mod rest;
 
 #[cfg(target_arch = "xtensa")]
+#[cfg(feature = "rest")]
+mod tls;
+
+#[cfg(target_arch = "xtensa")]
 #[cfg(feature = "ota")]
 mod ota;
 

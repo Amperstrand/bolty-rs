@@ -52,7 +52,10 @@ where
     ) -> Result<Self, EspError> {
         let mut server = EspHttpServer::new(&HttpConfig {
             http_port: port,
+            https_port: port + 1,
             stack_size: 8192,
+            server_certificate: Some(crate::tls::server_cert()),
+            private_key: Some(crate::tls::private_key()),
             ..Default::default()
         })
         .map_err(|error| error.0)?;
