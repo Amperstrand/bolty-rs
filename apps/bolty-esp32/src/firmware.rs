@@ -15,12 +15,12 @@ use log::info;
 
 use core::fmt::Write as _;
 
-#[cfg(feature = "display-st7789")]
-use crate::display;
 #[cfg(feature = "board-m5stick")]
 use crate::button::{self, ButtonEvent, ButtonHandler};
 #[cfg(feature = "board-m5stick")]
 use crate::commands::ButtonMode;
+#[cfg(feature = "display-st7789")]
+use crate::display;
 #[cfg(feature = "board-m5stick")]
 use crate::service::BoltyService;
 #[cfg(feature = "wifi")]
@@ -220,8 +220,14 @@ pub fn main() {
 
     #[cfg(feature = "board-m5stick")]
     let mut buttons: Option<ButtonHandler> = {
-        let front = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio37, esp_idf_hal::gpio::Pull::Up);
-        let side = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio39, esp_idf_hal::gpio::Pull::Up);
+        let front = esp_idf_hal::gpio::PinDriver::input(
+            peripherals.pins.gpio37,
+            esp_idf_hal::gpio::Pull::Up,
+        );
+        let side = esp_idf_hal::gpio::PinDriver::input(
+            peripherals.pins.gpio39,
+            esp_idf_hal::gpio::Pull::Up,
+        );
         match (front, side) {
             (Ok(f), Ok(s)) => {
                 log::info!("Buttons: GPIO37 front + GPIO39 side");
@@ -492,11 +498,7 @@ fn handle_button_events<I2C>(
             serial.fail("no issuer or keys");
             return;
         }
-        let lnurl = config
-            .lnurl
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("");
+        let lnurl = config.lnurl.as_ref().map(|s| s.as_str()).unwrap_or("");
         if lnurl.is_empty() {
             serial.fail("no lnurl configured");
             return;
@@ -539,14 +541,15 @@ fn handle_button_events<I2C>(
             return;
         }
 
-        let result = svc.wipe(
-            config.pending_issuer.as_ref(),
-            config.pending_keys.as_ref(),
-        );
+        let result = svc.wipe(config.pending_issuer.as_ref(), config.pending_keys.as_ref());
         report_button_result(serial, "wipe", result);
     }
 
-    fn report_button_result(serial: &mut SerialConsole, action: &str, result: crate::service::WorkflowResult) {
+    fn report_button_result(
+        serial: &mut SerialConsole,
+        action: &str,
+        result: crate::service::WorkflowResult,
+    ) {
         use crate::service::WorkflowResult;
         match result {
             WorkflowResult::Success => {
@@ -632,10 +635,7 @@ fn handle_button_events<I2C>(
         #[cfg(feature = "display-st7789")]
         display::set_event("sleep");
         unsafe {
-            esp_idf_sys::esp_sleep_enable_ext0_wakeup(
-                esp_idf_sys::gpio_num_t_GPIO_NUM_39,
-                0,
-            );
+            esp_idf_sys::esp_sleep_enable_ext0_wakeup(esp_idf_sys::gpio_num_t_GPIO_NUM_39, 0);
             esp_idf_sys::esp_deep_sleep_start();
         }
         loop {}

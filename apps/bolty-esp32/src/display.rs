@@ -278,10 +278,12 @@ pub fn read_battery_mv() -> Option<u32> {
     let i2c = guard.as_mut()?;
 
     let mut reg78 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, BLOCK).ok()?;
+    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, BLOCK)
+        .ok()?;
 
     let mut reg79 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, BLOCK).ok()?;
+    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, BLOCK)
+        .ok()?;
 
     let raw = ((reg78[0] as u32) << 4) | ((reg79[0] as u32) >> 4);
     Some((raw * 11) / 10)
@@ -380,8 +382,8 @@ fn redraw(screen: &mut Screen) {
         .text_color(Rgb565::WHITE)
         .background_color(bar_color)
         .build();
-    let _ = Text::with_baseline(mode_label, Point::new(x, 0), bar_style, Baseline::Top)
-        .draw(display);
+    let _ =
+        Text::with_baseline(mode_label, Point::new(x, 0), bar_style, Baseline::Top).draw(display);
 
     let mut batt = heapless::String::<12>::new();
     if state.battery_pct == 255 {
@@ -395,8 +397,8 @@ fn redraw(screen: &mut Screen) {
         );
     }
     let batt_x = (LCD_H_RES as i32) - (batt.len() as i32 * 6) - 2;
-    let _ = Text::with_baseline(&batt, Point::new(batt_x, 0), bar_style, Baseline::Top)
-        .draw(display);
+    let _ =
+        Text::with_baseline(&batt, Point::new(batt_x, 0), bar_style, Baseline::Top).draw(display);
 
     clear_line(display, lh);
     let mut l1 = heapless::String::<32>::new();

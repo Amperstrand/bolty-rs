@@ -67,10 +67,7 @@ pub struct ButtonHandler {
 }
 
 impl ButtonHandler {
-    pub fn new(
-        front: PinDriver<'static, Input>,
-        side: PinDriver<'static, Input>,
-    ) -> Self {
+    pub fn new(front: PinDriver<'static, Input>, side: PinDriver<'static, Input>) -> Self {
         Self {
             front,
             side,

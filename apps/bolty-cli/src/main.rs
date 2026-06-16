@@ -396,11 +396,58 @@ async fn run() -> anyhow::Result<()> {
         }
 
         Cli::ResetCard => {
-            let mut t = transport::PcscTransport::connect()?;
-            println!("Connected to reader: {}", t.reader_name());
-            println!("Power-cycling card (SCARD_UNPOWER_CARD)...");
-            t.power_cycle()?;
-            println!("✅ Card power-cycled. SeqFailCtr should be reset.");
+            println!(
+                "Connected to reader: {}",
+                transport::PcscTransport::connect()?.reader_name()
+            );
+
+            // Method 1: SCARD_UNPOWER_CARD (proper PCSC, but doesn't cut RF on ACS ACR1252)
+            {
+                let mut t = transport::PcscTransport::connect()?;
+                print!("Trying SCARD_UNPOWER_CARD... ");
+                match t.power_cycle() {
+                    Ok(()) => println!("accepted"),
+                    Err(e) => println!("failed: {e}"),
+                }
+            }
+
+            // Method 2: USB driver unbind/bind (cuts actual reader power on Linux)
+            #[cfg(target_os = "linux")]
+            {
+                use std::io::Write;
+                print!("Trying USB driver unbind/bind... ");
+                let sysfs = "/sys/bus/usb/drivers/usb";
+                let dev = std::fs::read_dir(sysfs)
+                    .ok()
+                    .and_then(|entries| {
+                        entries.filter_map(|e| e.ok()).find(|e| {
+                            let path = e.path();
+                            std::fs::read_to_string(path.join("idVendor"))
+                                .ok()
+                                .map(|v| v.trim() == "072f")
+                                .unwrap_or(false)
+                        })
+                    })
+                    .and_then(|e| e.file_name().into_string().ok());
+
+                if let Some(dev_id) = dev {
+                    let unbind = format!("{sysfs}/unbind");
+                    let bind = format!("{sysfs}/bind");
+                    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&unbind) {
+                        let _ = writeln!(f, "{dev_id}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&bind) {
+                        let _ = writeln!(f, "{dev_id}");
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    println!("done (device {dev_id})");
+                } else {
+                    println!("ACS reader not found in sysfs");
+                }
+            }
+
+            println!("\n✅ Card power-cycled. SeqFailCtr should be reset.");
             println!("   Auth delay (91AD) should be cleared.");
             println!("   TotFailCtr is NOT reset (permanent counter).");
         }

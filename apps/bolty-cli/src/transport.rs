@@ -94,19 +94,20 @@ impl PcscTransport {
         &self.reader_name
     }
 
-    /// Power-cycle the card using SCARD_UNPOWER_CARD.
+    /// Power-cycle the card to reset SeqFailCtr (clears auth delay).
     ///
-    /// This unpowers the card (removes RF field), then repowers it.
-    /// On NTAG424, this resets the volatile SeqFailCtr, clearing auth delay.
-    /// Does NOT reset TotFailCtr (non-volatile EEPROM counter).
+    /// On ACS ACR1252 (Linux CCID), SCARD_UNPOWER_CARD does NOT cut RF power —
+    /// the antenna stays energized. This method falls back to USB driver
+    /// unbind/bind which removes all power from the reader.
     pub fn power_cycle(&mut self) -> Result<(), PcscError> {
-        self.card
-            .reconnect(
-                pcsc::ShareMode::Shared,
-                self.protocol,
-                pcsc::Disposition::UnpowerCard,
-            )
-            .map_err(PcscError::from)
+        match self.card.reconnect(
+            pcsc::ShareMode::Shared,
+            self.protocol,
+            pcsc::Disposition::UnpowerCard,
+        ) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(PcscError::from(e)),
+        }
     }
 }
 

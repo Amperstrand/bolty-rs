@@ -2,13 +2,13 @@ use core::fmt::Write as _;
 
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "board-m5stick")]
+use crate::button;
 use crate::{
     commands::{ButtonMode, Command, CommandError, parse_command},
     service::{BoltyService, WorkflowResult},
     workflow::dispatch_command,
 };
-#[cfg(feature = "board-m5stick")]
-use crate::button;
 use bolty_core::config::BoltyConfig;
 use heapless::String;
 
