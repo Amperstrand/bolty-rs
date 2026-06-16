@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use esp_idf_hal::gpio::{Gpio37, Gpio39, Input, PinDriver};
+use esp_idf_hal::gpio::{Input, PinDriver};
 
 use crate::commands::ButtonMode;
 
@@ -60,16 +60,16 @@ impl ButtonDebounce {
 }
 
 pub struct ButtonHandler {
-    front: PinDriver<'static, Gpio37, Input>,
-    side: PinDriver<'static, Gpio39, Input>,
+    front: PinDriver<'static, Input>,
+    side: PinDriver<'static, Input>,
     front_state: ButtonDebounce,
     side_state: ButtonDebounce,
 }
 
 impl ButtonHandler {
     pub fn new(
-        front: PinDriver<'static, Gpio37, Input>,
-        side: PinDriver<'static, Gpio39, Input>,
+        front: PinDriver<'static, Input>,
+        side: PinDriver<'static, Input>,
     ) -> Self {
         Self {
             front,

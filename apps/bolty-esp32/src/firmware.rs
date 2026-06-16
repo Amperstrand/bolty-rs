@@ -220,8 +220,8 @@ pub fn main() {
 
     #[cfg(feature = "board-m5stick")]
     let mut buttons: Option<ButtonHandler> = {
-        let front = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio37);
-        let side = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio39);
+        let front = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio37, esp_idf_hal::gpio::Pull::Up);
+        let side = esp_idf_hal::gpio::PinDriver::input(peripherals.pins.gpio39, esp_idf_hal::gpio::Pull::Up);
         match (front, side) {
             (Ok(f), Ok(s)) => {
                 log::info!("Buttons: GPIO37 front + GPIO39 side");
