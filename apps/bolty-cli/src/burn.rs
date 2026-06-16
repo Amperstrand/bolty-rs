@@ -75,6 +75,49 @@ where
         return Ok(());
     }
 
+    if !url.contains("{picc") || !url.contains("{mac}") {
+        anyhow::bail!(
+            "URL must contain {{picc}} and {{mac}} placeholders for SDM.\n\
+             Example: https://example.com/?p={{picc:uid+ctr}}&c=[{{mac}}\n\
+             Got: {url}"
+        );
+    }
+
+    println!("[0/7] Checking card state...");
+    {
+        let factory_like = {
+            let mut retry = AuthRetry::new();
+            loop {
+                let rnd_a = gen_rnd_a()?;
+                match Session::default()
+                    .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+                    .await
+                {
+                    Ok(_) => break true,
+                    Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                        Some(d) => {
+                            tokio::time::sleep(d).await;
+                        }
+                        None => {
+                            anyhow::bail!(
+                                "card is in AUTH_DELAY state.\n\
+                                 The 'keep trying' approach was exhausted.\n\
+                                 Use: bolty-cli try-key --key 00000000000000000000000000000000\n\
+                                 Then retry the burn."
+                            );
+                        }
+                    },
+                    Err(_) => break false,
+                }
+            }
+        };
+        if factory_like {
+            println!("  Card is BLANK (factory keys).");
+        } else {
+            println!("  Card is PROVISIONED — will attempt re-burn with derived K0.");
+        }
+    }
+
     // --- Probe auth: determine current_key and previous_keys ---
     // Try factory K0 first (fresh card), then derived K0 (re-burn).
     // This probe is separate from the library's internal auth — the card supports re-auth.

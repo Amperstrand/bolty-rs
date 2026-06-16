@@ -62,6 +62,23 @@ where
         return Ok(());
     }
 
+    println!("[0/7] Checking card state...");
+    let factory_probe = {
+        let rnd_a = gen_rnd_a()?;
+        Session::default()
+            .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+            .await
+            .is_ok()
+    };
+
+    if factory_probe {
+        anyhow::bail!(
+            "card has factory K0 — already BLANK or half-wiped.\n\
+             Use 'burn' to provision, or diagnose for details."
+        );
+    }
+    println!("  Card is PROVISIONED (factory K0 rejected). Proceeding with wipe.");
+
     // Factory K0 probe: detect already-wiped cards (single attempt, no retry).
     // If factory K0 works and the card is clean, return early.
     // If factory K0 works but card has residual state, bail with instructions.
