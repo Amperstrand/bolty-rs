@@ -10,6 +10,7 @@ pub struct PcscTransport {
     card: pcsc::Card,
     reader_name: String,
     protocol: pcsc::Protocols,
+    ctx: pcsc::Context,
 }
 
 #[derive(Debug)]
@@ -86,6 +87,7 @@ impl PcscTransport {
             card,
             reader_name,
             protocol,
+            ctx,
         })
     }
 
@@ -96,18 +98,37 @@ impl PcscTransport {
 
     /// Power-cycle the card to reset SeqFailCtr (clears auth delay).
     ///
-    /// On ACS ACR1252 (Linux CCID), SCARD_UNPOWER_CARD does NOT cut RF power —
-    /// the antenna stays energized. This method falls back to USB driver
-    /// unbind/bind which removes all power from the reader.
-    pub fn power_cycle(&mut self) -> Result<(), PcscError> {
-        match self.card.reconnect(
-            pcsc::ShareMode::Shared,
-            self.protocol,
-            pcsc::Disposition::UnpowerCard,
-        ) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(PcscError::from(e)),
-        }
+    /// Uses SCardDisconnect(SCARD_UNPOWER_CARD) + SCardConnect() which forces
+    /// a full new RF field activation. SCardReconnect(SCARD_UNPOWER_CARD) does
+    /// NOT work on ACS ACR1252 — it keeps the card in the same ISO 14443 session.
+    pub fn power_cycle(self) -> Result<Self, PcscError> {
+        let reader_cstr = std::ffi::CString::new(self.reader_name.as_str()).unwrap_or_default();
+        let ctx = self.ctx;
+
+        self.card
+            .disconnect(pcsc::Disposition::UnpowerCard)
+            .map_err(|(_, e)| PcscError::from(e))?;
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let (card, protocol) = ctx
+            .connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T1)
+            .map(|c| (c, pcsc::Protocols::T1))
+            .or_else(|_| {
+                ctx.connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::RAW)
+                    .map(|c| (c, pcsc::Protocols::RAW))
+            })
+            .or_else(|_| {
+                ctx.connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0)
+                    .map(|c| (c, pcsc::Protocols::T0))
+            })?;
+
+        Ok(Self {
+            card,
+            reader_name: reader_cstr.to_string_lossy().to_string(),
+            protocol,
+            ctx,
+        })
     }
 }
 

@@ -401,12 +401,12 @@ async fn run() -> anyhow::Result<()> {
                 transport::PcscTransport::connect()?.reader_name()
             );
 
-            // Method 1: SCARD_UNPOWER_CARD (proper PCSC, but doesn't cut RF on ACS ACR1252)
+            // Method 1: SCARD_UNPOWER_CARD (disconnect+reconnect, forces new RF activation)
             {
-                let mut t = transport::PcscTransport::connect()?;
-                print!("Trying SCARD_UNPOWER_CARD... ");
+                let t = transport::PcscTransport::connect()?;
+                print!("Trying SCardDisconnect(UNPOWER) + SCardConnect... ");
                 match t.power_cycle() {
-                    Ok(()) => println!("accepted"),
+                    Ok(_) => println!("accepted"),
                     Err(e) => println!("failed: {e}"),
                 }
             }
