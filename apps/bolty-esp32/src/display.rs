@@ -8,7 +8,7 @@ use embedded_graphics::{
     text::{Baseline, Text},
 };
 use esp_idf_hal::{
-    delay::{BLOCK, FreeRtos},
+    delay::{FreeRtos, TickType_t},
     gpio::{
         Gpio5, Gpio12, Gpio13, Gpio15, Gpio18, Gpio21, Gpio22, Gpio23, Gpio27, Output, PinDriver,
     },
@@ -93,16 +93,19 @@ pub enum DisplayMode {
     Error,
 }
 
+const AXP192_TIMEOUT: TickType_t = TickType_t(100);
+
 fn axp192_write_reg(
     i2c: &mut I2cDriver<'_>,
     reg: u8,
     val: u8,
     label: &str,
 ) -> Result<(), &'static str> {
-    i2c.write(AXP192_ADDRESS, &[reg, val], BLOCK).map_err(|e| {
-        warn!("AXP192 write reg 0x{reg:02X} ({label}) failed: {e:?}");
-        "axp192 i2c write failed"
-    })
+    i2c.write(AXP192_ADDRESS, &[reg, val], AXP192_TIMEOUT)
+        .map_err(|e| {
+            warn!("AXP192 write reg 0x{reg:02X} ({label}) failed: {e:?}");
+            "axp192 i2c write failed"
+        })
 }
 
 fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
@@ -110,7 +113,7 @@ fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
     axp192_write_reg(i2c, 0x28, 0xCC, "LDO2/LDO3 voltage")?; // LDO2=3.0V (backlight), LDO3=3.0V (display)
 
     let mut buf = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut buf, BLOCK)
+    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut buf, AXP192_TIMEOUT)
         .map_err(|e| {
             warn!("AXP192 read reg 0x12 failed: {e:?}");
             "axp192 i2c read failed"
@@ -128,7 +131,7 @@ fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
     axp192_write_reg(i2c, 0x90, 0x02, "GPIO0 LDO mode")?;
 
     let mut grove_reg = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x10], &mut grove_reg, BLOCK)
+    i2c.write_read(AXP192_ADDRESS, &[0x10], &mut grove_reg, AXP192_TIMEOUT)
         .map_err(|e| {
             warn!("AXP192 read reg 0x10 failed: {e:?}");
             "axp192 grove read failed"
@@ -137,7 +140,7 @@ fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
     axp192_write_reg(i2c, 0x10, grove_val, "Grove 5V boost enable")?;
 
     let mut verify = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut verify, BLOCK)
+    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut verify, AXP192_TIMEOUT)
         .map_err(|e| {
             warn!("AXP192 verify read failed: {e:?}");
             "axp192 verify failed"
@@ -278,11 +281,11 @@ pub fn read_battery_mv() -> Option<u32> {
     let i2c = guard.as_mut()?;
 
     let mut reg78 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, BLOCK)
+    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, AXP192_TIMEOUT)
         .ok()?;
 
     let mut reg79 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, BLOCK)
+    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, AXP192_TIMEOUT)
         .ok()?;
 
     let raw = ((reg78[0] as u32) << 4) | ((reg79[0] as u32) >> 4);
@@ -299,7 +302,7 @@ pub fn is_usb_powered() -> bool {
 
     let mut reg01 = [0u8; 1];
     if i2c
-        .write_read(AXP192_ADDRESS, &[0x01], &mut reg01, BLOCK)
+        .write_read(AXP192_ADDRESS, &[0x01], &mut reg01, AXP192_TIMEOUT)
         .is_err()
     {
         return false;
