@@ -53,14 +53,19 @@ const BOARD_NAME: &str = "M5Atom";
 #[cfg(feature = "board-m5stick")]
 const BOARD_NAME: &str = "M5StickC Plus";
 
-pub(super) const RND_A: [u8; 16] = [0u8; 16];
+pub(super) fn gen_rnd_a() -> [u8; 16] {
+    let mut buf = [0u8; 16];
+    unsafe { esp_idf_sys::esp_fill_random(buf.as_mut_ptr().cast(), buf.len()) };
+    buf
+}
+
 const I2C_BAUDRATE_HZ: u32 = 100_000;
 pub(super) const MAX_LINE_LEN: usize = 512;
 pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
-const BATTERY_UPDATE_INTERVAL_MS: u64 = 5000;
+const BATTERY_UPDATE_INTERVAL_MS: u64 = 5_000;
 static DISPLAY_INIT_OK: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "rest")]
 pub(super) const REST_PORT: u16 = 80;
@@ -117,13 +122,22 @@ pub fn main() {
     #[cfg(feature = "board-m5stick")]
     let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
 
+    #[cfg(feature = "board-m5atom")]
+    let (i2c_sda_pin, i2c_scl_pin) = (26i32, 32i32);
+    #[cfg(feature = "board-m5stick")]
+    let (i2c_sda_pin, i2c_scl_pin) = (32i32, 33i32);
+
+    recover_i2c_bus(i2c_scl_pin, i2c_sda_pin);
+
     FreeRtos::delay_ms(50);
 
     let mut i2c = match I2cDriver::new(
         peripherals.i2c0,
         i2c_sda,
         i2c_scl,
-        &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
+        &I2cConfig::new()
+            .baudrate(I2C_BAUDRATE_HZ.Hz())
+            .timeout(APBTickType::from(Duration::from_millis(500))),
     ) {
         Ok(i2c) => i2c,
         Err(e) => fatal_halt(&format!("I2C0 init failed: {e:?}")),

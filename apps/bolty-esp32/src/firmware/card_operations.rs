@@ -10,7 +10,7 @@ use bolty_core::{
 };
 use ntag424::KeyNumber;
 
-use super::RND_A;
+use super::gen_rnd_a;
 use super::service::{DiagnoseResult, DiagnoseState, Esp32BoltyService, PiccResult};
 use super::utils::{
     card_keys_to_keyset, copy_lnurl, copy_uid7, looks_factory_default, map_ntag_error,
@@ -26,8 +26,12 @@ where
         let mut transport = self.activate_transport()?;
         let uid =
             copy_uid7(transport.uid()).ok_or_else(|| workflow_error("unsupported uid length"))?;
-        let key_versions = block_on(bolty_ntag::check_key_versions(&mut transport, key, RND_A))
-            .map_err(|err| map_ntag_error(&err))?;
+        let key_versions = block_on(bolty_ntag::check_key_versions(
+            &mut transport,
+            key,
+            gen_rnd_a(),
+        ))
+        .map_err(|err| map_ntag_error(&err))?;
 
         let issuer = self
             .current_config
@@ -118,7 +122,7 @@ where
                 &mut transport,
                 KeyNumber::Key0,
                 &bolty_ntag::FACTORY_KEY,
-                RND_A,
+                gen_rnd_a(),
             )) {
                 Ok(_) => {
                     zero_key_auth_ok = true;
@@ -209,7 +213,7 @@ where
             &mut transport,
             KeyNumber::Key0,
             &bolty_ntag::FACTORY_KEY,
-            RND_A,
+            gen_rnd_a(),
         ))
         .is_ok();
 
@@ -220,7 +224,7 @@ where
                 &mut transport,
                 KeyNumber::Key0,
                 &keyset[0],
-                RND_A,
+                gen_rnd_a(),
             ))
             .is_ok();
 
@@ -239,7 +243,7 @@ where
             previous_keys,
         };
 
-        match block_on(bolty_ntag::burn(&mut transport, &params, RND_A)) {
+        match block_on(bolty_ntag::burn(&mut transport, &params, gen_rnd_a())) {
             Ok(result) => {
                 self.status.last_uid = Some(result.uid);
                 self.status.nfc_ready = true;
@@ -289,7 +293,7 @@ where
         match block_on(bolty_ntag::wipe(
             &mut transport,
             &card_keys_to_keyset(&card_keys),
-            RND_A,
+            gen_rnd_a(),
         )) {
             Ok(result) => {
                 self.status.last_uid = Some(result.uid);
