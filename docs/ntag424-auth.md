@@ -69,7 +69,8 @@ On `9100` (success):
 ## 2. Failure Counter System
 
 NTAG424 maintains three per-key counters. Each key slot (K0-K4) has its own
-independent set. These are defined in AN12196 §7.4.
+independent set (verified empirically in T6 — 10 K0 failures do not affect
+K1 auth). These are defined in AN12196 §7.4.
 
 ### 2.1 The Three Counters
 
@@ -107,8 +108,11 @@ Tracks **consecutive** failures since the last successful authentication.
 - **50-99**: Auth delay active. AuthFirst returns `91AD`. Delay increases gradually.
 - **100-255**: Maximum delay. AuthFirst still returns `91AD`.
 
-**Likely volatile (RAM):** Resets when card loses power (removed from RF field).
-This means physically removing and re-placing the card clears the auth delay.
+**Confirmed volatile (RAM):** Resets when card loses RF power. Verified
+empirically in T4 — USB driver unbind/bind (`echo 1-2 | sudo tee
+/sys/bus/usb/drivers/usb/unbind && sleep 5 && echo 1-2 | sudo tee
+/sys/bus/usb/drivers/usb/bind`) cuts reader antenna and clears auth delay.
+Physical card removal also works. PCSC warm reset and pcscd restart do NOT.
 
 #### TotFailCtr — Total Failure Counter (2 bytes)
 
@@ -375,6 +379,10 @@ flowchart TD
 | Backoff strategy | ✓ 5s/15s/30s | ✓ Adequate |
 
 ## 7. How bolty-rs Handles Auth Today
+
+> **Empirically verified (T8):** SDM continues to work during K0 auth delay.
+> p=/c= values change on every read, and `mac=true` in diagnose. This is
+> because SDM uses K1/K2, which are independent of K0's SeqFailCtr.
 
 ### 7.1 AuthRetry (apps/bolty-cli/src/common.rs)
 

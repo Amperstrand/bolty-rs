@@ -110,11 +110,34 @@ management but can still be read (read=Free). Use as read-only test artifact.
 1. **Fix M5StickC polling bug** — background loop must STOP attempting auth after
    first failure. Currently spams every 500ms, causing SeqFailCtr to skyrocket.
 2. **Add auth-delay awareness to M5StickC** — detect `91AD` and suspend polling.
-3. **Improve bolty-cli auth delay handling** — current 2s/5s retry is too aggressive.
-   Implement exponential backoff (30s, 60s, 120s). Add `--max-auth-wait` flag.
+3. **Improve bolty-cli auth delay handling** — current 5s/15s/30s backoff with
+   circuit breaker (10 failure limit). Implemented in commit `6d08cbb`.
 4. **Never leave provisioned cards on M5StickC reader** when firmware is polling.
 5. **Add `try-key` command to bolty-cli** — test specific raw key without full wipe.
 6. **Track which tool burned each card** — log UID + tool + key type in audit log.
+
+### Auth Delay Recovery (Empirically Verified T4)
+
+SeqFailCtr is **volatile (RAM)** — resets when card loses RF power.
+
+**Software recovery (no physical card removal needed):**
+```bash
+# Cut USB power to the reader, which cuts the RF antenna:
+echo 1-2 | sudo tee /sys/bus/usb/drivers/usb/unbind
+sleep 5
+echo 1-2 | sudo tee /sys/bus/usb/drivers/usb/bind
+sleep 3
+# SeqFailCtr is now 0 — auth delay cleared.
+```
+
+**What does NOT work:**
+- New PCSC connection (warm reset) — card stays powered
+- `systemctl restart pcscd` — reader keeps antenna on
+- `SCARD_UNPOWER_CARD` — ineffective on ACS ACR1252
+- USB `authorized=0` — VBUS stays powered
+
+**Physical recovery:**
+Remove card from reader, wait 2 seconds, place back. Always works.
 
 ### Tools for Recovery
 
