@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
+use core::time::Duration;
+
 use esp_idf_hal::{
     delay::FreeRtos,
-    i2c::{I2cConfig, I2cDriver},
+    i2c::{APBTickType, I2cConfig, I2cDriver},
     peripherals::Peripherals,
     units::FromValueType,
 };
@@ -128,7 +130,9 @@ pub fn main() {
         peripherals.i2c0,
         i2c_sda,
         i2c_scl,
-        &I2cConfig::new().baudrate(I2C_BAUDRATE_HZ.Hz()),
+        &I2cConfig::new()
+            .baudrate(I2C_BAUDRATE_HZ.Hz())
+            .timeout(APBTickType::from(Duration::from_millis(500))),
     ) {
         Ok(i2c) => i2c,
         Err(e) => fatal_halt(&format!("I2C0 init failed: {e:?}")),
@@ -189,6 +193,7 @@ pub fn main() {
     let mut rest_server = None;
     let mut line = String::<MAX_LINE_LEN>::new();
     let mut next_poll_at = millis();
+    let mut heartbeat_at = millis();
     let mut card_announced = false;
 
     // Hardware diagnostics on serial console (visible even if boot logs were missed)
@@ -305,6 +310,13 @@ pub fn main() {
         if now >= next_poll_at {
             poll_card(&mut serial, &service, &mut card_announced);
             next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
+        }
+
+        if now >= heartbeat_at {
+            let mut hb = String::<48>::new();
+            let _ = write!(hb, "[HB] alive t={}ms", now);
+            serial.line(hb.as_str());
+            heartbeat_at = now.saturating_add(10_000);
         }
 
         #[cfg(feature = "display-st7789")]

@@ -20,7 +20,22 @@ impl SerialConsole {
         if rc < 0 {
             log::warn!("failed to set stdin non-blocking: rc={rc}");
         }
-        Self
+
+        let console = Self;
+        // Drain any stale bytes left from boot/download mode so the first
+        // real command isn't corrupted by leftover flasher handshake data.
+        console.flush_rx();
+        console
+    }
+
+    fn flush_rx(&self) {
+        let mut byte = 0u8;
+        loop {
+            let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
+            if read != 1 {
+                break;
+            }
+        }
     }
 
     pub(super) fn read_byte_nonblocking(&mut self) -> Option<u8> {
@@ -73,6 +88,7 @@ impl SerialConsole {
                 )
             };
             if rc <= 0 {
+                log::warn!("serial write failed: rc={rc}");
                 break;
             }
             written += rc as usize;
