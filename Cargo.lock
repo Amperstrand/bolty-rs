@@ -124,15 +124,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "axp192"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa52a79abefbd509c7f2081c84c1191aa2b7e42f74c79557fd53e2a88902c4b2"
-dependencies = [
- "embedded-hal 1.0.0",
-]
-
-[[package]]
 name = "az"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,7 +228,6 @@ dependencies = [
 name = "bolty-esp32"
 version = "0.1.0"
 dependencies = [
- "axp192",
  "bolty-core",
  "bolty-mfrc522",
  "bolty-ntag",
