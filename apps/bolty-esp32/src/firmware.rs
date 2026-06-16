@@ -1129,71 +1129,33 @@ fn process_ble_command<S: crate::service::BoltyService>(
     cmd: &str,
     service: &Arc<Mutex<S>>,
     config: &Arc<Mutex<BoltyConfig>>,
-) -> heapless::String<512> {
+) -> String {
     use crate::commands::{Command, parse_command};
     use crate::service::WorkflowResult;
     use crate::workflow::dispatch_command;
 
-    let mut response = heapless::String::<512>::new();
+    let Ok(mut svc) = service.lock() else {
+        return "[FAIL] service unavailable".to_string();
+    };
+    let Ok(mut cfg) = config.lock() else {
+        return "[FAIL] config unavailable".to_string();
+    };
 
     match parse_command(cmd) {
-        Ok(command) => {
-            let (mut svc, mut cfg) = match (service.lock(), config.lock()) {
-                (Ok(s), Ok(c)) => (s, c),
-                _ => {
-                    let _ = response.push_str("[FAIL] service unavailable");
-                    return response;
-                }
-            };
-
-            match &command {
-                Command::Uid => {
-                    let result = dispatch_command(command.clone(), &mut svc, &mut cfg);
-                    svc.sync_from(&cfg);
-                    match result {
-                        WorkflowResult::Success => {
-                            let _ = write!(response, "[OK] uid handled");
-                        }
-                        _ => {
-                            let _ = write!(response, "[FAIL] {:?}", result);
-                        }
-                    }
-                }
-                Command::Status => {
-                    let status = svc.get_status();
-                    let _ = write!(
-                        response,
-                        "[OK] nfc={} uid={}",
-                        status.nfc_ready,
-                        status
-                            .last_uid
-                            .map(|u| format!("{:02X?}", u))
-                            .unwrap_or_default()
-                    );
-                }
-                Command::Burn | Command::Wipe => {
-                    let result = dispatch_command(command.clone(), &mut svc, &mut cfg);
-                    svc.sync_from(&cfg);
-                    match result {
-                        WorkflowResult::Success => {
-                            let _ = write!(response, "[OK] {:?}", command);
-                        }
-                        _ => {
-                            let _ = write!(response, "[FAIL] {:?}", result);
-                        }
-                    }
-                }
-                _ => {
-                    let result = dispatch_command(command, &mut svc, &mut cfg);
-                    svc.sync_from(&cfg);
-                    let _ = write!(response, "result: {:?}", result);
-                }
+        Ok(command) => match &command {
+            Command::Status => {
+                let status = svc.get_status();
+                format!("[OK] nfc={} uid={:?}", status.nfc_ready, status.last_uid)
             }
-        }
-        Err(_) => {
-            let _ = write!(response, "[FAIL] unknown command: {cmd}");
-        }
+            Command::Burn | Command::Wipe | Command::Uid | Command::Inspect | Command::Check => {
+                let result = dispatch_command(command, &mut svc, &mut cfg);
+                format!("result: {result:?}")
+            }
+            _ => {
+                let result = dispatch_command(command, &mut svc, &mut cfg);
+                format!("result: {result:?}")
+            }
+        },
+        Err(_) => format!("[FAIL] unknown command: {cmd}"),
     }
-
-    response
 }

@@ -280,8 +280,8 @@ impl BleTransport {
 }
 
 pub fn wait_for_ready(transport: &BleTransport, timeout_ms: u64) -> bool {
-    let start = FreeRtos::tick_count();
-    let ticks = timeout_ms / portTICK_PERIOD_MS as u64;
+    let start = unsafe { esp_idf_svc::sys::xTaskGetTickCount() };
+    let timeout_ticks = (timeout_ms / 10) as u32;
     loop {
         {
             let state = transport.state.lock().unwrap();
@@ -289,13 +289,10 @@ pub fn wait_for_ready(transport: &BleTransport, timeout_ms: u64) -> bool {
                 return true;
             }
         }
-        if FreeRtos::tick_count() - start > ticks as u32 {
+        let now = unsafe { esp_idf_svc::sys::xTaskGetTickCount() };
+        if now - start > timeout_ticks {
             return false;
         }
         FreeRtos::delay_ms(100);
     }
-}
-
-extern "C" {
-    fn portTICK_PERIOD_MS() -> u16;
 }

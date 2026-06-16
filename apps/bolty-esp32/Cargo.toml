@@ -51,10 +51,10 @@ remote_component = { name = "espressif/mdns", version = "1.8.2" }
 
 [package.metadata.esp-idf-sys.sdkconfig]
 # BT and WiFi share the modem on ESP32 — cannot use both simultaneously.
-"CONFIG_BT_ENABLED" = { optional = true, value = "y" }
-"CONFIG_BT_BLUEDROID_ENABLED" = { optional = true, value = "y" }
-"CONFIG_BT_CLASSIC_ENABLED" = { optional = true, value = "n" }
-"CONFIG_BTDM_CTRL_MODE_BLE_ONLY" = { optional = true, value = "y" }
-"CONFIG_BT_BLE_42_FEATURES_SUPPORTED" = { optional = true, value = "y" }
-"CONFIG_BT_BTC_TASK_STACK_SIZE" = { optional = true, value = "15000" }
-"CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY" = { optional = true, value = "y" }
+"CONFIG_BT_ENABLED" = "y"
+"CONFIG_BT_BLUEDROID_ENABLED" = "y"
+"CONFIG_BT_CLASSIC_ENABLED" = "n"
+"CONFIG_BTDM_CTRL_MODE_BLE_ONLY" = "y"
+"CONFIG_BT_BLE_42_FEATURES_SUPPORTED" = "y"
+"CONFIG_BT_BTC_TASK_STACK_SIZE" = "15000"
+"CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY" = "y"
