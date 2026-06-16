@@ -166,6 +166,10 @@ enum Cli {
         #[arg(long)]
         issuer_key: String,
     },
+
+    /// Power-cycle the card to clear auth delay (SCARD_UNPOWER_CARD).
+    /// Resets SeqFailCtr (volatile). Does NOT reset TotFailCtr.
+    ResetCard,
 }
 
 fn parse_hex_16(s: &str) -> anyhow::Result<[u8; 16]> {
@@ -389,6 +393,16 @@ async fn run() -> anyhow::Result<()> {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
             scan_keys::cmd_scan_keys(&mut transport, &issuer_key).await?;
+        }
+
+        Cli::ResetCard => {
+            let mut t = transport::PcscTransport::connect()?;
+            println!("Connected to reader: {}", t.reader_name());
+            println!("Power-cycling card (SCARD_UNPOWER_CARD)...");
+            t.power_cycle()?;
+            println!("✅ Card power-cycled. SeqFailCtr should be reset.");
+            println!("   Auth delay (91AD) should be cleared.");
+            println!("   TotFailCtr is NOT reset (permanent counter).");
         }
     }
 

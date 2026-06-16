@@ -93,6 +93,21 @@ impl PcscTransport {
     pub fn reader_name(&self) -> &str {
         &self.reader_name
     }
+
+    /// Power-cycle the card using SCARD_UNPOWER_CARD.
+    ///
+    /// This unpowers the card (removes RF field), then repowers it.
+    /// On NTAG424, this resets the volatile SeqFailCtr, clearing auth delay.
+    /// Does NOT reset TotFailCtr (non-volatile EEPROM counter).
+    pub fn power_cycle(&mut self) -> Result<(), PcscError> {
+        self.card
+            .reconnect(
+                pcsc::ShareMode::Shared,
+                self.protocol,
+                pcsc::Disposition::UnpowerCard,
+            )
+            .map_err(PcscError::from)
+    }
 }
 
 impl Transport for PcscTransport {
