@@ -8,7 +8,7 @@ use embedded_graphics::{
     text::{Baseline, Text},
 };
 use esp_idf_hal::{
-    delay::{FreeRtos, TickType_t},
+    delay::FreeRtos,
     gpio::{
         Gpio5, Gpio12, Gpio13, Gpio15, Gpio18, Gpio21, Gpio22, Gpio23, Gpio27, Output, PinDriver,
     },
@@ -93,7 +93,7 @@ pub enum DisplayMode {
     Error,
 }
 
-const AXP192_TIMEOUT: TickType_t = TickType_t(100);
+const AXP192_TIMEOUT: u32 = 100;
 
 fn axp192_write_reg(
     i2c: &mut I2cDriver<'_>,
