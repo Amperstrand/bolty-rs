@@ -34,6 +34,8 @@
 - [x] Display mode bars + battery indicator (AXP192 voltage reading)
 - [x] `hwtest` command — interactive hardware self-test with display feedback
 - [x] `button-mode` command — switch between simple and legacy C++ compat
+- [x] BLE transport (GATT server — cmd write + rsp notify characteristics)
+  ⚠️ **No authentication or encryption — see issue #34 for security plan**
 
 ### Fork Management & DRY
 - [x] iso14443-rs fork: 6 branches, 6 issues, ai-experiments default
@@ -61,6 +63,7 @@
 ## In Progress
 
 - [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
+- [ ] Issue #34: BLE transport security (no auth/encryption — critical)
 - [ ] iso14443-rs upstream contribution (waiting for stability proof)
 
 ## Planned
