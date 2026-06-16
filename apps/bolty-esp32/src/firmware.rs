@@ -171,6 +171,7 @@ pub fn main() {
     let mut serial = SerialConsole::new();
     let mut initial_config = BoltyConfig::default();
     initial_config.lnurl = nvs::load_lnurl();
+    initial_config.force_unsafe = nvs::load_force_flag();
     let config = Arc::new(Mutex::new(initial_config.clone()));
     let display_ok = DISPLAY_INIT_OK.load(Ordering::SeqCst);
     let service = Arc::new(Mutex::new(Esp32BoltyService::new(
@@ -346,6 +347,25 @@ pub fn main() {
                             run_provision_cert(&mut serial);
                             #[cfg(not(feature = "rest"))]
                             serial.fail("rest feature disabled — cert not needed");
+                        } else if line.trim().eq_ignore_ascii_case("force on") {
+                            if let Ok(mut cfg) = config.lock() {
+                                cfg.force_unsafe = true;
+                            }
+                            nvs::save_force_flag(true);
+                            serial.line("[OK] safety checks DISABLED (force=on)");
+                        } else if line.trim().eq_ignore_ascii_case("force off") {
+                            if let Ok(mut cfg) = config.lock() {
+                                cfg.force_unsafe = false;
+                            }
+                            nvs::save_force_flag(false);
+                            serial.line("[OK] safety checks enabled (force=off)");
+                        } else if line.trim().eq_ignore_ascii_case("force") {
+                            let state = config.lock().map(|c| c.force_unsafe).unwrap_or(false);
+                            serial.line(&format!(
+                                "[OK] force={} — safety checks {}",
+                                if state { "on" } else { "off" },
+                                if state { "DISABLED" } else { "enabled" },
+                            ));
                         } else {
                             handle_line(
                                 &mut serial,

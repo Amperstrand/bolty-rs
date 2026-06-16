@@ -50,6 +50,9 @@ pub fn dispatch_command<S: BoltyService>(
             if config.pending_keys.is_none() && config.pending_issuer.is_none() {
                 return workflow_error("missing keys or issuer");
             }
+            if !config.force_unsafe && !lnurl.as_str().contains("{mac}") {
+                return workflow_error("lnurl missing {mac} SDM template marker");
+            }
             service.burn(
                 config.pending_issuer.as_ref(),
                 config.pending_keys.as_ref(),

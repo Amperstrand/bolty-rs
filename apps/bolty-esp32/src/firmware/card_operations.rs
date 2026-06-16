@@ -209,31 +209,35 @@ where
 
         let keyset = card_keys_to_keyset(&card_keys);
 
-        let factory_works = block_on(ntag424::Session::default().authenticate_aes(
-            &mut transport,
-            KeyNumber::Key0,
-            &bolty_ntag::FACTORY_KEY,
-            gen_rnd_a(),
-        ))
-        .is_ok();
+        use ntag424::types::ResponseStatus;
 
-        let (current_key, previous_keys) = if factory_works {
-            (bolty_ntag::FACTORY_KEY, [bolty_ntag::FACTORY_KEY; 5])
-        } else {
-            let derived_works = block_on(ntag424::Session::default().authenticate_aes(
+        let (current_key, previous_keys) =
+            match block_on(ntag424::Session::default().authenticate_aes(
                 &mut transport,
                 KeyNumber::Key0,
-                &keyset[0],
+                &bolty_ntag::FACTORY_KEY,
                 gen_rnd_a(),
-            ))
-            .is_ok();
-
-            if derived_works {
-                (keyset[0], keyset)
-            } else {
-                return WorkflowResult::AuthFailed;
-            }
-        };
+            )) {
+                Ok(_) => (bolty_ntag::FACTORY_KEY, [bolty_ntag::FACTORY_KEY; 5]),
+                Err(ntag424::SessionError::ErrorResponse(ResponseStatus::AuthenticationDelay)) => {
+                    return WorkflowResult::AuthDelay;
+                }
+                Err(_) => {
+                    let derived_result = block_on(ntag424::Session::default().authenticate_aes(
+                        &mut transport,
+                        KeyNumber::Key0,
+                        &keyset[0],
+                        gen_rnd_a(),
+                    ));
+                    match derived_result {
+                        Ok(_) => (keyset[0], keyset),
+                        Err(ntag424::SessionError::ErrorResponse(
+                            ResponseStatus::AuthenticationDelay,
+                        )) => return WorkflowResult::AuthDelay,
+                        Err(_) => return WorkflowResult::AuthFailed,
+                    }
+                }
+            };
 
         let params = bolty_ntag::BurnParams {
             lnurl,
@@ -259,6 +263,7 @@ where
     }
 
     fn wipe(&mut self, issuer: Option<&AesKey>, keys: Option<&CardKeys>) -> WorkflowResult {
+        let force_unsafe = self.current_config.force_unsafe;
         let mut transport = match self.activate_transport() {
             Ok(transport) => transport,
             Err(err) => return err,
@@ -289,6 +294,16 @@ where
         };
 
         log::info!("wipe: k0={:02X?}", card_keys.k0.as_bytes());
+
+        if !force_unsafe {
+            if let Ok(inspect) = block_on(bolty_ntag::safe_inspect(&mut transport, None, None)) {
+                if looks_factory_default(inspect.file_settings.as_ref())
+                    && inspect.ndef_bytes.is_none()
+                {
+                    return WorkflowResult::WipeRefused;
+                }
+            }
+        }
 
         match block_on(bolty_ntag::wipe(
             &mut transport,

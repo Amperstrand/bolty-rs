@@ -26,6 +26,7 @@ pub struct BoltyConfig {
     pub pending_issuer: Option<AesKey>,
     pub rest_read_token: Option<RestTokenString>,
     pub rest_write_token: Option<RestTokenString>,
+    pub force_unsafe: bool,
 }
 
 /// Issuer material required to deterministically derive a card keyset.

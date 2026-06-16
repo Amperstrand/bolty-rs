@@ -169,6 +169,44 @@ pub(super) fn save_button_mode(mode: &str) -> bool {
     }
 }
 
+pub(super) fn save_force_flag(force: bool) {
+    init();
+    unsafe {
+        let mut handle: nvs_handle_t = 0;
+        let rc = nvs_open(
+            c"bolty".as_ptr(),
+            nvs_open_mode_t_NVS_READWRITE,
+            &mut handle,
+        );
+        if rc != ESP_OK {
+            return;
+        }
+
+        let rc = nvs_set_u8(handle, c"force".as_ptr(), if force { 1 } else { 0 });
+        if rc == ESP_OK {
+            nvs_commit(handle);
+        }
+        nvs_close(handle);
+    }
+}
+
+pub(super) fn load_force_flag() -> bool {
+    init();
+    unsafe {
+        let mut handle: nvs_handle_t = 0;
+        let rc = nvs_open(c"bolty".as_ptr(), nvs_open_mode_t_NVS_READONLY, &mut handle);
+        if rc != ESP_OK {
+            return false;
+        }
+
+        let mut value: u8 = 0;
+        let rc = nvs_get_u8(handle, c"force".as_ptr(), &mut value);
+        nvs_close(handle);
+
+        rc == ESP_OK && value != 0
+    }
+}
+
 pub(super) fn load_boot_count() -> u32 {
     init();
     unsafe {
