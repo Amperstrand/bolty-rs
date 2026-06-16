@@ -216,7 +216,7 @@ pub(super) fn handle_line<I2C>(
             match token {
                 Some(t) => {
                     config.rest_read_token = Some(t.clone());
-                    config.rest_write_token = Some(t);
+                    config.rest_write_token = Some(t.clone());
                     serial.ok("token set");
                 }
                 None => {

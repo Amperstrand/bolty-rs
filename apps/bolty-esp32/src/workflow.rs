@@ -29,7 +29,8 @@ pub fn dispatch_command<S: BoltyService>(
         | Command::Issuer
         | Command::HwInfo
         | Command::ButtonMode
-        | Command::ButtonModeSet(_) => WorkflowResult::Success,
+        | Command::ButtonModeSet(_)
+        | Command::SetToken(_) => WorkflowResult::Success,
         Command::SetKeys(keys) => {
             config.pending_keys = Some(keys);
             WorkflowResult::Success
