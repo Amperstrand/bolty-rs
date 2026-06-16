@@ -18,7 +18,7 @@ on cards. An attacker who gains access to the device can:
 | Transport | Authentication | Encryption | Attack Range | Risk Level |
 |---|---|---|---|---|
 | **Serial (UART)** | Physical access required | None (but physical) | Touch device | Low |
-| **WiFi REST** | Bearer token (read + write scopes) | None (HTTP) | WiFi range (~30m) | Medium |
+| **WiFi REST** | Bearer token (read + write scopes) | TLS 1.2 (per-device cert) | WiFi range (~30m) | Low |
 | **BLE (current)** | **NONE** | **NONE** | BLE range (~30m) | **CRITICAL** |
 | **BLE (read-only)** | N/A (no writes) | None | BLE range (~30m) | Low |
 | **OTA** | **None** (no signature) | HTTPS URL only | Network | **HIGH** |
@@ -44,11 +44,15 @@ on cards. An attacker who gains access to the device can:
 - DTR/RTS reset sequence can reboot device
 - All commands available (including burn, wipe, keys)
 
-### WiFi REST API (MEDIUM)
+### WiFi REST API (GOOD — cable-pairing TLS)
+- HTTPS with per-device self-signed certificate (RSA-2048, SHA-256)
+- Certificate generated on-device via mbedTLS — private key never leaves ESP32
+- `provision-cert` serial command generates + stores cert in NVS
+- REST server refuses to start until cert is provisioned
+- SHA-256 fingerprint printed to serial for client-side pinning (TOFU)
 - Bearer token authentication with separate read/write scopes
 - `token` serial command sets/clears REST tokens
 - `constant_time_eq()` prevents timing attacks on token comparison
-- **No HTTPS** — all traffic in plaintext including tokens
 - mDNS advertises device as `bolty.local`
 
 ### BLE Transport (CRITICAL — Issue #34)
@@ -77,6 +81,22 @@ Response: `[FAIL] write commands blocked via BLE (issue #34)`
 enabled: `--features "board-m5stick,ble"`
 Cargo.toml includes security warning comment.
 
+### HTTPS with Cable-Pairing Cert — DONE
+Removed the shared development certificate from the firmware binary.
+Each device now generates its own RSA-2048 self-signed certificate on
+first boot via mbedTLS FFI:
+
+1. User connects via USB serial, sends `provision-cert`
+2. Device generates RSA-2048 keypair using hardware RNG (entropy → CTR_DRBG)
+3. Device creates self-signed X.509 v3 cert (CN=bolty, SHA-256, 10-year validity)
+4. Cert + key DER blobs stored in NVS
+5. SHA-256 fingerprint printed to serial console
+6. REST API refuses to start until cert exists (`ESP_ERR_INVALID_STATE`)
+7. User pins fingerprint in client (trust-on-first-use model)
+
+The private key is generated entirely on-device and never transits any cable.
+Boot diagnostics print `hw: cert=provisioned` or `hw: cert=NOT_PROVISIONED`.
+
 ## Security Plan
 
 ### Priority 1: BLE Pairing + Bonding (Option A)
@@ -91,22 +111,8 @@ esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, ...);
 // Set CMD characteristic permission to Authenticated
 ```
 
-### Priority 2: HTTPS for REST API
-**Issue**: REST tokens sent in plaintext over HTTP
-**Goal**: TLS for all REST traffic
-**Approach**: ESP-IDF `esp_https_server` with self-signed certificate
-**Challenge**: Certificate generation + distribution to clients
-
-Self-signed certificate approach:
-1. Generate ECDSA key pair + self-signed cert on first boot (stored in NVS)
-2. Display certificate fingerprint on screen
-3. Client pins fingerprint (trust-on-first-use model)
-4. All REST traffic encrypted via TLS 1.2+
-
-ESP-IDF config needed:
-```
-CONFIG_ESP_HTTPS_SERVER_ENABLE=y
-```
+### ~~Priority 2: HTTPS for REST API~~ — DONE
+See "HTTPS with Cable-Pairing Cert" in Security Fixes above.
 
 ### Priority 3: OTA Signature Verification
 **Issue**: #31
@@ -131,7 +137,7 @@ The original C++ Bolty ([bitcoin-ring/Bolty](https://github.com/bitcoin-ring/Bol
 
 | Aspect | C++ Bolty | bolty-rs | Improvement |
 |---|---|---|---|
-| **WiFi protocol** | HTTP only (port 80) | HTTP (bearer token) | bolty-rs has token auth on all endpoints |
+| **WiFi protocol** | HTTP only (port 80) | HTTPS (per-device TLS cert) | ✅ bolty-rs encrypts all REST traffic |
 | **Auth on burn/wipe** | **NONE** — unprotected | Bearer token required | ✅ bolty-rs secures ALL endpoints |
 | **Auth on setup** | Basic Auth (default: bolty/bolty) | Bearer token (user-configurable) | ✅ No default credentials |
 | **Key storage** | **Plain text** on SPIFFS | **RAM only**, zeroized on drop | ✅ Keys never persisted |
@@ -166,7 +172,7 @@ The original C++ Bolty ([bitcoin-ring/Bolty](https://github.com/bitcoin-ring/Bol
 - [x] I2C timeout prevents bus lockup
 - [x] Crash diagnostics (boot count + reset reason in NVS)
 - [ ] BLE pairing + bonding (Option A)
-- [ ] HTTPS for REST API (self-signed TLS)
+- [x] HTTPS for REST API (cable-pairing TLS cert)
 - [ ] OTA signature verification
 - [ ] Rate limiting on auth endpoints
 - [ ] Audit log for BLE commands

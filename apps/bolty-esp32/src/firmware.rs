@@ -42,7 +42,7 @@ use console_commands::{handle_line, print_boot_banner};
 mod card_operations;
 mod diagnostics_commands;
 
-mod nvs;
+pub(crate) mod nvs;
 
 #[cfg(not(feature = "wifi"))]
 struct WifiManager;
@@ -251,6 +251,16 @@ pub fn main() {
             }
         }
         serial.line(scan_line.as_str());
+
+        #[cfg(feature = "rest")]
+        {
+            let cert_status = if crate::tls::is_provisioned() {
+                "provisioned"
+            } else {
+                "NOT_PROVISIONED (run 'provision-cert')"
+            };
+            serial.line(&format!("hw: cert={cert_status}"));
+        }
     }
 
     info!("=== Bolty Ready ===");
@@ -331,6 +341,11 @@ pub fn main() {
                             run_crashlog(&mut serial);
                         } else if line.trim().eq_ignore_ascii_case("hwtest") {
                             run_hwtest(&mut serial, &mut buttons, &service);
+                        } else if line.trim().eq_ignore_ascii_case("provision-cert") {
+                            #[cfg(feature = "rest")]
+                            run_provision_cert(&mut serial);
+                            #[cfg(not(feature = "rest"))]
+                            serial.fail("rest feature disabled — cert not needed");
                         } else {
                             handle_line(
                                 &mut serial,
@@ -1122,6 +1137,52 @@ fn run_hwtest<I2C>(
         }
     }
     serial.line("[HWTEST] END");
+}
+
+#[cfg(feature = "rest")]
+fn run_provision_cert(serial: &mut SerialConsole) {
+    serial.line("[CERT] Generating RSA-2048 self-signed certificate...");
+
+    let (cert_der, key_der) = match crate::cert_gen::generate_self_signed_cert() {
+        Ok(pair) => pair,
+        Err(e) => {
+            serial.fail(&format!("[CERT] {e}"));
+            return;
+        }
+    };
+
+    serial.line(&format!(
+        "[CERT] Generated: cert={} bytes, key={} bytes",
+        cert_der.len(),
+        key_der.len()
+    ));
+
+    if !nvs::save_cert_der(&cert_der, &key_der) {
+        serial.fail("[CERT] Failed to store in NVS");
+        return;
+    }
+
+    let mut hash = [0u8; 32];
+    let rc = unsafe {
+        esp_idf_sys::mbedtls_sha256(cert_der.as_ptr(), cert_der.len(), hash.as_mut_ptr(), 0)
+    };
+    if rc != 0 {
+        serial.fail("[CERT] SHA-256 computation failed");
+        return;
+    }
+
+    let mut fp = String::<128>::new();
+    let _ = fp.push_str("[CERT] SHA-256 fingerprint:\n  ");
+    for (i, b) in hash.iter().enumerate() {
+        if i > 0 {
+            let _ = fp.push(':');
+        }
+        let _ = write!(fp, "{b:02X}");
+    }
+    serial.line(fp.as_str());
+
+    serial.ok("certificate provisioned — REST API now available");
+    serial.line("[CERT] Reconnect WiFi or reboot to start HTTPS server");
 }
 
 #[cfg(feature = "ble")]

@@ -25,6 +25,10 @@ mod rest;
 
 #[cfg(target_arch = "xtensa")]
 #[cfg(feature = "rest")]
+mod cert_gen;
+
+#[cfg(target_arch = "xtensa")]
+#[cfg(feature = "rest")]
 mod tls;
 
 #[cfg(target_arch = "xtensa")]

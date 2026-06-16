@@ -18,7 +18,7 @@ use esp_idf_hal::io::EspIOError;
 use esp_idf_svc::http::server::{
     Configuration as HttpConfig, EspHttpConnection, EspHttpServer, Request,
 };
-use esp_idf_sys::EspError;
+use esp_idf_sys::{ESP_ERR_INVALID_STATE, EspError};
 use heapless::String;
 
 pub type SharedConfig = Arc<Mutex<BoltyConfig>>;
@@ -50,12 +50,18 @@ where
         config: SharedConfig,
         service: SharedService<S>,
     ) -> Result<Self, EspError> {
+        let (server_cert, private_key) = crate::tls::server_cert_and_key().ok_or_else(|| {
+            esp_idf_sys::EspError::from_non_zero(
+                core::num::NonZeroI32::new(ESP_ERR_INVALID_STATE).unwrap(),
+            )
+        })?;
+
         let mut server = EspHttpServer::new(&HttpConfig {
             http_port: port,
             https_port: port + 1,
             stack_size: 8192,
-            server_certificate: Some(crate::tls::server_cert()),
-            private_key: Some(crate::tls::private_key()),
+            server_certificate: Some(server_cert),
+            private_key: Some(private_key),
             ..Default::default()
         })
         .map_err(|error| error.0)?;
