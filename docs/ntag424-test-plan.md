@@ -29,15 +29,29 @@ Each test verifies a specific hypothesis. Tests are categorized by danger level.
    cuts the reader's antenna, removing RF power from the card. SeqFailCtr
    resets to 0 on power loss.
 
-3. **Software-based RF cycling does NOT work on ACS ACR1252**:
-   - New PCSC connection (warm reset) → 91AD persists
-   - `systemctl restart pcscd` → 91AD persists
-   - `SCARD_UNPOWER_CARD` → ineffective or unsupported
-   - CCID escape commands → `SCARD_E_UNSUPPORTED_FEATURE`
+3. **Software-based RF cycling on ACS ACR1252**:
+
+   **Confirmed working:**
+   - USB driver unbind/bind → **WORKS** (cuts reader power, clears SeqFailCtr)
+   - Physical card removal → **WORKS** (always works, cuts RF field)
+
+   **Might work (not verified — pyscard protocol issues after reconnect):**
+   - `SCardDisconnect(SCARD_UNPOWER_CARD)` + `SCardConnect()` — the documented
+     PCSC method for unpowering cards. Attempted via pyscard but transmit
+     returned 917E (DESFire protocol framing issue after reconnect). Needs
+     testing through Rust PcscTransport with proper protocol handling.
+   - **This is the proper PCSC way — likely works when implemented correctly.**
+
+   **Confirmed NOT working:**
+   - New PCSC connection / `SCARD_RESET_CARD` (warm reset) → 91AD persists
+   - `systemctl restart pcscd` → 91AD persists (reader keeps antenna powered)
    - USB `authorized=0` → 91AD persists (VBUS stays powered)
-   - `uhubctl` → no compatible hubs (no per-port power switching)
-   - **`echo 1-2 > /sys/bus/usb/drivers/usb/unbind` → WORKS!** Cuts reader
-     antenna, clears SeqFailCtr. This is the software recovery method.
+   - `SCardControl(CM_IOCTL_GET_FEATURE_REQUEST)` → `SCARD_E_UNSUPPORTED_FEATURE`
+   - `uhubctl` → no compatible USB hubs (no per-port power switching)
+
+   **TODO: Add `--reset-card` flag to bolty-cli** that calls
+   `SCardDisconnect(SCARD_UNPOWER_CARD)` + reconnect through Rust
+   PcscTransport. This would verify the documented PCSC unpower method.
 
 4. **Per-key counters ARE independent** — 10 failed K0 auths do not affect
    K1 auth. K1 still returns 91AE (processed) when K0's SeqFailCtr = 10.
