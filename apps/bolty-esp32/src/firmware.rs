@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 
 use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
-use core::time::Duration;
 
 use esp_idf_hal::{
     delay::FreeRtos,
