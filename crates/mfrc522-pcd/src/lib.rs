@@ -9,7 +9,7 @@
 
 #![no_std]
 
-extern crate alloc;
+pub extern crate alloc;
 
 use embedded_hal::i2c::I2c;
 use iso14443::type_a::vec::FrameVec;

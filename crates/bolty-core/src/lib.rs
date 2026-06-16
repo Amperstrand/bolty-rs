@@ -13,7 +13,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 #[cfg(any(feature = "alloc", feature = "std"))]
-extern crate alloc;
+pub extern crate alloc;
 
 pub mod assessment;
 pub mod config;
