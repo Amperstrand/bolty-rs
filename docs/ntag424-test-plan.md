@@ -10,14 +10,14 @@ Each test verifies a specific hypothesis. Tests are categorized by danger level.
 | T1 | ✅ PASS | Factory auth works, card BLANK |
 | T2 | ✅ PASS | Wrong key → 91AE, recovery with correct key → 9100 |
 | T3 | ✅ PASS | **Threshold is EXACTLY 50** (attempts 1-50 = 91AE, 51+ = 91AD) |
-| T4 | 🔶 BLOCKED | All software RF cycling failed. Needs physical card removal. |
-| T5 | ⏸ PENDING | Blocked on T4 |
-| T6 | ⏸ PENDING | Blocked on T4 |
+| T4 | ✅ PASS | **SeqFailCtr IS volatile** — USB driver unbind/bind clears auth delay |
+| T5 | ✅ N/A | Cannot definitively test without approaching permanent lock (1000) |
+| T6 | ✅ PASS | **Per-key counters ARE independent** — 10 K0 failures don't block K1 |
 | T7 | ✅ PASS | Free read works during delay (diagnose returns full card info) |
-| T8 | ⏸ PENDING | Blocked on T4 (needs provisioned card in delay) |
-| T9-T12 | ⏸ PENDING | Blocked on T4 |
+| T8 | ✅ PASS | **SDM works during auth delay** — p=/c= change every read, mac=true |
+| T9-T12 | ⏸ SKIP | Lower priority, depend on extended failure accumulation |
 | T13 | 🚫 DO NOT RUN | Permanent lock — irreversible |
-| T14 | ⏸ PENDING | |
+| T14 | ⏸ SKIP | GetKeySettings byte layout — lower priority |
 | T15 | ✅ PASS | Warm reset does NOT clear delay (PCSC reconnect keeps card powered) |
 
 ### Key Empirical Findings
@@ -25,22 +25,32 @@ Each test verifies a specific hypothesis. Tests are categorized by danger level.
 1. **SeqFailCtr threshold is EXACTLY 50** — attempt 50 returns 91AE (processed),
    attempt 51 returns 91AD (blocked). No variance.
 
-2. **SeqFailCtr accumulates across PCSC connections** — each bolty-cli invocation
-   creates a new PCSC connection, but the card stays powered and SeqFailCtr
-   keeps climbing. The RF field is continuous across connections.
+2. **SeqFailCtr is VOLATILE (RAM)** — confirmed by T4. USB driver unbind/bind
+   cuts the reader's antenna, removing RF power from the card. SeqFailCtr
+   resets to 0 on power loss.
 
-3. **Software RF power cycling does NOT work on ACS ACR1252**:
+3. **Software-based RF cycling does NOT work on ACS ACR1252**:
    - New PCSC connection (warm reset) → 91AD persists
    - `systemctl restart pcscd` → 91AD persists
-   - `SCARD_UNPOWER_CARD` → unsupported or ineffective
+   - `SCARD_UNPOWER_CARD` → ineffective or unsupported
    - CCID escape commands → `SCARD_E_UNSUPPORTED_FEATURE`
-   - **Only physical card removal can cut RF power**
+   - USB `authorized=0` → 91AD persists (VBUS stays powered)
+   - `uhubctl` → no compatible hubs (no per-port power switching)
+   - **`echo 1-2 > /sys/bus/usb/drivers/usb/unbind` → WORKS!** Cuts reader
+     antenna, clears SeqFailCtr. This is the software recovery method.
 
-4. **Free read works during auth delay** — diagnose successfully reads UID,
+4. **Per-key counters ARE independent** — 10 failed K0 auths do not affect
+   K1 auth. K1 still returns 91AE (processed) when K0's SeqFailCtr = 10.
+
+5. **SDM works during K0 auth delay** — SDM uses K1 (PICC encrypt) and K2
+   (MAC), which are independent of K0. During auth delay:
+   - p=/c= values change on every read ✅
+   - Diagnose shows `mac=true` ✅
+   - Card state correctly shows PROVISIONED ✅
+   - A card in auth delay can still process payments but can't be re-keyed.
+
+6. **Free read works during auth delay** — diagnose successfully reads UID,
    version, file settings, and NDEF content. Only K0 authentication is blocked.
-
-5. **Card state correctly classified** — `diagnose` reports `AUTH_DELAY` when
-   factory K0 returns 91AD.
 
 ## Safety Classification
 
