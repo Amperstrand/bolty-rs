@@ -122,6 +122,38 @@ where
             })?;
         }
 
+        {
+            let config = Arc::clone(&config);
+            let service = Arc::clone(&service);
+            server.fn_handler("/api/keyver", Method::Get, move |request| {
+                handle_keyver(request, &config, &service)
+            })?;
+        }
+
+        {
+            let config = Arc::clone(&config);
+            let service = Arc::clone(&service);
+            server.fn_handler("/api/ndef", Method::Get, move |request| {
+                handle_ndef(request, &config, &service)
+            })?;
+        }
+
+        {
+            let config = Arc::clone(&config);
+            let service = Arc::clone(&service);
+            server.fn_handler("/api/diagnose", Method::Get, move |request| {
+                handle_diagnose(request, &config, &service)
+            })?;
+        }
+
+        {
+            let config = Arc::clone(&config);
+            let service = Arc::clone(&service);
+            server.fn_handler("/api/inspect", Method::Get, move |request| {
+                handle_inspect(request, &config, &service)
+            })?;
+        }
+
         Ok(Self {
             server,
             _config: config,
@@ -353,6 +385,131 @@ fn respond_json(
     request
         .into_response(status, Some(status_message(status)), &[JSON_CONTENT_TYPE])?
         .write_all(body.as_bytes())
+}
+
+fn handle_keyver<S>(
+    request: Request<&mut EspHttpConnection<'_>>,
+    config: &SharedConfig,
+    service: &SharedService<S>,
+) -> Result<(), EspIOError>
+where
+    S: RestBoltyService + Send + 'static,
+{
+    if !is_authorized(&request, config, TokenScope::Read) {
+        return respond_json(request, 401, json_err("unauthorized").as_str());
+    }
+
+    let result = with_state(config, service, |config, service| {
+        let result = dispatch_command(Command::KeyVer, service, config);
+        service.sync_from(config);
+        result
+    });
+
+    let status = service.lock().map(|s| s.get_status()).unwrap_or_default();
+    let body = format!(
+        "{{\"ok\":true,\"nfc_ready\":{},\"uid\":\"{}\"}}",
+        status.nfc_ready,
+        uid_hex_string(&status)
+    );
+    respond_json(request, 200, body.as_str())
+}
+
+fn handle_ndef<S>(
+    request: Request<&mut EspHttpConnection<'_>>,
+    config: &SharedConfig,
+    service: &SharedService<S>,
+) -> Result<(), EspIOError>
+where
+    S: RestBoltyService + Send + 'static,
+{
+    if !is_authorized(&request, config, TokenScope::Read) {
+        return respond_json(request, 401, json_err("unauthorized").as_str());
+    }
+
+    let result = with_state(config, service, |config, service| {
+        let result = dispatch_command(Command::Ndef, service, config);
+        service.sync_from(config);
+        result
+    });
+
+    match result {
+        Ok(WorkflowResult::Success) => {
+            respond_json(request, 200, json_ok("\"ndef\":\"read\"").as_str())
+        }
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
+        Err(message) => respond_json(request, 500, json_err(message).as_str()),
+    }
+}
+
+fn handle_diagnose<S>(
+    request: Request<&mut EspHttpConnection<'_>>,
+    config: &SharedConfig,
+    service: &SharedService<S>,
+) -> Result<(), EspIOError>
+where
+    S: RestBoltyService + Send + 'static,
+{
+    if !is_authorized(&request, config, TokenScope::Read) {
+        return respond_json(request, 401, json_err("unauthorized").as_str());
+    }
+
+    let result = with_state(config, service, |config, service| {
+        let result = dispatch_command(Command::Diagnose, service, config);
+        service.sync_from(config);
+        result
+    });
+
+    match result {
+        Ok(WorkflowResult::Success) => {
+            respond_json(request, 200, json_ok("\"state\":\"ok\"").as_str())
+        }
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
+        Err(message) => respond_json(request, 500, json_err(message).as_str()),
+    }
+}
+
+fn handle_inspect<S>(
+    request: Request<&mut EspHttpConnection<'_>>,
+    config: &SharedConfig,
+    service: &SharedService<S>,
+) -> Result<(), EspIOError>
+where
+    S: RestBoltyService + Send + 'static,
+{
+    if !is_authorized(&request, config, TokenScope::Read) {
+        return respond_json(request, 401, json_err("unauthorized").as_str());
+    }
+
+    let result = with_state(config, service, |config, service| {
+        let result = dispatch_command(Command::Inspect, service, config);
+        service.sync_from(config);
+        result
+    });
+
+    let status = service.lock().map(|s| s.get_status()).unwrap_or_default();
+    let body = format!(
+        "{{\"ok\":true,\"nfc_ready\":{},\"uid\":\"{}\",\"lnurl\":\"{}\"}}",
+        status.nfc_ready,
+        uid_hex_string(&status),
+        status.lnurl.as_ref().map(|s| s.as_str()).unwrap_or("")
+    );
+    respond_json(request, 200, body.as_str())
+}
+
+fn uid_hex_string(status: &ServiceStatus) -> String<32> {
+    let mut s = String::<32>::new();
+    if let Some(uid) = status.last_uid {
+        let _ = push_uid_hex(&mut s, &uid);
+    }
+    s
 }
 
 fn status_message(status: u16) -> &'static str {
