@@ -139,8 +139,8 @@ pub(super) fn handle_line<I2C>(
             return;
         }
         #[cfg(feature = "ota")]
-        Command::Ota { url } => {
-            match OtaUpdater::update(url.as_str()) {
+        Command::Ota { url, signature } => {
+            match OtaUpdater::update(url.as_str(), signature.as_str()) {
                 Ok(()) => {
                     serial.ok("rebooting");
                     set_display_ok("ota", "rebooting");

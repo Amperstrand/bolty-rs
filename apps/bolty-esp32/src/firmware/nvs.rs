@@ -3,7 +3,7 @@ use esp_idf_sys::{
     nvs_handle_t, nvs_open, nvs_open_mode_t_NVS_READONLY, nvs_open_mode_t_NVS_READWRITE,
     nvs_set_str, nvs_set_u8, nvs_set_u32,
 };
-#[cfg(feature = "rest")]
+#[cfg(any(feature = "rest", feature = "ota"))]
 use esp_idf_sys::{nvs_get_blob, nvs_set_blob};
 use heapless::String;
 
@@ -420,5 +420,62 @@ pub fn has_cert() -> bool {
         nvs_close(handle);
 
         rc == ESP_OK && len > 0
+    }
+}
+
+#[cfg(feature = "ota")]
+pub fn save_ota_pubkey(key: &[u8; 32]) -> bool {
+    init();
+    unsafe {
+        let mut handle: nvs_handle_t = 0;
+        let rc = nvs_open(
+            c"bolty".as_ptr(),
+            nvs_open_mode_t_NVS_READWRITE,
+            &mut handle,
+        );
+        if rc != ESP_OK {
+            return false;
+        }
+
+        let rc = nvs_set_blob(handle, c"otakey".as_ptr(), key.as_ptr().cast(), 32);
+        let rc_commit = if rc == ESP_OK {
+            nvs_commit(handle)
+        } else {
+            nvs_close(handle);
+            return false;
+        };
+
+        nvs_close(handle);
+        rc_commit == ESP_OK
+    }
+}
+
+#[cfg(feature = "ota")]
+pub fn load_ota_pubkey() -> Option<[u8; 32]> {
+    init();
+    unsafe {
+        let mut handle: nvs_handle_t = 0;
+        let rc = nvs_open(c"bolty".as_ptr(), nvs_open_mode_t_NVS_READONLY, &mut handle);
+        if rc != ESP_OK {
+            return None;
+        }
+
+        let mut len: usize = 0;
+        let rc = nvs_get_blob(handle, c"otakey".as_ptr(), core::ptr::null_mut(), &mut len);
+        if rc != ESP_OK || len != 32 {
+            nvs_close(handle);
+            return None;
+        }
+
+        let mut key = [0u8; 32];
+        let rc = nvs_get_blob(
+            handle,
+            c"otakey".as_ptr(),
+            key.as_mut_ptr().cast(),
+            &mut len,
+        );
+        nvs_close(handle);
+
+        if rc == ESP_OK { Some(key) } else { None }
     }
 }

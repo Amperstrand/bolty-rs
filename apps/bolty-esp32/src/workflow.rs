@@ -308,6 +308,7 @@ mod tests {
             Command::WifiOff,
             Command::Ota {
                 url: bolty_core::config::UrlString::new(),
+                signature: heapless::String::new(),
             },
             Command::Ndef,
             Command::Auth,

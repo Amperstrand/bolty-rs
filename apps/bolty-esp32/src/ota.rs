@@ -1,11 +1,10 @@
 use core::fmt;
 use core::time::Duration;
-use std::io::{self, Read};
 
 use embedded_svc::http::client::Client as HttpClient;
 use esp_idf_svc::{
     http::client::{Configuration as HttpClientConfig, EspHttpConnection},
-    ota::{EspOta, EspOtaUpdate},
+    ota::EspOta,
     sys::EspError,
 };
 use log::info;
@@ -16,18 +15,24 @@ const OTA_PROGRESS_STEP: usize = 64 * 1024;
 #[derive(Debug)]
 pub enum OtaError {
     Esp(EspError),
-    Http(io::Error),
+    Http(String),
     InvalidStatus(u16),
     EmptyImage,
+    SignatureUnprovisioned,
+    SignatureInvalid,
 }
 
 impl fmt::Display for OtaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Esp(err) => write!(f, "{err}"),
-            Self::Http(err) => write!(f, "http: {err}"),
+            Self::Http(msg) => write!(f, "http: {msg}"),
             Self::InvalidStatus(status) => write!(f, "http status {status}"),
             Self::EmptyImage => f.write_str("empty firmware image"),
+            Self::SignatureUnprovisioned => {
+                f.write_str("OTA signing key not provisioned (run 'provision-ota-key')")
+            }
+            Self::SignatureInvalid => f.write_str("firmware signature verification FAILED"),
         }
     }
 }
@@ -38,17 +43,21 @@ impl From<EspError> for OtaError {
     }
 }
 
-impl From<io::Error> for OtaError {
-    fn from(value: io::Error) -> Self {
-        Self::Http(value)
+impl From<esp_idf_hal::io::EspIOError> for OtaError {
+    fn from(value: esp_idf_hal::io::EspIOError) -> Self {
+        Self::Http(format!("{value}"))
     }
 }
 
 pub struct OtaUpdater;
 
 impl OtaUpdater {
-    pub fn update(url: &str) -> Result<(), OtaError> {
-        info!("starting ota update from {url}");
+    pub fn update(url: &str, signature_hex: &str) -> Result<(), OtaError> {
+        let signing_key =
+            crate::firmware::nvs::load_ota_pubkey().ok_or(OtaError::SignatureUnprovisioned)?;
+        let expected_sig = decode_hex_signature(signature_hex).ok_or(OtaError::SignatureInvalid)?;
+
+        info!("starting signed ota update from {url}");
 
         let connection = EspHttpConnection::new(&HttpClientConfig {
             timeout: Some(Duration::from_secs(120)),
@@ -69,33 +78,31 @@ impl OtaUpdater {
 
         let mut ota = EspOta::new()?;
         let mut update = ota.initiate_update()?;
-        let total = Self::download_to_partition(&mut response, &mut update)?;
-        if total == 0 {
-            return Err(OtaError::EmptyImage);
-        }
 
-        info!("ota image written: {total} bytes");
-        update.complete()?;
-        info!("ota complete, reboot requested");
-
-        Ok(())
-    }
-
-    fn download_to_partition(
-        response: &mut impl Read,
-        update: &mut EspOtaUpdate<'_>,
-    ) -> Result<usize, OtaError> {
         let mut buffer = [0u8; OTA_CHUNK_SIZE];
         let mut total = 0usize;
         let mut next_progress = OTA_PROGRESS_STEP;
+        let mut sha_ctx: esp_idf_sys::mbedtls_sha256_context = unsafe { core::mem::zeroed() };
+
+        unsafe {
+            esp_idf_sys::mbedtls_sha256_init(&mut sha_ctx);
+            esp_idf_sys::mbedtls_sha256_starts(&mut sha_ctx, 0);
+        }
 
         loop {
-            let read = response.read(&mut buffer)?;
+            let read: usize = response
+                .read(&mut buffer)
+                .map_err(|e| OtaError::Http(format!("{e:?}")))?;
             if read == 0 {
                 break;
             }
 
             update.write(&buffer[..read])?;
+
+            unsafe {
+                esp_idf_sys::mbedtls_sha256_update(&mut sha_ctx, buffer[..read].as_ptr(), read);
+            }
+
             total = total.saturating_add(read);
 
             while total >= next_progress {
@@ -104,6 +111,60 @@ impl OtaUpdater {
             }
         }
 
-        Ok(total)
+        let mut hash = [0u8; 32];
+        unsafe {
+            esp_idf_sys::mbedtls_sha256_finish(&mut sha_ctx, hash.as_mut_ptr());
+            esp_idf_sys::mbedtls_sha256_free(&mut sha_ctx);
+        }
+
+        if total == 0 {
+            return Err(OtaError::EmptyImage);
+        }
+
+        info!("ota image written: {total} bytes");
+
+        verify_ed25519_signature(&signing_key, &hash, &expected_sig)?;
+
+        info!("ota signature VERIFIED — committing");
+        update.complete()?;
+        info!("ota complete, reboot requested");
+
+        Ok(())
+    }
+}
+
+fn verify_ed25519_signature(
+    pubkey: &[u8; 32],
+    message: &[u8],
+    signature: &[u8; 64],
+) -> Result<(), OtaError> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(pubkey).map_err(|_| OtaError::SignatureInvalid)?;
+    let sig = Signature::from_bytes(signature);
+
+    vk.verify(message, &sig)
+        .map_err(|_| OtaError::SignatureInvalid)
+}
+
+fn decode_hex_signature(hex: &str) -> Option<[u8; 64]> {
+    if hex.len() != 128 {
+        return None;
+    }
+    let mut sig = [0u8; 64];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let high = hex_val(chunk[0])?;
+        let low = hex_val(chunk[1])?;
+        sig[i] = (high << 4) | low;
+    }
+    Some(sig)
+}
+
+fn hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
     }
 }

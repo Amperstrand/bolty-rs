@@ -347,6 +347,20 @@ pub fn main() {
                             run_provision_cert(&mut serial);
                             #[cfg(not(feature = "rest"))]
                             serial.fail("rest feature disabled — cert not needed");
+                        } else if let Some(key_hex) = line
+                            .trim()
+                            .strip_prefix("provision-ota-key ")
+                            .map(str::trim)
+                        {
+                            #[cfg(feature = "ota")]
+                            {
+                                run_provision_ota_key(&mut serial, key_hex);
+                            }
+                            #[cfg(not(feature = "ota"))]
+                            {
+                                let _ = key_hex;
+                                serial.fail("ota feature disabled");
+                            }
                         } else if line.trim().eq_ignore_ascii_case("force on") {
                             if let Ok(mut cfg) = config.lock() {
                                 cfg.force_unsafe = true;
@@ -1203,6 +1217,46 @@ fn run_provision_cert(serial: &mut SerialConsole) {
 
     serial.ok("certificate provisioned — REST API now available");
     serial.line("[CERT] Reconnect WiFi or reboot to start HTTPS server");
+}
+
+#[cfg(feature = "ota")]
+fn run_provision_ota_key(serial: &mut SerialConsole, key_hex: &str) {
+    if key_hex.len() != 64 {
+        serial.fail("expected 64-char hex Ed25519 public key");
+        return;
+    }
+
+    let mut key = [0u8; 32];
+    for (i, chunk) in key_hex.as_bytes().chunks(2).enumerate() {
+        let high = match chunk[0] {
+            b'0'..=b'9' => chunk[0] - b'0',
+            b'a'..=b'f' => chunk[0] - b'a' + 10,
+            b'A'..=b'F' => chunk[0] - b'A' + 10,
+            _ => {
+                serial.fail("invalid hex character in key");
+                return;
+            }
+        };
+        let low = chunk.get(1).copied().unwrap_or(0);
+        let low = match low {
+            b'0'..=b'9' => low - b'0',
+            b'a'..=b'f' => low - b'a' + 10,
+            b'A'..=b'F' => low - b'A' + 10,
+            _ => {
+                serial.fail("invalid hex character in key");
+                return;
+            }
+        };
+        key[i] = (high << 4) | low;
+    }
+
+    if !nvs::save_ota_pubkey(&key) {
+        serial.fail("failed to store OTA key in NVS");
+        return;
+    }
+
+    serial.ok("Ed25519 OTA signing key provisioned");
+    serial.line("[OTA] Signed firmware updates now require matching signature");
 }
 
 #[cfg(feature = "ble")]

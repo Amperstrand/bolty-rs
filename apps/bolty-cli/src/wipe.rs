@@ -179,9 +179,18 @@ mod tests {
         let issuer_key = [0u8; 16];
         let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
 
-        crate::burn::cmd_burn(&mut transport, &issuer_key, url, 1, false, false, None, false)
-            .await
-            .expect("burn to provision card for wipe dry-run test");
+        crate::burn::cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("burn to provision card for wipe dry-run test");
 
         let keys_before = *transport.keys();
         let ndef_before = transport.ndef().to_vec();

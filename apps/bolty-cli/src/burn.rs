@@ -257,7 +257,17 @@ mod tests {
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 
-        let result = cmd_burn(&mut transport, &issuer_key, url, 1, false, true, None, false).await;
+        let result = cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            true,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
 
         assert_eq!(

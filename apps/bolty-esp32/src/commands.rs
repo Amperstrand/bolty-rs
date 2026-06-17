@@ -46,6 +46,7 @@ pub enum Command {
     WifiOff,
     Ota {
         url: UrlString,
+        signature: heapless::String<128>,
     },
     Burn,
     Wipe,
@@ -290,6 +291,9 @@ fn parse_ota_command<'a>(
     let Some(url) = parts.next() else {
         return Err(CommandError::MissingArgs);
     };
+    let Some(signature) = parts.next() else {
+        return Err(CommandError::MissingArgs);
+    };
     if parts.next().is_some() {
         return Err(CommandError::InvalidArgs);
     }
@@ -298,7 +302,14 @@ fn parse_ota_command<'a>(
     url_out
         .push_str(url)
         .map_err(|_| CommandError::InvalidArgs)?;
-    Ok(Command::Ota { url: url_out })
+    let mut sig_out = heapless::String::new();
+    sig_out
+        .push_str(signature)
+        .map_err(|_| CommandError::InvalidArgs)?;
+    Ok(Command::Ota {
+        url: url_out,
+        signature: sig_out,
+    })
 }
 
 fn parse_key_arg(value: Option<&str>) -> Result<[u8; 16], CommandError> {
