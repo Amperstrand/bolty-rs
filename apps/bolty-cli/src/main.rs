@@ -78,6 +78,10 @@ enum Cli {
         /// Require this UID (14 hex chars) before proceeding — safety against wrong card
         #[arg(long)]
         confirm_uid: Option<String>,
+
+        /// Bypass safety checks (state guard, URL validation)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Wipe card: clear SDM, reset all keys to factory defaults
@@ -269,6 +273,7 @@ async fn run() -> anyhow::Result<()> {
             verbose,
             dry_run,
             confirm_uid,
+            force,
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let confirm_uid = confirm_uid.map(|s| parse_hex_7(&s)).transpose()?;
@@ -281,6 +286,7 @@ async fn run() -> anyhow::Result<()> {
                 verbose,
                 dry_run,
                 confirm_uid.as_ref(),
+                force,
             )
             .await?;
         }
@@ -362,6 +368,7 @@ async fn run() -> anyhow::Result<()> {
                 verbose,
                 false,
                 None,
+                false,
             )
             .await?;
 
@@ -377,6 +384,7 @@ async fn run() -> anyhow::Result<()> {
                 verbose,
                 false,
                 None,
+                false,
             )
             .await?;
 

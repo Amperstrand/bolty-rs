@@ -89,11 +89,11 @@ The following features have been verified end-to-end on real hardware with card 
 | REST UID endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST keys endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST URL endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
-| REST key version endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
+| REST key version endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (GET /api/keyver) |
 | REST blank-check endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST burn endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST wipe endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
-| REST NDEF endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
+| REST NDEF endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (GET /api/ndef) |
 | REST job endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
 | HTTP server bootstrap + URI registration + mDNS | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17, HTTPS via on-device TLS cert) |
 | OTA firmware download + flash | ota.h | bolty-esp32 | ota | ✅ DONE (T18, no sig verification) |

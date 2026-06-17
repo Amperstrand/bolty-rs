@@ -9,6 +9,7 @@ use bolty_ntag::{
 use crate::audit;
 use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error, record_auth_failure};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_burn<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
@@ -17,6 +18,7 @@ pub async fn cmd_burn<T: Transport>(
     verbose: bool,
     dry_run: bool,
     confirm_uid: Option<&[u8; 7]>,
+    force: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -75,16 +77,21 @@ where
         return Ok(());
     }
 
-    if !url.contains("{picc") || !url.contains("{mac}") {
+    if !force && (!url.contains("{picc") || !url.contains("{mac}")) {
         anyhow::bail!(
             "URL must contain {{picc}} and {{mac}} placeholders for SDM.\n\
              Example: https://example.com/?p={{picc:uid+ctr}}&c=[{{mac}}\n\
-             Got: {url}"
+             Got: {url}\n\
+             Use --force to override this check."
         );
     }
 
-    println!("[0/7] Checking card state...");
-    {
+    if !force {
+        println!("[0/7] Checking card state...");
+    } else {
+        println!("[0/7] Safety checks bypassed (--force)");
+    }
+    if !force {
         let factory_like = {
             let mut retry = AuthRetry::new();
             loop {
@@ -250,7 +257,7 @@ mod tests {
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 
-        let result = cmd_burn(&mut transport, &issuer_key, url, 1, false, true, None).await;
+        let result = cmd_burn(&mut transport, &issuer_key, url, 1, false, true, None, false).await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
 
         assert_eq!(
@@ -287,6 +294,7 @@ mod tests {
             false,
             false,
             Some(&wrong_uid),
+            false,
         )
         .await;
 
@@ -319,6 +327,7 @@ mod tests {
             false,
             true,
             Some(&correct_uid),
+            false,
         )
         .await;
 
