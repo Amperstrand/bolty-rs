@@ -11,6 +11,7 @@ mod keyver;
 mod mock_transport;
 mod picc;
 mod scan_keys;
+mod testck;
 mod transport;
 mod try_key;
 mod ver;
@@ -174,6 +175,10 @@ enum Cli {
     /// Power-cycle the card to clear auth delay (SCARD_UNPOWER_CARD).
     /// Resets SeqFailCtr (volatile). Does NOT reset TotFailCtr.
     ResetCard,
+
+    /// Verify ChangeKey implementation — round-trip key 1 zero→test→zero.
+    /// Requires BLANK card (factory K0 = zeros).
+    TestCk,
 }
 
 fn parse_hex_16(s: &str) -> anyhow::Result<[u8; 16]> {
@@ -408,6 +413,11 @@ async fn run() -> anyhow::Result<()> {
             println!("Clearing auth delay via 'keep trying' (rapid AuthFirst)...");
             println!("Per NT4H2421Gx datasheet: 'Keep trying until full delay is spent'");
             try_key::cmd_try_key(&mut transport, &[0u8; 16], 0).await?;
+        }
+
+        Cli::TestCk => {
+            let mut transport = connect_transport()?;
+            testck::cmd_testck(&mut transport).await?;
         }
     }
 
