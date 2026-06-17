@@ -1163,8 +1163,7 @@ dependencies = [
 [[package]]
 name = "esp-idf-svc"
 version = "0.52.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "033432e951f49284a4b8874cdb2d7fb940a3b0181460f452ca7414ebe66babca"
+source = "git+https://github.com/Amperstrand/esp-idf-svc.git?branch=ai-experimental%2Ffix-ble-ping-en#8498bf7d2ba31578b81a0770689d323a7d66fbe3"
 dependencies = [
  "embassy-futures",
  "embedded-hal-async",
