@@ -24,6 +24,16 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(name = "bolty-cli", about = "NTAG424 card programming CLI via PCSC")]
+struct Args {
+    /// Output machine-readable JSON instead of human-readable text
+    #[arg(long, global = true)]
+    json: bool,
+
+    #[command(subcommand)]
+    command: Cli,
+}
+
+#[derive(Parser)]
 enum Cli {
     /// Read and print the card UID
     Uid,
@@ -234,7 +244,9 @@ fn exit_code_for(e: &anyhow::Error) -> i32 {
 }
 
 async fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let args = Args::parse();
+    let json_mode = args.json;
+    let cli = args.command;
 
     match cli {
         Cli::Uid => {
@@ -326,7 +338,7 @@ async fn run() -> anyhow::Result<()> {
         Cli::Diagnose { issuer_key } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            diagnose::cmd_diagnose(&mut transport, &issuer_key).await?;
+            diagnose::cmd_diagnose(&mut transport, &issuer_key, json_mode).await?;
         }
 
         Cli::DeriveKeys {

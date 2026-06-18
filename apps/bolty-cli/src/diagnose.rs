@@ -48,6 +48,7 @@ fn classify_card_state(
 pub async fn cmd_diagnose<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
+    json: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -201,13 +202,18 @@ where
     }
 
     // 7. Classify.
-    println!("\n=== DIAGNOSIS ===");
-
     let state = classify_card_state(auth_delay, has_sdm, has_ndef_content, factory_auth_ok);
 
-    println!("Card state:     {state}");
-
-    match state {
+    if json {
+        let uid_hex = crate::to_hex(uid_fixed);
+        let mac_valid = picc_ok;
+        println!(
+            r#"{{"ok":true,"uid":"{uid_hex}","state":"{state}","sdm_active":{has_sdm},"mac_valid":{mac_valid}}}"#
+        );
+    } else {
+        println!("\n=== DIAGNOSIS ===");
+        println!("Card state:     {state}");
+        match state {
         "BLANK" => {
             println!("  Factory keys, no SDM, empty NDEF.");
             println!("  Ready to burn: bolty-cli burn --issuer-key <KEY> --url <URL>");
@@ -239,6 +245,7 @@ where
             if !is_ntag424 {
                 println!("  Card may not be an NTAG424.");
             }
+        }
         }
     }
 
