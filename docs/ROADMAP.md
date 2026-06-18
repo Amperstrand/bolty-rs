@@ -26,16 +26,19 @@
 - [x] PCSC desktop CLI (ACS ACR1252 verified — full burn/wipe/diagnose cycle)
 - [x] M5StickC Plus firmware (MFRC522 I2C, ST7789 display, serial console)
 - [x] M5Atom Matrix firmware (MFRC522 I2C, LED matrix)
-- [x] WiFi + REST API (verified — port 80, mDNS `bolty.local`, 7 endpoints)
-- [x] OTA firmware update (implemented, no signature verification yet)
+- [x] WiFi + HTTPS REST API (self-signed TLS, bearer token auth, 11 endpoints)
+- [x] OTA firmware update (Ed25519 signed — tools/ota-sign.py for keygen/sign)
 - [x] PN532 NFC reader support (pn532-transport + bolty-pn532 crates)
 - [x] STM32 skeleton (apps/bolty-stm32 — compiles, hardware init pending)
 - [x] Button support (GPIO37 front + GPIO39 side, simple + legacy modes)
 - [x] Display mode bars + battery indicator (AXP192 voltage reading)
 - [x] `hwtest` command — interactive hardware self-test with display feedback
 - [x] `button-mode` command — switch between simple and legacy C++ compat
-- [x] BLE transport (GATT server — cmd write + rsp notify characteristics)
-  ⚠️ **No authentication or encryption — see issue #34 for security plan**
+- [x] `token` command — set REST API bearer token via serial
+- [x] BLE transport — two approaches available:
+  - `main` branch: esp-idf-svc Bluedroid (forked, ai-experimental patch)
+  - `esp32-nimble-ble` branch: NimBLE (encrypted, LE Secure Connections)
+  - Security: read-only whitelist + opt-in feature (issue #34)
 
 ### Fork Management & DRY
 - [x] iso14443-rs fork: 6 branches, 6 issues, ai-experiments default
@@ -58,32 +61,41 @@
 - [x] Polling safety: unauthenticated `poll_safe()` — zero auth APDUs
 - [x] Hardware watchdog (TWDT 5s) — auto-reset on I2C hang
 - [x] `keys` command marked as advanced with standard reference
-- [x] NVS persistence: LNURL + button mode survive reboots
+- [x] NVS persistence: LNURL + button mode + OTA signing key + TLS cert survive reboots
 
 ## In Progress
 
 - [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
-- [ ] Issue #34: BLE transport security (no auth/encryption — critical)
+- [ ] Issue #34: BLE pairing/bonding (NimBLE branch ready, blocked on hardware)
+- [ ] M5StickC UART0 hardware failure — needs replacement device
 - [ ] iso14443-rs upstream contribution (waiting for stability proof)
 
 ## Planned
 
 ### Card Recovery & Diagnostics (Priority: High)
+- [x] `try-key` command — test raw AES key against specific slot
+- [x] `scan-keys` command — auto-scan 7 likely candidates
+- [x] `reset-card` command — clear auth delay via "keep trying"
+- [x] `test-ck` command — ChangeKey A/B round-trip verification
+- [x] Circuit breaker for repeated authentication failures (#27 closed)
+- [x] Auth delay "keep trying" (rapid AuthFirst in same connection)
+- [x] `--json` output mode for diagnose
 - [ ] `raw-apdu` command — send arbitrary hex APDU for advanced debugging
 - [ ] Human-readable SDM config in `diagnose` (offsets explained in plain English)
 - [ ] Card fingerprinting — short hash of key state for quick comparison
-- [ ] Multi-issuer key scanning — try keys from multiple issuer sources
-- [ ] Circuit breaker for repeated authentication failures (#27)
+- [ ] `--json` for try-key, scan-keys, keyver (diagnose done)
 
 ### Firmware (Priority: Medium)
-- [ ] REST API authentication — bearer token or HMAC request signing
-- [ ] REST API TLS — switch from HTTP to HTTPS (ESP-IDF `esp_https_server`)
-- [ ] Standalone LED-only mode — physical switch for mode selection (identify/wipe/burn)
-- [ ] BLE transport research — FFI bindings for ESP-IDF BLE GATT server
-- [ ] OTA signature verification (#31)
-- [ ] Safety checklist programmatic enforcement (#29)
+- [x] REST API bearer token auth (`token` command)
+- [x] REST API TLS (self-signed HTTPS via on-device cert generation)
+- [x] OTA signature verification (#31 closed — Ed25519)
+- [x] Safety checklist programmatic enforcement (#29 closed — burn/wipe guards)
+- [x] `--force` flag to bypass safety checks
+- [ ] Standalone LED-only mode — physical switch for mode selection
+- [ ] BLE pairing/bonding — NimBLE branch ready, needs hardware test
+- [ ] microfips mesh integration (see docs/ble-research.md)
 
-### Ecosystem (Priority: Medium)
+### Ecosystem (Priority: Low)
 - [ ] BTCPayServer boltcard plugin compatibility testing
 - [ ] LNbits boltcards extension compatibility testing
 - [ ] Cross-implementation test vectors (shared fixture format)

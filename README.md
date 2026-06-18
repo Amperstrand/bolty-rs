@@ -4,9 +4,9 @@
 
 ## Current state
 
-- Full Bolt Card lifecycle: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`, `try-key`, `scan-keys`
-- Desktop CLI (`bolty-cli`) with pre-flight safety checks, per-key verification, `--dry-run` mode, and card recovery tools
-- ESP32 firmware with serial console, optional WiFi/REST API (port 80, mDNS as `bolty.local`), and OTA updates
+- Full Bolt Card lifecycle: `burn`, `wipe`, `diagnose`, `inspect`, `keyver`, `ver`, `picc`, `url`, `derive-keys`, `cycle`, `try-key`, `scan-keys`, `reset-card`, `test-ck`
+- Desktop CLI (`bolty-cli`) with pre-flight safety checks, per-key verification, `--dry-run` mode, `--json` output, `--force` override, card recovery tools, and circuit breaker
+- ESP32 firmware with serial console, optional WiFi/HTTPS REST API (bearer token auth, self-signed TLS), BLE transport (NimBLE, encrypted, read-only whitelist), OTA updates (Ed25519 signed), and `token` command for REST API authentication
 - Comprehensive hardware-free test suite including integration tests via MockTransport (full NTAG424 protocol simulation)
 - Both supported boards (M5StickC Plus, M5Atom Matrix) build from the same firmware crate with compile-time board selection
 - Hardware-verified on PCSC (ACS ACR1252) and M5StickC Plus (MFRC522 I2C)

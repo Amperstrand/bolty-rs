@@ -214,38 +214,38 @@ where
         println!("\n=== DIAGNOSIS ===");
         println!("Card state:     {state}");
         match state {
-        "BLANK" => {
-            println!("  Factory keys, no SDM, empty NDEF.");
-            println!("  Ready to burn: bolty-cli burn --issuer-key <KEY> --url <URL>");
-        }
-        "PROVISIONED" => {
-            if picc_ok {
-                println!("  SDM active, PICC decrypts and verifies with provided issuer key.");
-            } else {
-                println!("  SDM active but PICC verification failed.");
-                println!("  Card may use a different issuer key or key version.");
+            "BLANK" => {
+                println!("  Factory keys, no SDM, empty NDEF.");
+                println!("  Ready to burn: bolty-cli burn --issuer-key <KEY> --url <URL>");
             }
-        }
-        "HALF-WIPED" => {
-            println!("  Mixed state: SDM={has_sdm}, NDEF_content={has_ndef_content}.");
-            if factory_auth_ok {
-                println!("  Factory K0 works — re-burn to recover.");
-            } else {
-                println!("  Try `wipe` with the correct issuer key, then re-burn.");
+            "PROVISIONED" => {
+                if picc_ok {
+                    println!("  SDM active, PICC decrypts and verifies with provided issuer key.");
+                } else {
+                    println!("  SDM active but PICC verification failed.");
+                    println!("  Card may use a different issuer key or key version.");
+                }
             }
-        }
-        "AUTH_DELAY" => {
-            println!("  Card is rate-limiting auth. Wait 5-10s and re-run diagnose.");
-        }
-        _ => {
-            println!("  Does not match any known pattern.");
-            println!(
-                "  SDM={has_sdm}, NDEF={has_ndef_content}, NDEF_len={ndef_len}, NTAG424={is_ntag424}"
-            );
-            if !is_ntag424 {
-                println!("  Card may not be an NTAG424.");
+            "HALF-WIPED" => {
+                println!("  Mixed state: SDM={has_sdm}, NDEF_content={has_ndef_content}.");
+                if factory_auth_ok {
+                    println!("  Factory K0 works — re-burn to recover.");
+                } else {
+                    println!("  Try `wipe` with the correct issuer key, then re-burn.");
+                }
             }
-        }
+            "AUTH_DELAY" => {
+                println!("  Card is rate-limiting auth. Wait 5-10s and re-run diagnose.");
+            }
+            _ => {
+                println!("  Does not match any known pattern.");
+                println!(
+                    "  SDM={has_sdm}, NDEF={has_ndef_content}, NDEF_len={ndef_len}, NTAG424={is_ntag424}"
+                );
+                if !is_ntag424 {
+                    println!("  Card may not be an NTAG424.");
+                }
+            }
         }
     }
 
