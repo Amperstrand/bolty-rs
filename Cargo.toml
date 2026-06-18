@@ -10,12 +10,6 @@ ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", branch = "ai-exp
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", branch = "ai-experiments" }
 iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", branch = "ai-experiments", features = ["alloc"] }
 
-# Temporary fork of esp-idf-svc to fix BLE ble_ping_en struct mismatch.
-# Branch: ai-experimental/fix-ble-ping-en
-# DO NOT use in production. Remove when esp-idf-svc 0.53.0 is released.
-[patch.crates-io]
-esp-idf-svc = { git = "https://github.com/Amperstrand/esp-idf-svc.git", branch = "ai-experimental/fix-ble-ping-en" }
-
 [workspace.lints.clippy]
 unwrap_used = "warn"
 expect_used = "warn"

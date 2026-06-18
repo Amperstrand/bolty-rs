@@ -272,17 +272,14 @@ pub fn main() {
 
     #[cfg(feature = "ble")]
     let ble_transport = {
-        log::info!("Initializing BLE transport...");
-        match crate::ble::BleTransport::start(modem) {
+        log::info!("Initializing BLE transport (NimBLE)...");
+        match crate::ble::BleTransport::start() {
             Ok(t) => {
                 log::info!("BLE transport initialized");
-                if !crate::ble::wait_for_ready(&t, 5000) {
-                    log::warn!("BLE: GATT server not ready after 5s, continuing anyway");
-                }
                 Some(t)
             }
             Err(e) => {
-                log::error!("BLE init failed: {e:?}");
+                log::error!("BLE init failed: {e}");
                 None
             }
         }
