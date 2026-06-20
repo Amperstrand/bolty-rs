@@ -10,6 +10,7 @@ pub async fn cmd_keyver<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
     version: u8,
+    json_mode: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -19,7 +20,11 @@ where
         .await
         .context("failed to read UID")?;
     let uid_fixed = uid_to_fixed(&uid);
-    println!("Card UID: {}", crate::to_hex(uid_fixed));
+    let uid_hex = crate::to_hex(uid_fixed);
+
+    if !json_mode {
+        println!("Card UID: {uid_hex}");
+    }
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
         issuer_key,
@@ -45,17 +50,24 @@ where
             }
         };
 
-    println!("\nKey versions (authenticated via {k0_label}):");
-    let labels = ["K0 (master)", "K1 (SDM PICC)", "K2 (SDM MAC)", "K3", "K4"];
-    for (label, v) in labels.iter().zip(versions.iter()) {
-        println!("  {label}: 0x{v:02X}");
-    }
+    if json_mode {
+        println!(
+            r#"{{"ok":true,"uid":"{uid_hex}","versions":[{},{},{},{},{}],"authenticated_via":"{k0_label}"}}"#,
+            versions[0], versions[1], versions[2], versions[3], versions[4]
+        );
+    } else {
+        println!("\nKey versions (authenticated via {k0_label}):");
+        let labels = ["K0 (master)", "K1 (SDM PICC)", "K2 (SDM MAC)", "K3", "K4"];
+        for (label, v) in labels.iter().zip(versions.iter()) {
+            println!("  {label}: 0x{v:02X}");
+        }
 
-    let all_factory = versions.iter().all(|&v| v == 0);
-    if all_factory {
-        println!("\nAll keys at factory version (0x00) — card is BLANK.");
-    } else if versions[1] != 0 && versions[2] != 0 {
-        println!("\nK1/K2 have non-factory versions — card appears PROVISIONED.");
+        let all_factory = versions.iter().all(|&v| v == 0);
+        if all_factory {
+            println!("\nAll keys at factory version (0x00) — card is BLANK.");
+        } else if versions[1] != 0 && versions[2] != 0 {
+            println!("\nK1/K2 have non-factory versions — card appears PROVISIONED.");
+        }
     }
 
     Ok(())

@@ -265,7 +265,7 @@ async fn run() -> anyhow::Result<()> {
         } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            keyver::cmd_keyver(&mut transport, &issuer_key, version).await?;
+            keyver::cmd_keyver(&mut transport, &issuer_key, version, json_mode).await?;
         }
 
         Cli::Inspect {
@@ -411,20 +411,22 @@ async fn run() -> anyhow::Result<()> {
         Cli::TryKey { key, key_no } => {
             let key = parse_hex_16(&key)?;
             let mut transport = connect_transport()?;
-            try_key::cmd_try_key(&mut transport, &key, key_no).await?;
+            try_key::cmd_try_key(&mut transport, &key, key_no, json_mode).await?;
         }
 
         Cli::ScanKeys { issuer_key } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            scan_keys::cmd_scan_keys(&mut transport, &issuer_key).await?;
+            scan_keys::cmd_scan_keys(&mut transport, &issuer_key, json_mode).await?;
         }
 
         Cli::ResetCard => {
             let mut transport = connect_transport()?;
-            println!("Clearing auth delay via 'keep trying' (rapid AuthFirst)...");
-            println!("Per NT4H2421Gx datasheet: 'Keep trying until full delay is spent'");
-            try_key::cmd_try_key(&mut transport, &[0u8; 16], 0).await?;
+            if !json_mode {
+                println!("Clearing auth delay via 'keep trying' (rapid AuthFirst)...");
+                println!("Per NT4H2421Gx datasheet: 'Keep trying until full delay is spent'");
+            }
+            try_key::cmd_try_key(&mut transport, &[0u8; 16], 0, json_mode).await?;
         }
 
         Cli::TestCk => {

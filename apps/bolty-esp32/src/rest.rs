@@ -23,9 +23,41 @@ use heapless::String;
 
 pub type SharedConfig = Arc<Mutex<BoltyConfig>>;
 pub type SharedService<S> = Arc<Mutex<S>>;
+pub type SharedRateLimiter = Arc<Mutex<RateLimiter>>;
 
 const MAX_BODY_LEN: usize = 512;
 const JSON_CONTENT_TYPE: (&str, &str) = ("Content-Type", "application/json");
+
+/// Protects the card from rapid successive burn/wipe cycles that
+/// could stress NTAG424 auth failure counters (SeqFailCtr/TotFailCtr).
+const WRITE_COOLDOWN_US: i64 = 5_000_000;
+
+/// Uses `esp_timer_get_time()` (monotonic µs since boot) — no RTC/NTP needed.
+#[derive(Clone)]
+pub struct RateLimiter {
+    last_write_us: i64,
+}
+
+impl RateLimiter {
+    pub const fn new() -> Self {
+        Self { last_write_us: 0 }
+    }
+
+    pub fn check_write(&mut self) -> Result<(), u64> {
+        let now = unsafe { esp_idf_sys::esp_timer_get_time() };
+        let elapsed = now - self.last_write_us;
+        if elapsed < WRITE_COOLDOWN_US {
+            let remaining_us = WRITE_COOLDOWN_US - elapsed;
+            Err((remaining_us / 1_000_000) as u64 + 1)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn record_write(&mut self) {
+        self.last_write_us = unsafe { esp_idf_sys::esp_timer_get_time() };
+    }
+}
 
 pub trait RestBoltyService: BoltyService {
     fn sync_from(&mut self, config: &BoltyConfig);
@@ -39,6 +71,7 @@ where
     server: EspHttpServer<'static>,
     _config: SharedConfig,
     _service: SharedService<S>,
+    _rate_limiter: SharedRateLimiter,
 }
 
 impl<S> RestServer<S>
@@ -65,6 +98,8 @@ where
             ..Default::default()
         })
         .map_err(|error| error.0)?;
+
+        let rate_limiter: SharedRateLimiter = Arc::new(Mutex::new(RateLimiter::new()));
 
         {
             let config = Arc::clone(&config);
@@ -93,32 +128,36 @@ where
         {
             let config = Arc::clone(&config);
             let service = Arc::clone(&service);
+            let rl = Arc::clone(&rate_limiter);
             server.fn_handler("/api/keys", Method::Post, move |request| {
-                handle_keys(request, &config, &service)
+                handle_keys(request, &config, &service, &rl)
             })?;
         }
 
         {
             let config = Arc::clone(&config);
             let service = Arc::clone(&service);
+            let rl = Arc::clone(&rate_limiter);
             server.fn_handler("/api/url", Method::Post, move |request| {
-                handle_url(request, &config, &service)
+                handle_url(request, &config, &service, &rl)
             })?;
         }
 
         {
             let config = Arc::clone(&config);
             let service = Arc::clone(&service);
+            let rl = Arc::clone(&rate_limiter);
             server.fn_handler("/api/burn", Method::Post, move |request| {
-                handle_action(request, &config, &service, Command::Burn)
+                handle_action(request, &config, &service, &rl, Command::Burn)
             })?;
         }
 
         {
             let config = Arc::clone(&config);
             let service = Arc::clone(&service);
+            let rl = Arc::clone(&rate_limiter);
             server.fn_handler("/api/wipe", Method::Post, move |request| {
-                handle_action(request, &config, &service, Command::Wipe)
+                handle_action(request, &config, &service, &rl, Command::Wipe)
             })?;
         }
 
@@ -158,6 +197,7 @@ where
             server,
             _config: config,
             _service: service,
+            _rate_limiter: rate_limiter,
         })
     }
 
@@ -285,6 +325,7 @@ fn handle_keys<S>(
     mut request: Request<&mut EspHttpConnection<'_>>,
     config: &SharedConfig,
     service: &SharedService<S>,
+    rate_limiter: &SharedRateLimiter,
 ) -> Result<(), EspIOError>
 where
     S: RestBoltyService + Send + 'static,
@@ -295,6 +336,10 @@ where
             401,
             json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
         );
+    }
+
+    if let Err(retry_secs) = check_rate_limit(rate_limiter) {
+        return respond_rate_limited(request, retry_secs);
     }
 
     let body = match read_body(&mut request) {
@@ -332,7 +377,10 @@ where
     });
 
     match result {
-        Ok(WorkflowResult::Success) => respond_json(request, 200, json_ok("").as_str()),
+        Ok(WorkflowResult::Success) => {
+            record_rate_limit(rate_limiter);
+            respond_json(request, 200, json_ok("").as_str())
+        }
         Ok(other) => respond_json(
             request,
             200,
@@ -346,6 +394,7 @@ fn handle_url<S>(
     mut request: Request<&mut EspHttpConnection<'_>>,
     config: &SharedConfig,
     service: &SharedService<S>,
+    rate_limiter: &SharedRateLimiter,
 ) -> Result<(), EspIOError>
 where
     S: RestBoltyService + Send + 'static,
@@ -356,6 +405,10 @@ where
             401,
             json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
         );
+    }
+
+    if let Err(retry_secs) = check_rate_limit(rate_limiter) {
+        return respond_rate_limited(request, retry_secs);
     }
 
     let body = match read_body(&mut request) {
@@ -409,7 +462,10 @@ where
     });
 
     match result {
-        Ok(WorkflowResult::Success) => respond_json(request, 200, json_ok("").as_str()),
+        Ok(WorkflowResult::Success) => {
+            record_rate_limit(rate_limiter);
+            respond_json(request, 200, json_ok("").as_str())
+        }
         Ok(other) => respond_json(
             request,
             200,
@@ -423,6 +479,7 @@ fn handle_action<S>(
     request: Request<&mut EspHttpConnection<'_>>,
     config: &SharedConfig,
     service: &SharedService<S>,
+    rate_limiter: &SharedRateLimiter,
     command: Command,
 ) -> Result<(), EspIOError>
 where
@@ -436,6 +493,10 @@ where
         );
     }
 
+    if let Err(retry_secs) = check_rate_limit(rate_limiter) {
+        return respond_rate_limited(request, retry_secs);
+    }
+
     let result = with_state(config, service, move |config, service| {
         let result = dispatch_command(command, service, config);
         service.sync_from(config);
@@ -444,6 +505,7 @@ where
 
     match result {
         Ok(WorkflowResult::Success) => {
+            record_rate_limit(rate_limiter);
             respond_json(request, 200, json_ok("\"status\":\"done\"").as_str())
         }
         Ok(_) => respond_json(request, 200, "{\"ok\":false,\"status\":\"error\"}"),
@@ -458,6 +520,35 @@ fn respond_json(
 ) -> Result<(), EspIOError> {
     request
         .into_response(status, Some(status_message(status)), &[JSON_CONTENT_TYPE])?
+        .write_all(body.as_bytes())
+}
+
+fn check_rate_limit(rate_limiter: &SharedRateLimiter) -> Result<(), u64> {
+    match rate_limiter.lock() {
+        Ok(mut rl) => rl.check_write(),
+        Err(_) => Ok(()),
+    }
+}
+
+fn record_rate_limit(rate_limiter: &SharedRateLimiter) {
+    if let Ok(mut rl) = rate_limiter.lock() {
+        rl.record_write();
+    }
+}
+
+fn respond_rate_limited(
+    request: Request<&mut EspHttpConnection<'_>>,
+    retry_secs: u64,
+) -> Result<(), EspIOError> {
+    let body = json_err_hint("rate limited", "wait before sending another write request");
+    let mut retry_header = String::<32>::new();
+    let _ = write!(retry_header, "{retry_secs}");
+    request
+        .into_response(
+            429,
+            Some(status_message(429)),
+            &[JSON_CONTENT_TYPE, ("Retry-After", retry_header.as_str())],
+        )?
         .write_all(body.as_bytes())
 }
 
@@ -609,6 +700,7 @@ fn status_message(status: u16) -> &'static str {
         401 => "Unauthorized",
         404 => "Not Found",
         413 => "Payload Too Large",
+        429 => "Too Many Requests",
         _ => "Internal Server Error",
     }
 }
