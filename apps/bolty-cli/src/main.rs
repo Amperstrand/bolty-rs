@@ -354,7 +354,17 @@ async fn run() -> anyhow::Result<()> {
                 CardUid::new(uid),
                 version as u32,
             );
-            if verbose {
+            if json_mode {
+                println!(
+                    r#"{{"ok":true,"version":{version},"card_key":"{}","k0":"{}","k1":"{}","k2":"{}","k3":"{}","k4":"{}"}}"#,
+                    to_hex(keys.card_key.as_bytes()),
+                    to_hex(keys.k0.as_bytes()),
+                    to_hex(keys.k1.as_bytes()),
+                    to_hex(keys.k2.as_bytes()),
+                    to_hex(keys.k3.as_bytes()),
+                    to_hex(keys.k4.as_bytes()),
+                );
+            } else if verbose {
                 println!("Derived keys (version {version}):");
                 println!("  cardKey: {}", to_hex(keys.card_key.as_bytes()));
                 println!("  K0:      {}", to_hex(keys.k0.as_bytes()));

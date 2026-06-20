@@ -53,7 +53,7 @@ The following features have been verified end-to-end on real hardware with card 
 | Serial derivekeys workflow | serial_commands.h | bolty-core | commands | ✅ DONE (firmware + CLI) |
 | Serial diagnose workflow | serial_commands.h | bolty-core | commands | ✅ DONE (firmware + CLI) |
 | Serial recoverkey workflow | serial_commands.h | bolty-core | commands | ✅ SUPERSEDED (`try-key` + `scan-keys` are better) |
-| Serial ChangeKey self-test (`testck`) | serial_commands.h | bolty-core | commands | ⬜ MISSING — see docs/feature-parity-plan.md |
+| Serial ChangeKey self-test (`testck`) | serial_commands.h | bolty-core | commands | ✅ DONE (CLI: `testck` command) |
 | Serial WiFi command (`wifi <ssid> <pass>` / `wifi off`) | serial_commands.h | bolty-core | commands | ✅ DONE (T16) |
 | Burn/wipe/check/session/job constants | bolt.h | bolty-core | orchestration | ✅ DONE |
 | Key version constants and hardware type constants | bolt.h | bolty-core | types | ✅ DONE |
