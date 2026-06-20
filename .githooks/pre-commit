@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit hook: fmt check + clippy + unit tests + secret scan
+# Pre-commit hook: fmt + clippy + tests + secret scan + audit
 # Install: git config core.hooksPath .githooks
 
 set -euo pipefail
@@ -40,6 +40,14 @@ echo "[pre-commit] Running unit tests (host crates only)..."
 if ! cargo test --workspace --exclude bolty-esp32 --lib 2>&1; then
     echo "[pre-commit] ❌ Unit tests failed. Fix failures and re-stage."
     exit 1
+fi
+
+if command -v cargo-audit &>/dev/null; then
+    echo "[pre-commit] Running cargo audit..."
+    if ! cargo audit 2>&1; then
+        echo "[pre-commit] ❌ Security vulnerabilities found. Run 'cargo audit' for details."
+        exit 1
+    fi
 fi
 
 echo "[pre-commit] ✅ All checks passed."
