@@ -19,3 +19,4 @@ alloc = []
 workspace = true
 
 [dev-dependencies]
+proptest = "1"

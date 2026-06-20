@@ -5,19 +5,34 @@ use aes::Aes128;
 use aes::cipher::BlockCipherEncrypt;
 use aes::cipher::{Array, Block, BlockCipherDecrypt, KeyInit};
 
+/// PICCData format byte for bolt card configuration (AN12196 §3.4.1).
 pub const PICC_FORMAT_BOLTCARD: u8 = 0xC7;
+/// Flag indicating UID is present in mirrored PICCData.
 pub const PICC_FLAG_HAS_UID: u8 = 0x80;
+/// Flag indicating SDM counter is present in mirrored PICCData.
 pub const PICC_FLAG_HAS_COUNTER: u8 = 0x40;
+/// NTAG424 DNA uses 7-byte UIDs.
 pub const PICC_UID_BYTE_LEN: usize = 7;
+/// SDM read counter is 3 bytes (24-bit, little-endian).
 pub const PICC_COUNTER_LEN: usize = 3;
+/// SV2 header for SDM MAC session key derivation (AN12196 §3.3).
 pub const SV2_HEADER: [u8; 6] = [0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80];
 
+/// Decrypted PICCData from the `p=` URL parameter.
+///
+/// Contains the card's UID and a monotonic read counter, used for
+/// replay protection and card identification.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PiccData {
+    /// Whether CMAC verification (`c=` parameter) passed.
     pub valid: bool,
+    /// 7-byte card UID extracted from decrypted PICCData.
     pub uid: [u8; 7],
+    /// 24-bit SDM read counter (little-endian in PICCData, converted to u32).
     pub counter: u32,
+    /// Whether UID field is populated.
     pub has_uid: bool,
+    /// Whether counter field is populated.
     pub has_counter: bool,
 }
 
