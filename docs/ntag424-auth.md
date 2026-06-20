@@ -572,4 +572,7 @@ All claims below were tested on real NTAG424 DNA hardware (card UID
 - NXP NTAG424 DNA Product Data Sheet Rev. 3.0 §10.5 — AuthenticateEV2First
 - NXP NTAG424 DNA Product Data Sheet Rev. 3.0 §10.6.1 — ChangeKey
 - `docs/card-safety.md` — Safety reference for card operations
+- `hackathon-tooling/patterns/boltcard/ntag424-auth.md` — Server-side NTAG424 auth pattern (Cloudflare Worker)
+- `hackathon-tooling/patterns/boltcard/replay-protection.md` — Durable Object replay protection pattern
+- `hackathon-tooling/patterns/boltcard/bip85-key-derivation.md` — Key derivation hierarchy pattern
 - GitHub issue #27 — Circuit breaker for repeated authentication failures

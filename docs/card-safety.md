@@ -8,6 +8,8 @@ with specific focus on bolt card provisioning workflows. It is based on:
 - NXP Application Note AN12196 (Features and Hints)
 - Proxmark3 NTAG424 implementation (client/src/cmdhfntag424.c)
 - bolty-rs source code analysis (burn.rs, wipe.rs, diagnose.rs, bolty-ntag)
+- `hackathon-tooling/patterns/boltcard/` — Server-side patterns for boltcard systems
+- NT4H2421Gx Product Data Sheet §10.4 — AUTHENTICATION_DELAY status code definition
 
 ---
 
@@ -315,15 +317,127 @@ From empirical testing and proxmark3 community experience:
 14. ✅ Dry-run unit tests verify card state preservation on both factory and provisioned cards
 
 ### Remaining Safety Gaps
-1. ⚠️ Auth delay escalation not tracked (only 1 retry, may need longer waits)
-2. ⚠️ No circuit breaker for repeated auth failures
+1. ⬜ No formal rate limiting on REST API (bearer token brute-force)
 
 ### Resolved Gaps
+- ✅ ~~Auth delay escalation~~ → "keep trying" rapid AuthFirst (2-5 attempts clears)
+- ✅ ~~No circuit breaker~~ → 10 failure limit with warning at 3 (commit `6d08cbb`)
 - ✅ ~~Mock transport doesn't exist~~ → MockTransport with integration tests
 - ✅ ~~No pre-flight diagnose check~~ → `preflight()` verifies NTAG424 DNA before burn/wipe
 - ✅ ~~No `--dry-run` mode~~ → `--dry-run` on both burn and wipe (commit `1228bbf`)
 - ✅ ~~No per-key verification~~ → GetKeyVersion readback after each K1-K4 change (commit `eec9e5c`)
+- ✅ ~~No state guard before burn~~ → `[0/7]` step checks BLANK/PROVISIONED (commit `440ddb2`)
+- ✅ ~~No URL validation~~ → `{picc}` and `{mac}` required (commit `440ddb2`)
+- ✅ ~~Wipe doesn't refuse BLANK~~ → explicit factory K0 probe before derived K0 auth
+- ✅ ~~No auth delay recovery~~ → try-key rapid retry within same connection
 
-### Priority Fixes
-1. **LOW**: Track auth delay count and escalate wait time
-2. **LOW**: Add circuit breaker for repeated auth failures (refuse after N consecutive failures)
+## 10. Issuer Key Rotation
+
+### When to rotate
+
+- Security incident: issuer key may have been compromised
+- Key migration: moving from test keys to production keys
+- Periodic rotation: defense in depth (recommended every 12 months)
+
+### Procedure: rotate without bricking cards
+
+The key derivation supports versioning. Each version produces a completely different
+K0-K4 keyset from the same issuer key. The `version` parameter advances the keyset:
+
+```bash
+# Card currently at version 1 with issuer key A
+# Rotate to version 2 (same issuer key, new version)
+
+# Step 1: Authenticate with current version
+bolty-cli wipe --issuer-key <ISSUER_KEY> --version 1
+
+# Step 2: Re-burn with new version
+bolty-cli burn --issuer-key <ISSUER_KEY> --url <URL> --version 2
+
+# Step 3: Verify
+bolty-cli diagnose --issuer-key <ISSUER_KEY> --version 2
+```
+
+### Procedure: rotate to a new issuer key
+
+This requires wiping all cards (old key is lost) and re-burning with the new key:
+
+```bash
+# Step 1: Wipe with old issuer key
+bolty-cli wipe --issuer-key <OLD_ISSUER_KEY> --version <OLD_VERSION>
+
+# Step 2: Burn with new issuer key
+bolty-cli burn --issuer-key <NEW_ISSUER_KEY> --url <URL> --version 1
+
+# Step 3: Update Cloudflare Worker / backend with new issuer key
+# Step 4: Verify end-to-end tap
+```
+
+### Security implications
+
+- **K1 is shared across all cards** under the same issuer key. If K1 is compromised,
+  ALL cards under that issuer can have their `p=` parameter decrypted.
+- **K2 is per-card** (derived from cardKey which includes UID). K2 compromise
+  affects only one card.
+- **Rotating the version** changes ALL keys (K0-K4) including K1.
+- **Rotating the issuer key** is equivalent to generating a completely new key universe.
+  All old cards must be wiped and re-burned.
+
+### Recovery from lost issuer key
+
+If the issuer key is lost and no backup exists:
+1. Cards CANNOT be wiped programmatically (wrong key → auth failure)
+2. Cards CANNOT be re-burned (need factory K0 first, which is gone after burn)
+3. Use `try-key` and `scan-keys` to attempt recovery with known candidates
+4. If all fail: cards are bricked for key management. Use as read-only test artifacts.
+
+**Prevention**: Back up the issuer key offline (paper, metal, encrypted USB).
+The issuer key is the single point of failure for the entire card fleet.
+
+## 11. OTA Firmware Rollback
+
+### How OTA works
+
+bolty-rs uses ESP-IDF's dual-partition OTA system:
+- Flash has two app partitions (ota_0, ota_1) + a factory partition
+- OTA downloads new firmware to the inactive partition
+- On next boot, bootloader switches to the newly written partition
+- If the new firmware crashes repeatedly, ESP-IDF can roll back automatically
+
+### Rollback procedure (automatic)
+
+ESP-IDF supports automatic rollback when `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`:
+1. New firmware boots but doesn't call `esp_ota_mark_app_valid_cancel_rollback()` within
+   a timeout
+2. Watchdog triggers → bootloader marks new partition as invalid
+3. Next boot loads the previous (known-good) partition
+4. User sees the old firmware running
+
+This is the safest rollback — zero operator intervention required.
+
+### Rollback procedure (manual)
+
+If automatic rollback is disabled or the firmware is running but broken:
+
+1. Connect via serial (or BLE if serial is dead)
+2. Send: `ota <url> <signature>` with the URL of the previous firmware version
+3. Device downloads, verifies signature, flashes to inactive partition
+4. Device reboots into the new (old) firmware
+
+### Signature verification
+
+OTA updates require Ed25519 signatures (issue #31, resolved):
+1. Generate keypair: `python3 tools/ota-sign.py keygen --privkey ota_key.pem`
+2. Provision public key: `provision-ota-key <pubkey_hex>` (serial command)
+3. Sign firmware: `python3 tools/ota-sign.py sign --privkey ota_key.pem --firmware <bin>`
+4. Deploy: `ota <url> <signature_hex>` (serial command or REST API)
+
+Without a valid signature, the OTA update is rejected. An attacker who doesn't
+have the private key cannot flash malicious firmware.
+
+### Recovery from bad OTA flash
+
+If OTA flashes corrupt firmware and the device doesn't boot:
+1. Use `espflash erase-flash` to wipe everything
+2. Re-flash with known-good firmware via USB
+3. Re-provision keys and settings (NVS is preserved across OTA but wiped on erase-flash)

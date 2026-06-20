@@ -175,12 +175,22 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let status = match service.lock() {
         Ok(service) => service.get_status(),
-        Err(_) => return respond_json(request, 500, json_err("service unavailable").as_str()),
+        Err(_) => {
+            return respond_json(
+                request,
+                500,
+                json_err_hint("service unavailable", "NFC reader may not be initialized").as_str(),
+            );
+        }
     };
 
     let body = json_status(&status);
@@ -196,16 +206,30 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let status = match service.lock() {
         Ok(service) => service.get_status(),
-        Err(_) => return respond_json(request, 500, json_err("service unavailable").as_str()),
+        Err(_) => {
+            return respond_json(
+                request,
+                500,
+                json_err_hint("service unavailable", "NFC reader may not be initialized").as_str(),
+            );
+        }
     };
 
     let Some(uid) = status.last_uid else {
-        return respond_json(request, 200, json_err("no uid").as_str());
+        return respond_json(
+            request,
+            200,
+            json_err_hint("no uid", "place a card on the reader").as_str(),
+        );
     };
 
     let mut uid_hex = String::<32>::new();
@@ -228,7 +252,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, |config, service| {
@@ -262,16 +290,32 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Write) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let body = match read_body(&mut request) {
         Ok(body) => body,
         Err(ReadBodyError::TooLarge) => {
-            return respond_json(request, 413, json_err("request too large").as_str());
+            return respond_json(
+                request,
+                413,
+                json_err_hint("request too large", "max 512 bytes").as_str(),
+            );
         }
         Err(ReadBodyError::InvalidUtf8) => {
-            return respond_json(request, 400, json_err("invalid utf-8 body").as_str());
+            return respond_json(
+                request,
+                400,
+                json_err_hint(
+                    "invalid utf-8 body",
+                    "ensure Content-Type is application/json",
+                )
+                .as_str(),
+            );
         }
         Err(ReadBodyError::Io(error)) => return Err(error),
     };
@@ -307,16 +351,32 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Write) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let body = match read_body(&mut request) {
         Ok(body) => body,
         Err(ReadBodyError::TooLarge) => {
-            return respond_json(request, 413, json_err("request too large").as_str());
+            return respond_json(
+                request,
+                413,
+                json_err_hint("request too large", "max 512 bytes").as_str(),
+            );
         }
         Err(ReadBodyError::InvalidUtf8) => {
-            return respond_json(request, 400, json_err("invalid utf-8 body").as_str());
+            return respond_json(
+                request,
+                400,
+                json_err_hint(
+                    "invalid utf-8 body",
+                    "ensure Content-Type is application/json",
+                )
+                .as_str(),
+            );
         }
         Err(ReadBodyError::Io(error)) => return Err(error),
     };
@@ -325,11 +385,21 @@ where
         Some(url) => {
             let mut out = LnurlString::new();
             if out.push_str(url).is_err() {
-                return respond_json(request, 400, json_err("url too long").as_str());
+                return respond_json(
+                    request,
+                    400,
+                    json_err_hint("url too long", "max 256 characters").as_str(),
+                );
             }
             out
         }
-        None => return respond_json(request, 400, json_err("missing url").as_str()),
+        None => {
+            return respond_json(
+                request,
+                400,
+                json_err_hint("missing url", "send JSON: {\"url\":\"https://...\"}").as_str(),
+            );
+        }
     };
 
     let result = with_state(config, service, move |config, service| {
@@ -359,7 +429,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Write) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, move |config, service| {
@@ -396,7 +470,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, |config, service| {
@@ -423,7 +501,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, |config, service| {
@@ -454,7 +536,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, |config, service| {
@@ -485,7 +571,11 @@ where
     S: RestBoltyService + Send + 'static,
 {
     if !is_authorized(&request, config, TokenScope::Read) {
-        return respond_json(request, 401, json_err("unauthorized").as_str());
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
     }
 
     let result = with_state(config, service, |config, service| {
@@ -571,6 +661,16 @@ pub fn json_err(msg: &str) -> String<256> {
     out
 }
 
+pub fn json_err_hint(msg: &str, hint: &str) -> String<256> {
+    let mut out = String::<256>::new();
+    out.push_str("{\"ok\":false,\"error\":\"").ok();
+    let _ = push_escaped_json(&mut out, msg);
+    out.push_str("\",\"hint\":\"").ok();
+    let _ = push_escaped_json(&mut out, hint);
+    out.push_str("\"}").ok();
+    out
+}
+
 fn push_uid_hex<const N: usize>(out: &mut String<N>, uid: &[u8]) -> core::fmt::Result {
     for byte in uid {
         write!(out, "{byte:02X}")?;
@@ -618,16 +718,20 @@ where
     Ok(f(&mut config, &mut service))
 }
 
-fn workflow_error_message(result: &WorkflowResult) -> &str {
+fn workflow_error_message(result: &WorkflowResult) -> &'static str {
     match result {
         WorkflowResult::Success => "success",
-        WorkflowResult::CardNotPresent => "card not present",
-        WorkflowResult::AuthFailed => "authentication failed",
-        WorkflowResult::AuthDelay => {
-            "authentication delay; remove card from field, wait, and retry with the correct key"
+        WorkflowResult::CardNotPresent => "card not present — place an NTAG424 card on the reader",
+        WorkflowResult::AuthFailed => {
+            "authentication failed — wrong issuer key or card already blank"
         }
-        WorkflowResult::WipeRefused => "wipe refused",
-        WorkflowResult::Error(message) => message.as_str(),
+        WorkflowResult::AuthDelay => {
+            "authentication delay — send AuthFirst repeatedly in the same connection to clear"
+        }
+        WorkflowResult::WipeRefused => {
+            "wipe refused — card may already be blank or in inconsistent state"
+        }
+        WorkflowResult::Error(_) => "operation failed — check card state with diagnose",
     }
 }
 
