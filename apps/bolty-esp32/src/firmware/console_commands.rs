@@ -17,7 +17,7 @@ use crate::display;
 #[cfg(feature = "ota")]
 use crate::ota::OtaUpdater;
 #[cfg(feature = "rest")]
-use crate::rest::RestServer;
+use crate::rest::{JobSlot, RestServer, SharedJobSlot};
 #[cfg(feature = "wifi")]
 use crate::wifi::WifiError;
 #[cfg(feature = "ota")]
@@ -40,6 +40,7 @@ pub(super) fn handle_line<I2C>(
     config: &Arc<Mutex<BoltyConfig>>,
     wifi_manager: &mut Option<WifiManager>,
     #[cfg(feature = "rest")] rest_server: &mut Option<RestServer<Esp32BoltyService<I2C>>>,
+    #[cfg(feature = "rest")] job_slot: &SharedJobSlot,
 ) where
     I2C: embedded_hal::i2c::I2c + Send + 'static,
     I2C::Error: core::fmt::Debug,
@@ -77,6 +78,7 @@ pub(super) fn handle_line<I2C>(
                                 REST_PORT,
                                 Arc::clone(config),
                                 Arc::clone(service),
+                                Arc::clone(job_slot),
                             ) {
                                 Ok(server) => {
                                     *rest_server = Some(server);

@@ -94,7 +94,7 @@ The following features have been verified end-to-end on real hardware with card 
 | REST burn endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST wipe endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17) |
 | REST NDEF endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (GET /api/ndef) |
-| REST job endpoint | bolty_rest_server.h | bolty-esp32 | rest | ⬜ MISSING — see docs/feature-parity-plan.md |
+| REST job endpoint | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (POST /api/job + GET /api/job, async burn/wipe) |
 | HTTP server bootstrap + URI registration + mDNS | bolty_rest_server.h | bolty-esp32 | rest | ✅ DONE (T17, HTTPS via on-device TLS cert) |
 | OTA firmware download + flash | ota.h | bolty-esp32 | ota | ✅ DONE (T18, no sig verification) |
 | WiFi connection management | bolt.h + serial_commands.h | bolty-esp32 | wifi | ✅ DONE (T16) |

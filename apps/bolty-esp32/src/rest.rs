@@ -24,6 +24,7 @@ use heapless::String;
 pub type SharedConfig = Arc<Mutex<BoltyConfig>>;
 pub type SharedService<S> = Arc<Mutex<S>>;
 pub type SharedRateLimiter = Arc<Mutex<RateLimiter>>;
+pub type SharedJobSlot = Arc<Mutex<JobSlot>>;
 
 const MAX_BODY_LEN: usize = 512;
 const JSON_CONTENT_TYPE: (&str, &str) = ("Content-Type", "application/json");
@@ -59,6 +60,78 @@ impl RateLimiter {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JobStatus {
+    Idle,
+    Pending,
+    Running,
+    Completed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JobCommand {
+    Burn,
+    Wipe,
+}
+
+impl JobCommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JobCommand::Burn => "burn",
+            JobCommand::Wipe => "wipe",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        if s.eq_ignore_ascii_case("burn") {
+            Some(JobCommand::Burn)
+        } else if s.eq_ignore_ascii_case("wipe") {
+            Some(JobCommand::Wipe)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_command(self) -> Command {
+        match self {
+            JobCommand::Burn => Command::Burn,
+            JobCommand::Wipe => Command::Wipe,
+        }
+    }
+}
+
+pub struct JobSlot {
+    pub id: u32,
+    pub status: JobStatus,
+    pub command: Option<JobCommand>,
+    pub result: Option<WorkflowResult>,
+}
+
+impl JobSlot {
+    pub const fn new() -> Self {
+        Self {
+            id: 0,
+            status: JobStatus::Idle,
+            command: None,
+            result: None,
+        }
+    }
+
+    pub fn submit(&mut self, cmd: JobCommand) -> bool {
+        if self.status != JobStatus::Idle && self.status != JobStatus::Completed {
+            return false;
+        }
+        self.id = self.id.wrapping_add(1);
+        if self.id == 0 {
+            self.id = 1;
+        }
+        self.status = JobStatus::Pending;
+        self.command = Some(cmd);
+        self.result = None;
+        true
+    }
+}
+
 pub trait RestBoltyService: BoltyService {
     fn sync_from(&mut self, config: &BoltyConfig);
 }
@@ -72,6 +145,7 @@ where
     _config: SharedConfig,
     _service: SharedService<S>,
     _rate_limiter: SharedRateLimiter,
+    _job_slot: SharedJobSlot,
 }
 
 impl<S> RestServer<S>
@@ -82,6 +156,7 @@ where
         port: u16,
         config: SharedConfig,
         service: SharedService<S>,
+        job_slot: SharedJobSlot,
     ) -> Result<Self, EspError> {
         let (server_cert, private_key) = crate::tls::server_cert_and_key().ok_or_else(|| {
             esp_idf_sys::EspError::from_non_zero(
@@ -193,11 +268,28 @@ where
             })?;
         }
 
+        {
+            let config = Arc::clone(&config);
+            let rl = Arc::clone(&rate_limiter);
+            let js = Arc::clone(&job_slot);
+            server.fn_handler("/api/job", Method::Post, move |request| {
+                handle_job_submit(request, &config, &rl, &js)
+            })?;
+        }
+
+        {
+            let js = Arc::clone(&job_slot);
+            server.fn_handler("/api/job", Method::Get, move |request| {
+                handle_job_status(request, &js)
+            })?;
+        }
+
         Ok(Self {
             server,
             _config: config,
             _service: service,
             _rate_limiter: rate_limiter,
+            _job_slot: job_slot,
         })
     }
 
@@ -550,6 +642,143 @@ fn respond_rate_limited(
             &[JSON_CONTENT_TYPE, ("Retry-After", retry_header.as_str())],
         )?
         .write_all(body.as_bytes())
+}
+
+fn handle_job_submit<S>(
+    mut request: Request<&mut EspHttpConnection<'_>>,
+    config: &SharedConfig,
+    rate_limiter: &SharedRateLimiter,
+    job_slot: &SharedJobSlot,
+) -> Result<(), EspIOError>
+where
+    S: RestBoltyService + Send + 'static,
+{
+    if !is_authorized(&request, config, TokenScope::Write) {
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
+    }
+
+    if let Err(retry_secs) = check_rate_limit(rate_limiter) {
+        return respond_rate_limited(request, retry_secs);
+    }
+
+    let body = match read_body(&mut request) {
+        Ok(body) => body,
+        Err(ReadBodyError::TooLarge) => {
+            return respond_json(
+                request,
+                413,
+                json_err_hint("request too large", "max 512 bytes").as_str(),
+            );
+        }
+        Err(ReadBodyError::InvalidUtf8) => {
+            return respond_json(
+                request,
+                400,
+                json_err_hint(
+                    "invalid utf-8 body",
+                    "ensure Content-Type is application/json",
+                )
+                .as_str(),
+            );
+        }
+        Err(ReadBodyError::Io(error)) => return Err(error),
+    };
+
+    let cmd_str = match extract_json_string(body.as_str(), "command") {
+        Some(s) => s,
+        None => {
+            return respond_json(
+                request,
+                400,
+                json_err_hint("missing command", "send JSON: {\"command\":\"burn\"}").as_str(),
+            );
+        }
+    };
+
+    let Some(cmd) = JobCommand::from_str(cmd_str) else {
+        return respond_json(
+            request,
+            400,
+            json_err_hint("invalid command", "must be \"burn\" or \"wipe\"").as_str(),
+        );
+    };
+
+    let (id, accepted) = match job_slot.lock() {
+        Ok(mut slot) => (slot.id + 1, slot.submit(cmd)),
+        Err(_) => {
+            return respond_json(request, 500, json_err("job slot unavailable").as_str());
+        }
+    };
+
+    if !accepted {
+        return respond_json(
+            request,
+            409,
+            json_err_hint("job in progress", "poll GET /api/job for completion").as_str(),
+        );
+    }
+
+    record_rate_limit(rate_limiter);
+    let body = format!(
+        "{{\"ok\":true,\"job_id\":{id},\"status\":\"pending\",\"command\":\"{}\"}}",
+        cmd.as_str()
+    );
+    respond_json(request, 201, body.as_str())
+}
+
+fn handle_job_status(
+    request: Request<&mut EspHttpConnection<'_>>,
+    _config: &SharedConfig,
+    job_slot: &SharedJobSlot,
+) -> Result<(), EspIOError> {
+    if !is_authorized(&request, _config, TokenScope::Read) {
+        return respond_json(
+            request,
+            401,
+            json_err_hint("unauthorized", "set a token via serial: token <value>").as_str(),
+        );
+    }
+
+    let (id, status_str, cmd_str, result_str) = match job_slot.lock() {
+        Ok(slot) => {
+            let status_str = match slot.status {
+                JobStatus::Idle => "idle",
+                JobStatus::Pending => "pending",
+                JobStatus::Running => "running",
+                JobStatus::Completed => "completed",
+            };
+            let cmd_str = slot.command.map(|c| c.as_str()).unwrap_or("none");
+            let result_str = slot
+                .result
+                .as_ref()
+                .map(|r| workflow_result_json(r))
+                .unwrap_or_else(|| "null".to_string());
+            (slot.id, status_str, cmd_str, result_str)
+        }
+        Err(_) => {
+            return respond_json(request, 500, json_err("job slot unavailable").as_str());
+        }
+    };
+
+    let body = format!(
+        "{{\"ok\":true,\"job_id\":{id},\"status\":\"{status_str}\",\"command\":\"{cmd_str}\",\"result\":{result_str}}}"
+    );
+    respond_json(request, 200, body.as_str())
+}
+
+fn workflow_result_json(result: &WorkflowResult) -> String {
+    match result {
+        WorkflowResult::Success => r#""success""#.to_string(),
+        WorkflowResult::CardNotPresent => r#""card_not_present""#.to_string(),
+        WorkflowResult::AuthFailed => r#""auth_failed""#.to_string(),
+        WorkflowResult::AuthDelay => r#""auth_delay""#.to_string(),
+        WorkflowResult::WipeRefused => r#""wipe_refused""#.to_string(),
+        WorkflowResult::Error(msg) => format!(r#""error: {}""#, msg.as_str()),
+    }
 }
 
 fn handle_keyver<S>(

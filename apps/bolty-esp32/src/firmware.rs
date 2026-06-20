@@ -22,6 +22,8 @@ use crate::button::{self, ButtonEvent, ButtonHandler};
 use crate::commands::ButtonMode;
 #[cfg(feature = "display-st7789")]
 use crate::display;
+#[cfg(feature = "rest")]
+use crate::rest::{JobSlot, SharedJobSlot};
 #[cfg(feature = "board-m5stick")]
 use crate::service::BoltyService;
 #[cfg(feature = "wifi")]
@@ -197,6 +199,8 @@ pub fn main() {
     let mut wifi_manager: Option<WifiManager> = None;
     #[cfg(feature = "rest")]
     let mut rest_server = None;
+    #[cfg(feature = "rest")]
+    let job_slot: SharedJobSlot = Arc::new(Mutex::new(JobSlot::new()));
     let mut line = String::<MAX_LINE_LEN>::new();
     let mut next_poll_at = millis();
     let mut heartbeat_at = millis();
@@ -389,6 +393,8 @@ pub fn main() {
                                 &mut wifi_manager,
                                 #[cfg(feature = "rest")]
                                 &mut rest_server,
+                                #[cfg(feature = "rest")]
+                                &job_slot,
                             );
                         }
                         line.clear();
@@ -418,6 +424,9 @@ pub fn main() {
             poll_card(&mut serial, &service, &mut card_announced);
             next_poll_at = now.saturating_add(CARD_POLL_INTERVAL_MS);
         }
+
+        #[cfg(feature = "rest")]
+        process_rest_job(&job_slot, &service, &config);
 
         if now >= heartbeat_at {
             let mut hb = String::<48>::new();
@@ -504,6 +513,53 @@ fn poll_card<I2C>(
                 }
             }
         }
+    }
+}
+
+#[cfg(feature = "rest")]
+fn process_rest_job<I2C>(
+    job_slot: &SharedJobSlot,
+    service: &Arc<Mutex<Esp32BoltyService<I2C>>>,
+    config: &Arc<Mutex<BoltyConfig>>,
+) where
+    I2C: embedded_hal::i2c::I2c + Send + 'static,
+    I2C::Error: core::fmt::Debug,
+{
+    use crate::rest::JobStatus;
+    use crate::service::WorkflowResult;
+    use crate::workflow::dispatch_command;
+    use bolty_core::config::ErrorString;
+
+    let cmd = {
+        let Ok(mut slot) = job_slot.lock() else {
+            return;
+        };
+        if slot.status != JobStatus::Pending {
+            return;
+        }
+        let Some(cmd) = slot.command else {
+            return;
+        };
+        slot.status = JobStatus::Running;
+        cmd
+    };
+
+    let result = match (config.lock(), service.lock()) {
+        (Ok(mut cfg), Ok(mut svc)) => {
+            let result = dispatch_command(cmd.to_command(), &mut svc, &mut cfg);
+            svc.sync_from(&cfg);
+            result
+        }
+        _ => {
+            let mut msg = ErrorString::new();
+            let _ = msg.push_str("lock failed");
+            WorkflowResult::Error(msg)
+        }
+    };
+
+    if let Ok(mut slot) = job_slot.lock() {
+        slot.status = JobStatus::Completed;
+        slot.result = Some(result);
     }
 }
 
