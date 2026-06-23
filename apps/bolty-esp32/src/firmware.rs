@@ -229,6 +229,7 @@ pub fn main() {
     }
 
     serial.line(&format!("[BOOT] #{boot_count} reason={reset_label}"));
+    serial.line("[BOOT] firmware=ota-test-v1");
 
     // Hardware diagnostics on serial console (visible even if boot logs were missed)
     {
