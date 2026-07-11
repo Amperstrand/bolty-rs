@@ -4,7 +4,6 @@ use crate::service::WorkflowResult;
 use bolty_core::{
     assessment::CardState,
     config::{ErrorString, LnurlString},
-    secret::CardKeys,
 };
 use heapless::String;
 use ntag424::{CommMode, FileSettingsView, KeyNumber, types::file_settings::Access};
