@@ -714,6 +714,7 @@ mod ndef_tests {
 #[cfg(test)]
 mod zeroize_tests {
     use super::*;
+    use alloc::format;
 
     const TEST_URL: &str = "https://x.test/?p={picc:uid+ctr}&c={mac}";
 

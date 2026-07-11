@@ -1,8 +1,9 @@
 mod mock;
 
+use bolty_core::secret::{AesKey, CardKeys};
 use bolty_ntag::{
-    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, KeySet, burn, check_key_versions, preflight,
-    read_uid, wipe,
+    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, burn, check_key_versions, preflight, read_uid,
+    wipe,
 };
 use mock::{MockTransport, UID, block_on};
 use ntag424::{
@@ -11,8 +12,28 @@ use ntag424::{
     types::{KeyNumber, file_settings::CryptoMode},
 };
 
-fn test_keys() -> KeySet {
+type RawKeySet = [[u8; 16]; 5];
+
+const RND_A: [u8; 16] = [
+    0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75, 0x36, 0x0F,
+];
+
+fn test_keys() -> RawKeySet {
     [[0x10; 16], [0x21; 16], [0x32; 16], [0x43; 16], [0x54; 16]]
+}
+
+fn to_cardkeys(arr: RawKeySet) -> CardKeys {
+    CardKeys {
+        k0: AesKey::new(arr[0]),
+        k1: AesKey::new(arr[1]),
+        k2: AesKey::new(arr[2]),
+        k3: AesKey::new(arr[3]),
+        k4: AesKey::new(arr[4]),
+    }
+}
+
+fn factory_cardkeys() -> CardKeys {
+    to_cardkeys([FACTORY_KEY; 5])
 }
 
 #[test]
@@ -42,15 +63,7 @@ fn preflight_and_burn_pipeline() {
     let uid = block_on(preflight(&mut transport)).unwrap();
     assert_eq!(uid, UID);
 
-    let result = block_on(burn(
-        &mut transport,
-        &params,
-        [
-            0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75,
-            0x36, 0x0F,
-        ],
-    ))
-    .unwrap();
+    let result = block_on(burn(&mut transport, &params, AesKey::new(RND_A))).unwrap();
 
     assert_eq!(result.uid, UID);
     assert_eq!(transport.keys(), &keys);
@@ -60,13 +73,13 @@ fn burn_lnurl() -> &'static str {
     "https://example.com/lnurl?p={picc:uid+ctr}&c=[[{mac}"
 }
 
-fn burn_params(lnurl: &'static str, keys: KeySet) -> BurnParams<'static> {
+fn burn_params(lnurl: &'static str, keys: RawKeySet) -> BurnParams<'static> {
     BurnParams {
         lnurl,
-        keys,
+        keys: to_cardkeys(keys),
         key_version: 0x42,
-        current_key: FACTORY_KEY,
-        previous_keys: [FACTORY_KEY; 5],
+        current_key: AesKey::new(FACTORY_KEY),
+        previous_keys: factory_cardkeys(),
     }
 }
 
@@ -77,15 +90,7 @@ fn burn_programs_ndef_sdm_and_keys() {
     let plan = sdm_url_config(burn_lnurl(), CryptoMode::Aes, SdmUrlOptions::new()).unwrap();
     let mut transport = MockTransport::new();
 
-    let result = block_on(burn(
-        &mut transport,
-        &params,
-        [
-            0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75,
-            0x36, 0x0F,
-        ],
-    ))
-    .unwrap();
+    let result = block_on(burn(&mut transport, &params, AesKey::new(RND_A))).unwrap();
 
     assert_eq!(result.uid, UID);
     assert_eq!(transport.ndef(), plan.ndef_bytes.as_slice());
@@ -99,14 +104,14 @@ fn burn_programs_ndef_sdm_and_keys() {
 #[test]
 fn reburn_replaces_existing_keys() {
     let first_keys = test_keys();
-    let second_keys: KeySet = [[0xAA; 16], [0xBB; 16], [0xCC; 16], [0xDD; 16], [0xEE; 16]];
+    let second_keys: RawKeySet = [[0xAA; 16], [0xBB; 16], [0xCC; 16], [0xDD; 16], [0xEE; 16]];
 
     let mut transport = MockTransport::new();
 
     block_on(burn(
         &mut transport,
         &burn_params(burn_lnurl(), first_keys),
-        [0x13; 16],
+        AesKey::new([0x13; 16]),
     ))
     .unwrap();
 
@@ -115,13 +120,13 @@ fn reburn_replaces_existing_keys() {
 
     let reburn_params = BurnParams {
         lnurl: burn_lnurl(),
-        keys: second_keys,
+        keys: to_cardkeys(second_keys),
         key_version: 0x99,
-        current_key: first_keys[0],
-        previous_keys: first_keys,
+        current_key: AesKey::new(first_keys[0]),
+        previous_keys: to_cardkeys(first_keys),
     };
 
-    block_on(burn(&mut transport, &reburn_params, [0x27; 16])).unwrap();
+    block_on(burn(&mut transport, &reburn_params, AesKey::new([0x27; 16]))).unwrap();
 
     assert_eq!(transport.keys(), &second_keys);
     assert_eq!(transport.key_versions(), &[0x99; 5]);
@@ -141,11 +146,8 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
 
     let result = block_on(wipe(
         &mut transport,
-        &keys,
-        [
-            0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75,
-            0x36, 0x0F,
-        ],
+        &to_cardkeys(keys),
+        AesKey::new(RND_A),
     ))
     .unwrap();
 
@@ -171,13 +173,11 @@ fn check_key_versions_reads_all_five_versions() {
         vec![0x00, 0x00, 0xE0, 0xEE, 0x00, 0x01, 0x00],
     );
 
+    let provisioned_keys = to_cardkeys(keys);
     let got = block_on(check_key_versions(
         &mut transport,
-        &keys[0],
-        [
-            0x13, 0xC5, 0xDB, 0x8A, 0x59, 0x30, 0x43, 0x9F, 0xC3, 0xDE, 0xF9, 0xA4, 0xC6, 0x75,
-            0x36, 0x0F,
-        ],
+        &provisioned_keys.k0,
+        AesKey::new(RND_A),
     ))
     .unwrap();
 
