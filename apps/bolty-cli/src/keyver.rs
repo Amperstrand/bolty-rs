@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
+use bolty_core::secret::AesKey;
 use bolty_core::uid::CardUid;
 use bolty_ntag::{Session, Transport};
 
@@ -31,16 +32,20 @@ where
         CardUid::new(uid_fixed),
         version as u32,
     );
-    let derived_k0 = keys.k0.as_bytes();
+    let derived_k0 = &keys.k0;
 
     let rnd_a = gen_rnd_a()?;
     let (versions, k0_label) =
-        match bolty_ntag::check_key_versions(transport, derived_k0, rnd_a).await {
+        match bolty_ntag::check_key_versions(transport, derived_k0, AesKey::new(rnd_a)).await {
             Ok(v) => (v, format!("derived K0 (version {version})")),
             Err(_) => {
                 let rnd_a = gen_rnd_a()?;
-                let v = bolty_ntag::check_key_versions(transport, &FACTORY_KEY, rnd_a)
-                    .await
+                let v = bolty_ntag::check_key_versions(
+                    transport,
+                    &AesKey::new(FACTORY_KEY),
+                    AesKey::new(rnd_a),
+                )
+                .await
                     .map_err(|e| {
                         anyhow::anyhow!(
                             "authentication failed with both derived K0 and factory K0: {e:?}"

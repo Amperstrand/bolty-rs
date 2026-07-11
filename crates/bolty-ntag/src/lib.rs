@@ -31,8 +31,14 @@ pub use ntag424::{
 };
 
 pub use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
+pub use bolty_core::secret::{AesKey, CardKeys};
 
-pub type KeySet = [[u8; 16]; 5];
+/// Set of 5 card keys (K0–K4) with zeroize-on-drop semantics.
+///
+/// Alias for [`CardKeys`], which zeroes every key on drop. Callers should
+/// hold derived keys in this type rather than raw `[u8; 16]` arrays so the
+/// material is wiped when it falls out of scope.
+pub type KeySet = CardKeys;
 
 /// Ensures the URL template produces standard Bolt Card-compatible SDM configuration.
 ///
@@ -61,23 +67,24 @@ pub fn standardize_url_template(url: &str) -> String {
     url.replace("{mac}", "[[{mac}")
 }
 
-pub fn derive_keys(master_key: &[u8; 16], uid: &[u8; 7], system_id: &[u8]) -> KeySet {
-    [
-        diversify_ntag424(master_key, uid, KeyNumber::Key0, system_id),
-        diversify_ntag424(master_key, uid, KeyNumber::Key1, system_id),
-        diversify_ntag424(master_key, uid, KeyNumber::Key2, system_id),
-        diversify_ntag424(master_key, uid, KeyNumber::Key3, system_id),
-        diversify_ntag424(master_key, uid, KeyNumber::Key4, system_id),
-    ]
+pub fn derive_keys(master_key: &AesKey, uid: &[u8; 7], system_id: &[u8]) -> CardKeys {
+    let mk = master_key.as_bytes();
+    CardKeys {
+        k0: AesKey::new(diversify_ntag424(mk, uid, KeyNumber::Key0, system_id)),
+        k1: AesKey::new(diversify_ntag424(mk, uid, KeyNumber::Key1, system_id)),
+        k2: AesKey::new(diversify_ntag424(mk, uid, KeyNumber::Key2, system_id)),
+        k3: AesKey::new(diversify_ntag424(mk, uid, KeyNumber::Key3, system_id)),
+        k4: AesKey::new(diversify_ntag424(mk, uid, KeyNumber::Key4, system_id)),
+    }
 }
 
 #[derive(Debug)]
 pub struct BurnParams<'a> {
     pub lnurl: &'a str,
-    pub keys: KeySet,
+    pub keys: CardKeys,
     pub key_version: u8,
-    pub current_key: [u8; 16],
-    pub previous_keys: KeySet,
+    pub current_key: AesKey,
+    pub previous_keys: CardKeys,
 }
 
 #[derive(Debug)]
@@ -201,8 +208,8 @@ pub async fn preflight<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error
 
 pub async fn safe_inspect<T: Transport>(
     transport: &mut T,
-    k1: Option<&[u8; 16]>,
-    k2: Option<&[u8; 16]>,
+    k1: Option<&AesKey>,
+    k2: Option<&AesKey>,
 ) -> Result<SafeInspectResult, Error<T::Error>> {
     let mut session = Session::default();
     let uid = uid_to_fixed(&session.get_selected_uid(transport).await?);
@@ -228,7 +235,11 @@ pub async fn safe_inspect<T: Transport>(
         (Some(file_settings), Some(ndef_bytes), Some(k1), Some(k2)) => file_settings
             .sdm
             .and_then(|sdm| Verifier::try_new(&sdm, CryptoMode::Aes).ok())
-            .and_then(|verifier| verifier.verify_with_meta_key(ndef_bytes, k2, k1).ok()),
+            .and_then(|verifier| {
+                verifier
+                    .verify_with_meta_key(ndef_bytes, k2.as_bytes(), k1.as_bytes())
+                    .ok()
+            }),
         _ => None,
     };
 
@@ -244,7 +255,7 @@ pub async fn safe_inspect<T: Transport>(
 pub async fn burn<T: Transport>(
     transport: &mut T,
     params: &BurnParams<'_>,
-    rnd_a: [u8; 16],
+    rnd_a: AesKey,
 ) -> Result<BurnResult, Error<T::Error>> {
     let sdm_opts = SdmUrlOptions {
         picc_key: KeyNumber::Key1,
@@ -260,7 +271,12 @@ pub async fn burn<T: Transport>(
     let uid_fixed = uid_to_fixed(&uid);
 
     let session = session
-        .authenticate_aes(transport, KeyNumber::Key0, &params.current_key, rnd_a)
+        .authenticate_aes(
+            transport,
+            KeyNumber::Key0,
+            params.current_key.as_bytes(),
+            *rnd_a.as_bytes(),
+        )
         .await?;
 
     let (settings, s) = session.get_file_settings(transport, File::Ndef).await?;
@@ -308,26 +324,26 @@ pub async fn burn<T: Transport>(
         (
             NonMasterKeyNumber::Key1,
             KeyNumber::Key1,
-            &params.keys[1],
-            &params.previous_keys[1],
+            params.keys.k1.as_bytes(),
+            params.previous_keys.k1.as_bytes(),
         ),
         (
             NonMasterKeyNumber::Key2,
             KeyNumber::Key2,
-            &params.keys[2],
-            &params.previous_keys[2],
+            params.keys.k2.as_bytes(),
+            params.previous_keys.k2.as_bytes(),
         ),
         (
             NonMasterKeyNumber::Key3,
             KeyNumber::Key3,
-            &params.keys[3],
-            &params.previous_keys[3],
+            params.keys.k3.as_bytes(),
+            params.previous_keys.k3.as_bytes(),
         ),
         (
             NonMasterKeyNumber::Key4,
             KeyNumber::Key4,
-            &params.keys[4],
-            &params.previous_keys[4],
+            params.keys.k4.as_bytes(),
+            params.previous_keys.k4.as_bytes(),
         ),
     ];
 
@@ -347,11 +363,16 @@ pub async fn burn<T: Transport>(
     }
 
     let _session = session
-        .change_master_key(transport, &params.keys[0], params.key_version)
+        .change_master_key(transport, params.keys.k0.as_bytes(), params.key_version)
         .await?;
 
     let verify_session = Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &params.keys[0], rnd_a)
+        .authenticate_aes(
+            transport,
+            KeyNumber::Key0,
+            params.keys.k0.as_bytes(),
+            *rnd_a.as_bytes(),
+        )
         .await?;
     let (final_settings, _) = verify_session
         .get_file_settings(transport, File::Ndef)
@@ -365,8 +386,8 @@ pub async fn burn<T: Transport>(
 
 pub async fn wipe<T: Transport>(
     transport: &mut T,
-    keys: &KeySet,
-    rnd_a: [u8; 16],
+    keys: &CardKeys,
+    rnd_a: AesKey,
 ) -> Result<WipeResult, Error<T::Error>> {
     let session = Session::default();
 
@@ -374,7 +395,12 @@ pub async fn wipe<T: Transport>(
     let uid_fixed = uid_to_fixed(&uid);
 
     let session = session
-        .authenticate_aes(transport, KeyNumber::Key0, &keys[0], rnd_a)
+        .authenticate_aes(
+            transport,
+            KeyNumber::Key0,
+            keys.k0.as_bytes(),
+            *rnd_a.as_bytes(),
+        )
         .await?;
 
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
@@ -392,10 +418,10 @@ pub async fn wipe<T: Transport>(
         .await?;
 
     let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16]); 4] = [
-        (NonMasterKeyNumber::Key1, KeyNumber::Key1, &keys[1]),
-        (NonMasterKeyNumber::Key2, KeyNumber::Key2, &keys[2]),
-        (NonMasterKeyNumber::Key3, KeyNumber::Key3, &keys[3]),
-        (NonMasterKeyNumber::Key4, KeyNumber::Key4, &keys[4]),
+        (NonMasterKeyNumber::Key1, KeyNumber::Key1, keys.k1.as_bytes()),
+        (NonMasterKeyNumber::Key2, KeyNumber::Key2, keys.k2.as_bytes()),
+        (NonMasterKeyNumber::Key3, KeyNumber::Key3, keys.k3.as_bytes()),
+        (NonMasterKeyNumber::Key4, KeyNumber::Key4, keys.k4.as_bytes()),
     ];
 
     let mut session = session;
@@ -425,7 +451,12 @@ pub async fn wipe<T: Transport>(
         .await?;
 
     let verify_session = Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, rnd_a)
+        .authenticate_aes(
+            transport,
+            KeyNumber::Key0,
+            &FACTORY_KEY,
+            *rnd_a.as_bytes(),
+        )
         .await?;
     let (final_settings, _) = verify_session
         .get_file_settings(transport, File::Ndef)
@@ -443,11 +474,11 @@ pub async fn wipe<T: Transport>(
 
 pub async fn check_key_versions<T: Transport>(
     transport: &mut T,
-    key: &[u8; 16],
-    rnd_a: [u8; 16],
+    key: &AesKey,
+    rnd_a: AesKey,
 ) -> Result<[u8; 5], Error<T::Error>> {
     let session = Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, key, rnd_a)
+        .authenticate_aes(transport, KeyNumber::Key0, key.as_bytes(), *rnd_a.as_bytes())
         .await?;
 
     let key_numbers = [
@@ -677,5 +708,44 @@ mod ndef_tests {
             window.mac.get(),
             "mac_input must equal mac_offset for standard compatibility"
         );
+    }
+}
+
+#[cfg(test)]
+mod zeroize_tests {
+    use super::*;
+
+    const TEST_URL: &str = "https://x.test/?p={picc:uid+ctr}&c={mac}";
+
+    #[test]
+    fn derive_keys_returns_zeroizing_cardkeys() {
+        let master = AesKey::new([0x42; 16]);
+        let uid = [0x04u8; 7];
+        let derived = derive_keys(&master, &uid, b"test-system");
+        let _: &CardKeys = &derived;
+        assert_eq!(format!("{:?}", derived), "CardKeys([REDACTED])");
+    }
+
+    #[test]
+    fn burn_params_debug_redacts_all_keys() {
+        let params = BurnParams {
+            lnurl: TEST_URL,
+            keys: CardKeys::zeroed(),
+            key_version: 1,
+            current_key: AesKey::new([0xAB; 16]),
+            previous_keys: CardKeys::zeroed(),
+        };
+        let s = format!("{:?}", params);
+        assert!(!s.contains("AB"), "BurnParams Debug leaked key bytes: {s}");
+        assert!(s.contains("REDACTED"), "key fields must show REDACTED: {s}");
+    }
+
+    #[test]
+    fn aeskey_drops_to_zeroed_storage() {
+        let zeroed = AesKey::zeroed();
+        assert!(zeroed.is_zero());
+        let keyed = AesKey::new([0xCD; 16]);
+        assert!(!keyed.is_zero());
+        drop(keyed);
     }
 }

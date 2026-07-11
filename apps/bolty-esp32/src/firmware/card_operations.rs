@@ -13,8 +13,8 @@ use ntag424::KeyNumber;
 use super::gen_rnd_a;
 use super::service::{DiagnoseResult, DiagnoseState, Esp32BoltyService, PiccResult};
 use super::utils::{
-    card_keys_to_keyset, copy_lnurl, copy_uid7, looks_factory_default, map_ntag_error,
-    uid_storage_from_fixed, workflow_error,
+    copy_lnurl, copy_uid7, looks_factory_default, map_ntag_error, uid_storage_from_fixed,
+    workflow_error,
 };
 
 impl<I2C> Esp32BoltyService<I2C>
@@ -22,7 +22,7 @@ where
     I2C: embedded_hal::i2c::I2c,
     I2C::Error: core::fmt::Debug,
 {
-    fn inspect_with_key(&mut self, key: &[u8; 16]) -> Result<CardAssessment, WorkflowResult> {
+    fn inspect_with_key(&mut self, key: &AesKey) -> Result<CardAssessment, WorkflowResult> {
         let mut transport = self.activate_transport()?;
         let uid =
             copy_uid7(transport.uid()).ok_or_else(|| workflow_error("unsupported uid length"))?;
@@ -45,7 +45,7 @@ where
         let issuers = issuer.as_ref().map(core::slice::from_ref).unwrap_or(&[]);
 
         let assessment = assess_card(bolty_core::uid::CardUid::from(uid), key_versions, issuers);
-        self.authenticated_key0 = Some(*key);
+        self.authenticated_key0 = Some(key.clone());
         self.last_card = assessment.clone();
         self.status.last_uid = Some(uid);
         self.status.nfc_ready = true;
@@ -56,9 +56,9 @@ where
     pub(super) fn picc(&mut self) -> Result<PiccResult, WorkflowResult> {
         let keys = self.keys.clone();
         let keys_loaded = keys.is_some();
-        let k1 = keys.as_ref().map(|keys| keys.k1.as_bytes());
-        let k2 = keys.as_ref().map(|keys| keys.k2.as_bytes());
-        let k0 = keys.as_ref().map(|keys| *keys.k0.as_bytes());
+        let k1 = keys.as_ref().map(|keys| &keys.k1);
+        let k2 = keys.as_ref().map(|keys| &keys.k2);
+        let k0 = keys.as_ref().map(|keys| keys.k0.clone());
 
         let mut transport = self.activate_transport()?;
         let inspect = block_on(bolty_ntag::safe_inspect(&mut transport, k1, k2))
@@ -122,7 +122,7 @@ where
                 &mut transport,
                 KeyNumber::Key0,
                 &bolty_ntag::FACTORY_KEY,
-                gen_rnd_a(),
+                *gen_rnd_a().as_bytes(),
             )) {
                 Ok(_) => {
                     zero_key_auth_ok = true;
@@ -207,7 +207,7 @@ where
             return workflow_error("missing keys or issuer");
         };
 
-        let keyset = card_keys_to_keyset(&card_keys);
+        let keyset = card_keys.clone();
 
         use ntag424::types::ResponseStatus;
 
@@ -216,9 +216,18 @@ where
                 &mut transport,
                 KeyNumber::Key0,
                 &bolty_ntag::FACTORY_KEY,
-                gen_rnd_a(),
+                *gen_rnd_a().as_bytes(),
             )) {
-                Ok(_) => (bolty_ntag::FACTORY_KEY, [bolty_ntag::FACTORY_KEY; 5]),
+                Ok(_) => (
+                    AesKey::new(bolty_ntag::FACTORY_KEY),
+                    CardKeys {
+                        k0: AesKey::new(bolty_ntag::FACTORY_KEY),
+                        k1: AesKey::new(bolty_ntag::FACTORY_KEY),
+                        k2: AesKey::new(bolty_ntag::FACTORY_KEY),
+                        k3: AesKey::new(bolty_ntag::FACTORY_KEY),
+                        k4: AesKey::new(bolty_ntag::FACTORY_KEY),
+                    },
+                ),
                 Err(ntag424::SessionError::ErrorResponse(ResponseStatus::AuthenticationDelay)) => {
                     return WorkflowResult::AuthDelay;
                 }
@@ -226,11 +235,11 @@ where
                     let derived_result = block_on(ntag424::Session::default().authenticate_aes(
                         &mut transport,
                         KeyNumber::Key0,
-                        &keyset[0],
-                        gen_rnd_a(),
+                        keyset.k0.as_bytes(),
+                        *gen_rnd_a().as_bytes(),
                     ));
                     match derived_result {
-                        Ok(_) => (keyset[0], keyset),
+                        Ok(_) => (keyset.k0.clone(), keyset.clone()),
                         Err(ntag424::SessionError::ErrorResponse(
                             ResponseStatus::AuthenticationDelay,
                         )) => return WorkflowResult::AuthDelay,
@@ -252,7 +261,7 @@ where
                 self.status.last_uid = Some(result.uid);
                 self.status.nfc_ready = true;
                 self.keys = Some(card_keys.clone());
-                self.authenticated_key0 = Some(*card_keys.k0.as_bytes());
+                self.authenticated_key0 = Some(card_keys.k0.clone());
                 self.current_config.pending_keys = Some(card_keys);
                 self.current_config.lnurl = copy_lnurl(lnurl);
                 self.sync_config();
@@ -293,7 +302,7 @@ where
             return WorkflowResult::WipeRefused;
         };
 
-        log::info!("wipe: k0={:02X?}", card_keys.k0.as_bytes());
+        log::info!("wipe: authenticating with derived k0 (redacted)");
 
         if !force_unsafe {
             if let Ok(inspect) = block_on(bolty_ntag::safe_inspect(&mut transport, None, None)) {
@@ -305,16 +314,17 @@ where
             }
         }
 
+        let wipe_keys = card_keys.clone();
         match block_on(bolty_ntag::wipe(
             &mut transport,
-            &card_keys_to_keyset(&card_keys),
+            &wipe_keys,
             gen_rnd_a(),
         )) {
             Ok(result) => {
                 self.status.last_uid = Some(result.uid);
                 self.status.nfc_ready = true;
                 self.keys = None;
-                self.authenticated_key0 = Some(bolty_ntag::FACTORY_KEY);
+                self.authenticated_key0 = Some(AesKey::new(bolty_ntag::FACTORY_KEY));
                 self.last_card = CardAssessment {
                     state: CardState::Blank,
                     present: true,
@@ -330,7 +340,7 @@ where
 
     fn inspect(&mut self) -> Result<CardAssessment, WorkflowResult> {
         if let Some(keys) = self.keys.clone() {
-            match self.inspect_with_key(keys.k0.as_bytes()) {
+            match self.inspect_with_key(&keys.k0) {
                 Ok(assessment) => return Ok(assessment),
                 Err(WorkflowResult::AuthFailed) | Err(WorkflowResult::CardNotPresent) => {}
                 Err(WorkflowResult::AuthDelay) => return Err(WorkflowResult::AuthDelay),
@@ -338,7 +348,7 @@ where
             }
         }
 
-        self.inspect_with_key(&bolty_ntag::FACTORY_KEY)
+        self.inspect_with_key(&AesKey::new(bolty_ntag::FACTORY_KEY))
     }
 
     fn check_blank(&mut self) -> WorkflowResult {

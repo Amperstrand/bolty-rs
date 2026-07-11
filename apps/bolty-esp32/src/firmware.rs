@@ -54,10 +54,10 @@ const BOARD_NAME: &str = "M5Atom";
 #[cfg(feature = "board-m5stick")]
 const BOARD_NAME: &str = "M5StickC Plus";
 
-pub(super) fn gen_rnd_a() -> [u8; 16] {
+pub(super) fn gen_rnd_a() -> bolty_core::secret::AesKey {
     let mut buf = [0u8; 16];
     unsafe { esp_idf_sys::esp_fill_random(buf.as_mut_ptr().cast(), buf.len()) };
-    buf
+    bolty_core::secret::AesKey::new(buf)
 }
 
 const I2C_BAUDRATE_HZ: u32 = 100_000;
