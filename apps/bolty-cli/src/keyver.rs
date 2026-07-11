@@ -46,11 +46,11 @@ where
                     AesKey::new(rnd_a),
                 )
                 .await
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "authentication failed with both derived K0 and factory K0: {e:?}"
-                        )
-                    })?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "authentication failed with both derived K0 and factory K0: {e:?}"
+                    )
+                })?;
                 (v, "factory K0".to_string())
             }
         };

@@ -418,10 +418,26 @@ pub async fn wipe<T: Transport>(
         .await?;
 
     let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16]); 4] = [
-        (NonMasterKeyNumber::Key1, KeyNumber::Key1, keys.k1.as_bytes()),
-        (NonMasterKeyNumber::Key2, KeyNumber::Key2, keys.k2.as_bytes()),
-        (NonMasterKeyNumber::Key3, KeyNumber::Key3, keys.k3.as_bytes()),
-        (NonMasterKeyNumber::Key4, KeyNumber::Key4, keys.k4.as_bytes()),
+        (
+            NonMasterKeyNumber::Key1,
+            KeyNumber::Key1,
+            keys.k1.as_bytes(),
+        ),
+        (
+            NonMasterKeyNumber::Key2,
+            KeyNumber::Key2,
+            keys.k2.as_bytes(),
+        ),
+        (
+            NonMasterKeyNumber::Key3,
+            KeyNumber::Key3,
+            keys.k3.as_bytes(),
+        ),
+        (
+            NonMasterKeyNumber::Key4,
+            KeyNumber::Key4,
+            keys.k4.as_bytes(),
+        ),
     ];
 
     let mut session = session;
@@ -451,12 +467,7 @@ pub async fn wipe<T: Transport>(
         .await?;
 
     let verify_session = Session::default()
-        .authenticate_aes(
-            transport,
-            KeyNumber::Key0,
-            &FACTORY_KEY,
-            *rnd_a.as_bytes(),
-        )
+        .authenticate_aes(transport, KeyNumber::Key0, &FACTORY_KEY, *rnd_a.as_bytes())
         .await?;
     let (final_settings, _) = verify_session
         .get_file_settings(transport, File::Ndef)
@@ -478,7 +489,12 @@ pub async fn check_key_versions<T: Transport>(
     rnd_a: AesKey,
 ) -> Result<[u8; 5], Error<T::Error>> {
     let session = Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, key.as_bytes(), *rnd_a.as_bytes())
+        .authenticate_aes(
+            transport,
+            KeyNumber::Key0,
+            key.as_bytes(),
+            *rnd_a.as_bytes(),
+        )
         .await?;
 
     let key_numbers = [

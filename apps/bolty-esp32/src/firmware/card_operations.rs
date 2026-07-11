@@ -315,11 +315,7 @@ where
         }
 
         let wipe_keys = card_keys.clone();
-        match block_on(bolty_ntag::wipe(
-            &mut transport,
-            &wipe_keys,
-            gen_rnd_a(),
-        )) {
+        match block_on(bolty_ntag::wipe(&mut transport, &wipe_keys, gen_rnd_a())) {
             Ok(result) => {
                 self.status.last_uid = Some(result.uid);
                 self.status.nfc_ready = true;

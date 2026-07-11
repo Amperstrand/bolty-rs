@@ -126,7 +126,12 @@ fn reburn_replaces_existing_keys() {
         previous_keys: to_cardkeys(first_keys),
     };
 
-    block_on(burn(&mut transport, &reburn_params, AesKey::new([0x27; 16]))).unwrap();
+    block_on(burn(
+        &mut transport,
+        &reburn_params,
+        AesKey::new([0x27; 16]),
+    ))
+    .unwrap();
 
     assert_eq!(transport.keys(), &second_keys);
     assert_eq!(transport.key_versions(), &[0x99; 5]);
@@ -144,12 +149,7 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
         vec![0x00, 0x00, 0xE0, 0xEE, 0x00, 0x01, 0x00],
     );
 
-    let result = block_on(wipe(
-        &mut transport,
-        &to_cardkeys(keys),
-        AesKey::new(RND_A),
-    ))
-    .unwrap();
+    let result = block_on(wipe(&mut transport, &to_cardkeys(keys), AesKey::new(RND_A))).unwrap();
 
     assert_eq!(result.uid, UID);
     assert_eq!(transport.keys(), &[[0u8; 16]; 5]);
