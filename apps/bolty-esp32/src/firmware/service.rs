@@ -45,7 +45,7 @@ where
     last_i2c_scan: Vec<u8>,
     pub(super) current_config: BoltyConfig,
     pub(super) keys: Option<CardKeys>,
-    pub(super) authenticated_key0: Option<[u8; 16]>,
+    pub(super) authenticated_key0: Option<bolty_core::secret::AesKey>,
     pub(super) last_card: CardAssessment,
     pub(super) status: ServiceStatus,
     display_init_ok: bool,

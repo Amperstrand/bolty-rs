@@ -1,5 +1,6 @@
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
+use bolty_core::secret::{AesKey, CardKeys};
 use bolty_core::uid::CardUid;
 use bolty_ntag::{
     CryptoMode, KeyNumber, SdmUrlOptions, Session, Transport, sdm_url_config,
@@ -129,7 +130,7 @@ where
     // Try factory K0 first (fresh card), then derived K0 (re-burn).
     // This probe is separate from the library's internal auth — the card supports re-auth.
     println!("[1/7] Authenticating...");
-    let (current_key, previous_keys): ([u8; 16], bolty_ntag::KeySet) = {
+    let (current_key, previous_keys): (AesKey, CardKeys) = {
         let factory_works = {
             let mut retry = AuthRetry::new();
             loop {
@@ -156,7 +157,16 @@ where
         if factory_works {
             println!("  Authenticated with factory K0");
             audit::log_event("burn: authenticated with factory K0");
-            (FACTORY_KEY, [FACTORY_KEY; 5])
+            (
+                AesKey::new(FACTORY_KEY),
+                CardKeys {
+                    k0: AesKey::new(FACTORY_KEY),
+                    k1: AesKey::new(FACTORY_KEY),
+                    k2: AesKey::new(FACTORY_KEY),
+                    k3: AesKey::new(FACTORY_KEY),
+                    k4: AesKey::new(FACTORY_KEY),
+                },
+            )
         } else {
             println!("  Factory K0 rejected, trying derived K0...");
             let mut retry = AuthRetry::new();
@@ -183,14 +193,14 @@ where
             if derived_works {
                 println!("  Authenticated with derived K0 (re-burn)");
                 audit::log_event(&format!("burn: authenticated with derived K0 v{version}"));
-                let derived_keyset: bolty_ntag::KeySet = [
-                    *keys.k0.as_bytes(),
-                    *keys.k1.as_bytes(),
-                    *keys.k2.as_bytes(),
-                    *keys.k3.as_bytes(),
-                    *keys.k4.as_bytes(),
-                ];
-                (*keys.k0.as_bytes(), derived_keyset)
+                let derived_keyset = CardKeys {
+                    k0: keys.k0.clone(),
+                    k1: keys.k1.clone(),
+                    k2: keys.k2.clone(),
+                    k3: keys.k3.clone(),
+                    k4: keys.k4.clone(),
+                };
+                (keys.k0.clone(), derived_keyset)
             } else {
                 anyhow::bail!(
                     "authentication failed with both factory and derived K0 — \
@@ -201,13 +211,13 @@ where
     };
 
     // --- Delegate to library: it handles NDEF write, SDM config, key install, verification ---
-    let new_keys: bolty_ntag::KeySet = [
-        *keys.k0.as_bytes(),
-        *keys.k1.as_bytes(),
-        *keys.k2.as_bytes(),
-        *keys.k3.as_bytes(),
-        *keys.k4.as_bytes(),
-    ];
+    let new_keys = CardKeys {
+        k0: keys.k0.clone(),
+        k1: keys.k1.clone(),
+        k2: keys.k2.clone(),
+        k3: keys.k3.clone(),
+        k4: keys.k4.clone(),
+    };
 
     let params = bolty_ntag::BurnParams {
         lnurl: url,
@@ -217,7 +227,7 @@ where
         previous_keys,
     };
 
-    let rnd_a = gen_rnd_a()?;
+    let rnd_a = AesKey::new(gen_rnd_a()?);
     println!("\nBurning card...");
     audit::log_event(&format!(
         "burn: starting — UID={}, version={version}, url={url}",

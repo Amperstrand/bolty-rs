@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
+use bolty_core::secret::{AesKey, CardKeys};
 use bolty_core::uid::CardUid;
 use bolty_ntag::{AuthenticatedSession, File, KeyNumber, Session, Transport};
 
@@ -144,15 +145,15 @@ where
     }
 
     // Delegate to library: it handles SDM disable, NDEF clear, key reset, verification.
-    let keyset: bolty_ntag::KeySet = [
-        *keys.k0.as_bytes(),
-        *keys.k1.as_bytes(),
-        *keys.k2.as_bytes(),
-        *keys.k3.as_bytes(),
-        *keys.k4.as_bytes(),
-    ];
+    let keyset = CardKeys {
+        k0: keys.k0.clone(),
+        k1: keys.k1.clone(),
+        k2: keys.k2.clone(),
+        k3: keys.k3.clone(),
+        k4: keys.k4.clone(),
+    };
 
-    let rnd_a = gen_rnd_a()?;
+    let rnd_a = AesKey::new(gen_rnd_a()?);
     println!("\nWiping card...");
     audit::log_event(&format!(
         "wipe: starting — UID={}, version={version}",

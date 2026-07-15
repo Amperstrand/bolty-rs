@@ -4,7 +4,6 @@ use crate::service::WorkflowResult;
 use bolty_core::{
     assessment::CardState,
     config::{ErrorString, LnurlString},
-    secret::CardKeys,
 };
 use heapless::String;
 use ntag424::{CommMode, FileSettingsView, KeyNumber, types::file_settings::Access};
@@ -72,16 +71,6 @@ pub(super) fn copy_lnurl(value: &str) -> Option<LnurlString> {
     let mut out = LnurlString::new();
     out.push_str(value).ok()?;
     Some(out)
-}
-
-pub(super) fn card_keys_to_keyset(keys: &CardKeys) -> bolty_ntag::KeySet {
-    [
-        *keys.k0.as_bytes(),
-        *keys.k1.as_bytes(),
-        *keys.k2.as_bytes(),
-        *keys.k3.as_bytes(),
-        *keys.k4.as_bytes(),
-    ]
 }
 
 pub(super) fn looks_factory_default(file_settings: Option<&FileSettingsView>) -> bool {
