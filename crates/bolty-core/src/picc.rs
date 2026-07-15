@@ -2,8 +2,12 @@ use crate::crypto::aes_cmac;
 use crate::util::decode_hex_into;
 use aes::Aes128;
 #[cfg(test)]
-use aes::cipher::BlockCipherEncrypt;
-use aes::cipher::{Array, Block, BlockCipherDecrypt, KeyInit};
+use cbc::cipher::BlockModeEncrypt;
+use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::NoPadding};
+
+type Aes128CbcDec = cbc::Decryptor<Aes128>;
+#[cfg(test)]
+type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
 pub const PICC_FORMAT_BOLTCARD: u8 = 0xC7;
 pub const PICC_FLAG_HAS_UID: u8 = 0x80;
@@ -53,7 +57,9 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     let mut buf = [0u8; 16];
     decode_hex_into(p_hex, &mut buf).ok()?;
 
-    aes_cbc_decrypt(k1, &[0u8; 16], &mut buf);
+    Aes128CbcDec::new(k1.into(), (&[0u8; 16]).into())
+        .decrypt_padded::<NoPadding>(&mut buf)
+        .ok()?;
 
     if buf[0] != PICC_FORMAT_BOLTCARD {
         return None;
@@ -130,41 +136,6 @@ fn parse_param<'a>(segment: &'a str, p: &mut Option<&'a str>, c: &mut Option<&'a
         *p = Some(value);
     } else if let Some(value) = segment.strip_prefix("c=") {
         *c = Some(value);
-    }
-}
-
-fn aes_cbc_decrypt(key: &[u8; 16], iv: &[u8; 16], buf: &mut [u8]) {
-    let cipher = Aes128::new(&Array::from(*key));
-    let mut prev: [u8; 16] = *iv;
-    let mut save = [0u8; 16];
-    for chunk in buf.chunks_exact_mut(16) {
-        save.copy_from_slice(chunk);
-        let mut block = Block::<Aes128>::default();
-        block.copy_from_slice(chunk);
-        let mut out = Block::<Aes128>::default();
-        cipher.decrypt_block_b2b(&block, &mut out);
-        chunk.copy_from_slice(&out);
-        for (b, p) in chunk.iter_mut().zip(prev.iter()) {
-            *b ^= *p;
-        }
-        prev.copy_from_slice(&save);
-    }
-}
-
-#[cfg(test)]
-fn aes_cbc_encrypt(key: &[u8; 16], iv: &[u8; 16], buf: &mut [u8]) {
-    let cipher = Aes128::new(&Array::from(*key));
-    let mut prev: [u8; 16] = *iv;
-    for chunk in buf.chunks_exact_mut(16) {
-        for (b, p) in chunk.iter_mut().zip(prev.iter()) {
-            *b ^= *p;
-        }
-        let mut block = Block::<Aes128>::default();
-        block.copy_from_slice(chunk);
-        let mut out = Block::<Aes128>::default();
-        cipher.encrypt_block_b2b(&block, &mut out);
-        chunk.copy_from_slice(&out);
-        prev.copy_from_slice(chunk);
     }
 }
 
@@ -291,7 +262,10 @@ mod tests {
         plaintext[9] = (picc.counter >> 8) as u8;
         plaintext[10] = (picc.counter >> 16) as u8;
 
-        aes_cbc_encrypt(key, &[0u8; 16], &mut plaintext);
+        let pt_len = plaintext.len();
+        Aes128CbcEnc::new(key.into(), (&[0u8; 16]).into())
+            .encrypt_padded::<NoPadding>(&mut plaintext, pt_len)
+            .unwrap();
 
         hex_string_16(&plaintext)
     }

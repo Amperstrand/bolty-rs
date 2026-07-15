@@ -148,23 +148,5 @@ fn verify_ed25519_signature(
 }
 
 fn decode_hex_signature(hex: &str) -> Option<[u8; 64]> {
-    if hex.len() != 128 {
-        return None;
-    }
-    let mut sig = [0u8; 64];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        let high = hex_val(chunk[0])?;
-        let low = hex_val(chunk[1])?;
-        sig[i] = (high << 4) | low;
-    }
-    Some(sig)
-}
-
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
+    bolty_core::util::decode_hex(hex).ok()
 }
