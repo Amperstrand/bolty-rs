@@ -13,5 +13,5 @@ ntag424 = { workspace = true }
 workspace = true
 
 [dev-dependencies]
-aes = "=0.9.0"
+aes = "=0.9.1"
 cmac = "=0.8.0"

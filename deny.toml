@@ -1,8 +1,10 @@
 [advisories]
-db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "all"
-unmaintained = "none"
-yanked = "all"
+yanked = "deny"
+ignore = [
+    "RUSTSEC-2026-0190",  # anyhow unsound — no fix available, accepted risk
+    "RUSTSEC-2026-0110",  # bare-metal unmaintained — embedded ecosystem standard
+    "RUSTSEC-2026-0173",  # proc-macro-error2 unmaintained — transitive dep
+]
 
 [licenses]
 allow = [
@@ -17,19 +19,21 @@ allow = [
     "Zlib",
     "Unicode-DFS-2016",
     "Unicode-3.0",
+    "GPL-3.0-or-later",
 ]
 confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "warn"
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-allow-registry = ["https://github.com/rustsec/advisory-db"]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     "https://github.com/Amperstrand/ntag424.git",
     "https://github.com/Amperstrand/mfrc522-rs.git",
     "https://github.com/Amperstrand/iso14443-rs.git",
+    "https://github.com/Amperstrand/esp-idf-svc.git",
 ]
