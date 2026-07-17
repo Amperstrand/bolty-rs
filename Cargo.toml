@@ -28,6 +28,8 @@ string_slice = "warn"
 opt-level = "s"
 lto = true
 codegen-units = 1
+panic = "abort"
+strip = true
 
 [patch."https://github.com/Amperstrand/mfrc522-rs.git"]
 mfrc522 = { path = "vendor/mfrc522-rs" }
