@@ -22,6 +22,7 @@ pub mod crypto;
 pub mod derivation;
 pub mod issuer;
 pub mod picc;
+pub mod provenance;
 pub mod secret;
 pub mod uid;
 pub mod util;

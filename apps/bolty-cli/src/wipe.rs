@@ -1,6 +1,7 @@
 use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
+use bolty_core::provenance::KeyProvenance;
 use bolty_core::secret::{AesKey, CardKeys};
 use bolty_core::uid::CardUid;
 use bolty_ntag::{AuthenticatedSession, File, KeyNumber, Session, Transport};
@@ -154,17 +155,24 @@ where
     };
 
     let rnd_a = AesKey::new(gen_rnd_a()?);
+    let provenance = KeyProvenance::DerivedIssuer { version };
     println!("\nWiping card...");
-    audit::log_event(&format!(
-        "wipe: starting — UID={}, version={version}",
-        crate::to_hex(uid_fixed)
-    ));
+    audit::log_event_with_provenance(
+        &format!(
+            "wipe: starting — UID={}, version={version}",
+            crate::to_hex(uid_fixed)
+        ),
+        Some(provenance),
+    );
     if let Err(e) = bolty_ntag::wipe(transport, &keyset, rnd_a).await {
-        audit::log_event("wipe: FAILED");
+        audit::log_event_with_provenance("wipe: FAILED", Some(provenance));
         return Err(map_ntag_error(e));
     }
 
-    audit::log_event("wipe: SUCCESS — all keys reset to factory zeros");
+    audit::log_event_with_provenance(
+        "wipe: SUCCESS — all keys reset to factory zeros",
+        Some(provenance),
+    );
     println!("\n✅ Card wiped and verified successfully!");
     Ok(())
 }
@@ -215,5 +223,41 @@ mod tests {
             &settings_before[..],
             "file settings must not change during dry-run"
         );
+    }
+
+    #[tokio::test]
+    async fn wipe_logs_derived_provenance() {
+        let _guard = crate::audit::AUDIT_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!("bolty-audit-wipe-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::set_audit_log_path(tmp_path.clone());
+
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0x42u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+        let _ = crate::burn::cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await;
+        let _ = std::fs::remove_file(&tmp_path);
+        let _ = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+
+        let content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
+        assert!(
+            content.contains("[provenance=DerivedIssuer(1)]"),
+            "wipe audit must contain [provenance=DerivedIssuer(1)], got: {content:?}"
+        );
+        let _ = std::fs::remove_file(&tmp_path);
     }
 }

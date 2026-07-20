@@ -1,4 +1,5 @@
 use anyhow::Context;
+use bolty_core::provenance::KeyProvenance;
 use bolty_ntag::{KeyNumber, Session, Transport};
 
 use crate::audit;
@@ -36,7 +37,10 @@ where
     if !json_mode {
         println!("\nTrying K{key_no} = {key_hex} ...");
     }
-    audit::log_event(&format!("try-key: K{key_no} = {key_hex}"));
+    audit::log_event_with_provenance(
+        &format!("try-key: K{key_no} = {key_hex}"),
+        Some(KeyProvenance::UnknownExternal),
+    );
 
     for attempt in 1..=20u32 {
         let rnd_a = gen_rnd_a()?;
@@ -45,7 +49,10 @@ where
             .await
         {
             Ok(_) => {
-                audit::log_event(&format!("try-key: ACCEPTED K{key_no}"));
+                audit::log_event_with_provenance(
+                    &format!("try-key: ACCEPTED K{key_no}"),
+                    Some(KeyProvenance::UnknownExternal),
+                );
                 if json_mode {
                     println!(
                         r#"{{"ok":true,"uid":"{uid_hex}","accepted":true,"key":"{key_hex}","key_no":{key_no}}}"#
@@ -62,7 +69,10 @@ where
             Err(bolty_ntag::SessionError::ErrorResponse(
                 bolty_ntag::ResponseStatus::AuthenticationError,
             )) => {
-                audit::log_event(&format!("try-key: REJECTED K{key_no}"));
+                audit::log_event_with_provenance(
+                    &format!("try-key: REJECTED K{key_no}"),
+                    Some(KeyProvenance::UnknownExternal),
+                );
                 if json_mode {
                     println!(
                         r#"{{"ok":true,"uid":"{uid_hex}","accepted":false,"reason":"wrong_key","key":"{key_hex}","key_no":{key_no}}}"#
@@ -86,7 +96,10 @@ where
         }
     }
 
-    audit::log_event("try-key: auth delay persists after 20 attempts");
+    audit::log_event_with_provenance(
+        "try-key: auth delay persists after 20 attempts",
+        Some(KeyProvenance::UnknownExternal),
+    );
     if json_mode {
         println!(
             r#"{{"ok":false,"uid":"{uid_hex}","error":"auth_delay_persistent","attempts":20}}"#

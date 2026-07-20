@@ -14,6 +14,7 @@ use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::picc as picc_crypto;
+use bolty_core::provenance::KeyProvenance;
 use bolty_core::uid::CardUid;
 use bolty_ntag::{CryptoMode, File, KeyNumber, Session, Transport, Verifier};
 
@@ -43,6 +44,51 @@ fn classify_card_state(
     } else {
         "HALF-WIPED"
     }
+}
+
+/// Classify the provenance of the key currently on K0.
+///
+/// Priority: FactoryDefault > DerivedIssuer > StaticTestKey > UnknownExternal.
+/// Factory wins because a working factory K0 means the card is genuinely blank.
+/// DerivedIssuer (via SDM MAC verification) wins over StaticTestKey because
+/// cryptographic proof outranks a single static-key auth success.
+fn classify_key_provenance(
+    factory_auth_ok: bool,
+    picc_ok: bool,
+    static_test_auth_ok: bool,
+) -> KeyProvenance {
+    if factory_auth_ok {
+        KeyProvenance::FactoryDefault
+    } else if picc_ok {
+        KeyProvenance::DerivedIssuer {
+            version: DEFAULT_VERSION as u8,
+        }
+    } else if static_test_auth_ok {
+        KeyProvenance::StaticTestKey
+    } else {
+        KeyProvenance::UnknownExternal
+    }
+}
+
+/// Build the flat JSON output string for the diagnose command.
+///
+/// Extracted from `cmd_diagnose` so tests can assert on the JSON shape
+/// without capturing stdout (no stdout-capture mechanism in this crate).
+fn build_diagnose_json(
+    uid_hex: &str,
+    state: &str,
+    has_sdm: bool,
+    mac_valid: bool,
+    provenance: &KeyProvenance,
+) -> String {
+    let prov_name = provenance.as_json_name();
+    let prov_version_field = match provenance.json_version() {
+        Some(v) => format!(",\"key_provenance_version\":{v}"),
+        None => String::new(),
+    };
+    format!(
+        r#"{{"ok":true,"uid":"{uid_hex}","state":"{state}","sdm_active":{has_sdm},"mac_valid":{mac_valid},"key_provenance":"{prov_name}"{prov_version_field}}}"#
+    )
 }
 
 pub async fn cmd_diagnose<T: Transport>(
@@ -201,6 +247,35 @@ where
         }
     }
 
+    // 6b. Static test-key probe — bounded single attempt, only when the card
+    // is neither factory-authable nor SDM-derivable and not in auth delay.
+    // Probes the M5StickC marker key [0x11u8; 16] against K0.
+    let static_test_auth_ok = if !factory_auth_ok && !picc_ok && !auth_delay {
+        println!("\nCard not factory/derivable — trying M5StickC static test K0...");
+        let rnd_a = gen_rnd_a()?;
+        match Session::default()
+            .authenticate_aes(transport, KeyNumber::Key0, &[0x11u8; 16], rnd_a)
+            .await
+        {
+            Ok(_) => {
+                println!("  Static K0:     OK (M5StickC test key)");
+                true
+            }
+            Err(ref e) if is_auth_delay(e) => {
+                println!("  Static K0:     AUTH_DELAY");
+                false
+            }
+            Err(e) => {
+                println!("  Static K0:     FAILED ({e})");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    let provenance = classify_key_provenance(factory_auth_ok, picc_ok, static_test_auth_ok);
+
     // 7. Classify.
     let state = classify_card_state(auth_delay, has_sdm, has_ndef_content, factory_auth_ok);
 
@@ -208,11 +283,13 @@ where
         let uid_hex = crate::to_hex(uid_fixed);
         let mac_valid = picc_ok;
         println!(
-            r#"{{"ok":true,"uid":"{uid_hex}","state":"{state}","sdm_active":{has_sdm},"mac_valid":{mac_valid}}}"#
+            "{}",
+            build_diagnose_json(&uid_hex, state, has_sdm, mac_valid, &provenance)
         );
     } else {
         println!("\n=== DIAGNOSIS ===");
         println!("Card state:     {state}");
+        println!("Key provenance:  {}", provenance.to_audit_tag());
         match state {
             "BLANK" => {
                 println!("  Factory keys, no SDM, empty NDEF.");
@@ -292,5 +369,101 @@ mod tests {
     #[test]
     fn classify_auth_delay_with_blank_signals() {
         assert_eq!(classify_card_state(true, false, false, false), "AUTH_DELAY");
+    }
+
+    // ── Key provenance classification ──────────────────────────────
+
+    #[test]
+    fn classify_provenance_factory() {
+        // factory_auth_ok wins over everything.
+        assert_eq!(
+            classify_key_provenance(true, false, false),
+            KeyProvenance::FactoryDefault
+        );
+        assert_eq!(
+            classify_key_provenance(true, true, true),
+            KeyProvenance::FactoryDefault
+        );
+    }
+
+    #[test]
+    fn classify_provenance_derived() {
+        // picc_ok (SDM MAC verified) → DerivedIssuer with default version.
+        assert_eq!(
+            classify_key_provenance(false, true, false),
+            KeyProvenance::DerivedIssuer {
+                version: DEFAULT_VERSION as u8
+            }
+        );
+        // picc_ok wins over static_test_auth_ok.
+        assert_eq!(
+            classify_key_provenance(false, true, true),
+            KeyProvenance::DerivedIssuer {
+                version: DEFAULT_VERSION as u8
+            }
+        );
+    }
+
+    #[test]
+    fn classify_provenance_static() {
+        assert_eq!(
+            classify_key_provenance(false, false, true),
+            KeyProvenance::StaticTestKey
+        );
+    }
+
+    #[test]
+    fn classify_provenance_unknown() {
+        assert_eq!(
+            classify_key_provenance(false, false, false),
+            KeyProvenance::UnknownExternal
+        );
+    }
+
+    #[tokio::test]
+    async fn json_includes_provenance() {
+        // Integration: cmd_diagnose must complete successfully against a
+        // factory-default mock card. The mock has factory (all-zero) keys,
+        // empty NDEF, and no SDM — so diagnose yields factory_auth_ok=true
+        // and provenance=FactoryDefault.
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0u8; 16];
+        cmd_diagnose(&mut transport, &issuer_key, true)
+            .await
+            .expect("diagnose against factory-default mock must succeed");
+
+        // Unit: the JSON builder must include the provenance field and, for
+        // DerivedIssuer, the version field. Stdout is not captured (no
+        // capture mechanism in this crate); instead we assert directly on
+        // the pure builder helper.
+        let factory_json = build_diagnose_json(
+            "041065FA967380",
+            "BLANK",
+            false,
+            false,
+            &KeyProvenance::FactoryDefault,
+        );
+        assert!(
+            factory_json.contains("\"key_provenance\":\"FactoryDefault\""),
+            "factory JSON must include key_provenance, got: {factory_json}"
+        );
+
+        let derived_json = build_diagnose_json(
+            "041065FA967380",
+            "PROVISIONED",
+            true,
+            true,
+            &KeyProvenance::DerivedIssuer {
+                version: DEFAULT_VERSION as u8,
+            },
+        );
+        assert!(
+            derived_json.contains("\"key_provenance\":\"DerivedIssuer\""),
+            "derived JSON must include key_provenance, got: {derived_json}"
+        );
+        assert!(
+            derived_json.contains("\"key_provenance_version\":1"),
+            "derived JSON must include key_provenance_version, got: {derived_json}"
+        );
     }
 }

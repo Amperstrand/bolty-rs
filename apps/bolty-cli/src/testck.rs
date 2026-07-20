@@ -1,4 +1,5 @@
 use anyhow::Context;
+use bolty_core::provenance::KeyProvenance;
 use bolty_ntag::{AuthenticatedSession, KeyNumber, NonMasterKeyNumber, Session, Transport};
 
 use crate::audit;
@@ -18,7 +19,7 @@ where
         .context("failed to read UID")?;
     println!("Card UID: {}", crate::to_hex(uid));
     println!("\n[testck] ChangeKey A/B test — round-trip on key 1");
-    audit::log_event("testck: starting");
+    audit::log_event_with_provenance("testck: starting", Some(KeyProvenance::StaticTestKey));
 
     let rnd_a = gen_rnd_a()?;
     let session = Session::default()
@@ -75,6 +76,6 @@ where
     println!("[testck]   Step 2: PASS");
 
     println!("\n✅ testck: ALL PASS — ChangeKey verified");
-    audit::log_event("testck: ALL PASS");
+    audit::log_event_with_provenance("testck: ALL PASS", Some(KeyProvenance::StaticTestKey));
     Ok(())
 }

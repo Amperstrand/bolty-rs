@@ -9,23 +9,35 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bolty_core::provenance::KeyProvenance;
 use bolty_ntag::{Response, Transport};
 
-static AUDIT_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+static AUDIT_LOG_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 /// Set the audit log path. Called once at startup.
 /// Defaults to `/tmp/bolty-audit.log` if never called.
 #[allow(dead_code)]
 pub fn set_audit_log_path(path: PathBuf) {
-    let _ = AUDIT_LOG_PATH.set(path);
+    if let Ok(mut guard) = AUDIT_LOG_PATH.write() {
+        *guard = Some(path);
+    }
 }
 
-fn audit_log_path() -> &'static PathBuf {
-    AUDIT_LOG_PATH.get_or_init(|| PathBuf::from("/tmp/bolty-audit.log"))
+fn audit_log_path() -> PathBuf {
+    match AUDIT_LOG_PATH.read() {
+        Ok(guard) => guard
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/tmp/bolty-audit.log")),
+        Err(_) => PathBuf::from("/tmp/bolty-audit.log"),
+    }
 }
+
+/// Test-only mutex serializing tests that share the mutable audit log path.
+#[cfg(test)]
+pub static AUDIT_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn log_entry(entry: &str) {
     let path = audit_log_path();
@@ -33,7 +45,7 @@ fn log_entry(entry: &str) {
         .create(true)
         .append(true)
         .mode(0o600)
-        .open(path)
+        .open(&path)
     {
         let _ = writeln!(f, "{entry}");
         let _ = f.flush();
@@ -52,11 +64,19 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
+pub fn log_event_with_provenance(msg: &str, provenance: Option<KeyProvenance>) {
+    let ts = timestamp();
+    let full = match provenance {
+        Some(p) => format!("[{ts}] EVENT  {msg} [provenance={}]", p.to_audit_tag()),
+        None => format!("[{ts}] EVENT  {msg}"),
+    };
+    log_entry(&full);
+}
+
 /// Write a human-readable event annotation to the audit log.
 /// Use this to mark key operations: "trying derived K0 v1", "burn: writing K2", etc.
 pub fn log_event(msg: &str) {
-    let ts = timestamp();
-    log_entry(&format!("[{ts}] EVENT  {msg}"));
+    log_event_with_provenance(msg, None);
 }
 
 /// A transport wrapper that logs all APDU exchanges to an audit file.
@@ -128,5 +148,52 @@ where
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bolty_core::provenance::KeyProvenance;
+    use std::io::Read;
+
+    #[test]
+    fn provenance_tag_emitted() {
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!(
+            "bolty-audit-test-{}-provenance_tag_emitted.log",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp_path);
+        set_audit_log_path(tmp_path.clone());
+
+        log_event_with_provenance(
+            "burn: SUCCESS — K0 v1, K1-K4 installed",
+            Some(KeyProvenance::DerivedIssuer { version: 1 }),
+        );
+
+        let mut content = String::new();
+        std::fs::File::open(&tmp_path)
+            .map(|mut f| f.read_to_string(&mut content))
+            .ok();
+        assert!(
+            content.ends_with(" [provenance=DerivedIssuer(1)]\n"),
+            "expected audit line to end with provenance tag, got: {content:?}"
+        );
+
+        let _ = std::fs::remove_file(&tmp_path);
+        log_event_with_provenance("plain event", None);
+        let mut content2 = String::new();
+        std::fs::File::open(&tmp_path)
+            .map(|mut f| f.read_to_string(&mut content2))
+            .ok();
+        assert!(
+            !content2.contains("[provenance="),
+            "expected no provenance tag for None, got: {content2:?}"
+        );
+
+        let _ = std::fs::remove_file(&tmp_path);
     }
 }
