@@ -156,7 +156,7 @@ impl BleTransport {
                         service_handle,
                         &GattCharacteristic {
                             uuid: BtUuid::uuid128(CMD_CHAR_UUID),
-                            permissions: enum_set!(Permission::Write),
+                            permissions: enum_set!(Permission::Write | Permission::WriteEncryptedMitm),
                             properties: enum_set!(Property::Write),
                             max_len: 200,
                             auto_rsp: AutoResponse::ByApp,
