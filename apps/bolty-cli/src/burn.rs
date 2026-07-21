@@ -477,3 +477,229 @@ mod tests {
         let _ = std::fs::remove_file(&tmp_path);
     }
 }
+
+/// SECURITY regression suite for the burn command (issue #41).
+///
+/// Pins the URL-placeholder safety guard: `cmd_burn` must refuse to burn a
+/// template missing the `{picc}`/`{mac}` SDM placeholders (which would
+/// produce an unverifiable, silently-bricked card) unless `--force` explicitly
+/// opts out. The guard sits in `cmd_burn` (private to this binary crate) so it
+/// is verified here rather than in the integration test binary.
+#[cfg(test)]
+mod security_tests {
+    use super::cmd_burn;
+
+    /// Acquire the global audit-log mutex and point the audit log at a fresh
+    /// temp file. Every test that runs `cmd_burn` must call this first: the
+    /// burn path writes to a process-global audit path, so without
+    /// serialization a concurrent audit-content test would see stray lines.
+    ///
+    /// The `#[allow(clippy::await_holding_lock)]` on each async test covers
+    /// holding the returned guard across `.await`.
+    macro_rules! setup_audit_isolation {
+        () => {{
+            let _guard = crate::audit::AUDIT_TEST_MUTEX
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut path = std::env::temp_dir();
+            path.push(format!(
+                "bolty-security-burn-{}-{}.log",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            let _ = std::fs::remove_file(&path);
+            crate::audit::set_audit_log_path(path.clone());
+            (_guard, path)
+        }};
+    }
+
+    // SECURITY invariant: a URL lacking the {picc} placeholder must be rejected
+    // before any card write occurs. Burning such a URL yields a card whose taps
+    // carry no encrypted UID/counter — the server can never identify the card.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn url_without_picc_placeholder_is_rejected() {
+        let (_guard, _path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let keys_before = *transport.keys();
+        let url = "https://example.com/?c={mac}";
+        let err = cmd_burn(
+            &mut transport,
+            &[0u8; 16],
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("missing {picc} must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("must contain") && msg.contains("{picc}"),
+            "error must explain the {{picc}} requirement, got: {msg}"
+        );
+        assert_eq!(
+            transport.keys(),
+            &keys_before,
+            "no keys may change when the URL guard rejects the burn"
+        );
+    }
+
+    // SECURITY invariant: a URL lacking the {mac} placeholder must be rejected.
+    // Without {mac} the card never embeds a CMAC, so tap authenticity cannot be
+    // verified — a silent integrity failure.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn url_without_mac_placeholder_is_rejected() {
+        let (_guard, _path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let keys_before = *transport.keys();
+        let url = "https://example.com/?p={picc:uid+ctr}";
+        let err = cmd_burn(
+            &mut transport,
+            &[0u8; 16],
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("missing {mac} must be rejected");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("must contain") && msg.contains("{mac}"),
+            "error must explain the {{mac}} requirement, got: {msg}"
+        );
+        assert_eq!(transport.keys(), &keys_before);
+    }
+
+    // SECURITY invariant: a URL with neither placeholder is rejected too (the
+    // guard short-circuits on the first missing placeholder; this confirms the
+    // `||` semantics, not an `&&` regression that would pass if one existed).
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn url_with_no_placeholders_is_rejected() {
+        let (_guard, _path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let url = "https://example.com/static";
+        let err = cmd_burn(
+            &mut transport,
+            &[0u8; 16],
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("placeholder-less URL must be rejected");
+        assert!(
+            format!("{err}").contains("must contain"),
+            "error must mention the placeholder requirement"
+        );
+    }
+
+    // SECURITY invariant: the guard must be bypassable with --force. This is
+    // the documented escape hatch for advanced users who manage SDM externally.
+    // If force stopped bypassing, legitimate power-user workflows would break.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn force_bypasses_url_guard() {
+        let (_guard, path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer = [0u8; 16];
+        // No {picc}/{mac} but force=true: must NOT error on the URL guard.
+        let result = cmd_burn(
+            &mut transport,
+            &issuer,
+            "https://example.com/forced",
+            1,
+            false,
+            false,
+            None,
+            true,
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+        // The burn may still succeed (factory card). We only assert the URL
+        // guard did not fire: the error (if any) must NOT mention placeholders.
+        if let Err(e) = result {
+            let msg = format!("{e}");
+            assert!(
+                !msg.contains("must contain"),
+                "force must bypass URL guard, but got: {msg}"
+            );
+        }
+    }
+
+    // SECURITY invariant: a correctly-formed URL passes the guard and reaches
+    // the burn proper. This is the positive control for the negative tests
+    // above and guards against an over-strict regression that rejects valid
+    // templates.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn well_formed_url_passes_guard() {
+        let (_guard, path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let url = "https://card.bolt.local/?p={picc:uid+ctr}&c={mac}";
+        let result = cmd_burn(
+            &mut transport,
+            &[0u8; 16],
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await;
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            result.is_ok(),
+            "well-formed URL must pass the guard and burn, got: {:?}",
+            result.err()
+        );
+    }
+
+    // SECURITY invariant: the URL guard runs BEFORE any authentication or key
+    // change. Concretely, a rejected burn must leave card keys untouched (the
+    // negative assertions above already check this; this test restates the
+    // invariant at the boundary by re-using the mock's untouched factory keys).
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn url_guard_runs_before_card_modification() {
+        let (_guard, _path) = setup_audit_isolation!();
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let keys_before = *transport.keys();
+        let ndef_before = transport.ndef().to_vec();
+        let settings_before = transport.file_settings().to_vec();
+
+        let _ = cmd_burn(
+            &mut transport,
+            &[0u8; 16],
+            "https://example.com/no-placeholders",
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await;
+
+        assert_eq!(transport.keys(), &keys_before, "keys must be untouched");
+        assert_eq!(transport.ndef(), &ndef_before[..], "NDEF must be untouched");
+        assert_eq!(
+            transport.file_settings(),
+            &settings_before[..],
+            "file settings must be untouched"
+        );
+    }
+}

@@ -197,3 +197,160 @@ mod tests {
         let _ = std::fs::remove_file(&tmp_path);
     }
 }
+
+/// SECURITY regression suite for the audit layer (issue #41).
+///
+/// The integration test in `tests/security/` cannot import this binary crate's
+/// private modules, so the audit-specific invariants live here. These tests
+/// pin the audit-line *structure* that downstream forensic parsers rely on:
+/// the timestamp leads, the provenance tag trails, and `None` omits the tag.
+#[cfg(test)]
+mod security_tests {
+    use super::{AUDIT_TEST_MUTEX, log_event, log_event_with_provenance, set_audit_log_path};
+    use bolty_core::provenance::KeyProvenance;
+    use std::io::Read;
+
+    /// Read the full contents of the current audit log path, or empty string.
+    fn read_audit(path: &std::path::Path) -> String {
+        let mut s = String::new();
+        std::fs::File::open(path)
+            .map(|mut f| f.read_to_string(&mut s))
+            .ok();
+        s
+    }
+
+    /// Allocate a per-test temp audit path so parallel tests never collide.
+    fn fresh_path(label: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "bolty-security-audit-{}-{label}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    #[test]
+    fn audit_line_starts_with_bracketed_timestamp() {
+        // SECURITY invariant: every audit line must lead with `[<millis>]` so a
+        // SIEM parser can extract the timestamp with a fixed anchor. A line
+        // without the leading bracket would break timestamp extraction.
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = fresh_path("timestamp");
+        set_audit_log_path(path.clone());
+
+        log_event("security-suite probe");
+
+        let line = read_audit(&path);
+        assert!(
+            line.starts_with('['),
+            "audit line must start with '[' (timestamp), got: {line:?}"
+        );
+        // Parse the leading `[<millis>]` without string-slicing (clippy:
+        // string_slice). strip_prefix + split_once avoid index arithmetic.
+        let after_open = line
+            .strip_prefix('[')
+            .expect("checked starts_with('[') above");
+        let (ts_str, _rest) = after_open
+            .split_once(']')
+            .expect("timestamp bracket must close");
+        let ts: u128 = ts_str
+            .parse()
+            .expect("timestamp must be numeric epoch millis");
+        assert!(ts > 0, "timestamp must be non-zero epoch millis");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn provenance_tag_is_appended_at_end_of_line() {
+        // SECURITY invariant: the provenance tag must be the LAST token of the
+        // line. If it were inserted into the middle of `msg`, a malformed
+        // message containing `]` or `[provenance=` could break parser
+        // field-splitting or spoof a tag. Appending makes the tag unforgeable
+        // from the message body.
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = fresh_path("appended");
+        set_audit_log_path(path.clone());
+
+        log_event_with_provenance(
+            "msg with [brackets] and = signs inside",
+            Some(KeyProvenance::DerivedIssuer { version: 2 }),
+        );
+
+        let line = read_audit(&path);
+        assert!(
+            line.trim_end().ends_with("[provenance=DerivedIssuer(2)]"),
+            "provenance tag must be the trailing token, got: {line:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn none_provenance_emits_no_tag_token() {
+        // SECURITY invariant: `None` provenance must NOT emit a `[provenance=]`
+        // token at all. A spurious empty tag would confuse parsers that key on
+        // tag presence to decide whether a line is a key-operation event.
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = fresh_path("none");
+        set_audit_log_path(path.clone());
+
+        log_event_with_provenance("plain event", None);
+
+        let line = read_audit(&path);
+        assert!(
+            !line.contains("[provenance="),
+            "None provenance must not emit a tag token, got: {line:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn factory_default_tag_renders_verbatim_in_log() {
+        // SECURITY invariant: the factory-default path must label the line
+        // `[provenance=FactoryDefault]` exactly, so an auditor grepping for
+        // blank-card burns matches reliably.
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = fresh_path("factory");
+        set_audit_log_path(path.clone());
+
+        log_event_with_provenance("burn", Some(KeyProvenance::FactoryDefault));
+
+        let line = read_audit(&path);
+        assert!(line.contains("[provenance=FactoryDefault]"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn message_body_cannot_spoof_provenance_tag() {
+        // SECURITY invariant: because the real tag is always appended LAST, a
+        // malicious message that itself contains `[provenance=UnknownExternal]`
+        // must not be able to overwrite or mask the genuine trailing tag. The
+        // parser reads the final `[provenance=...]` token, which is the real
+        // one.
+        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let path = fresh_path("spoof");
+        set_audit_log_path(path.clone());
+
+        log_event_with_provenance(
+            "evil [provenance=UnknownExternal] inject",
+            Some(KeyProvenance::FactoryDefault),
+        );
+
+        let line = read_audit(&path);
+        // The line must end with the GENUINE tag, not the injected one.
+        assert!(
+            line.trim_end().ends_with("[provenance=FactoryDefault]"),
+            "trailing provenance tag must be the genuine one, got: {line:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+}

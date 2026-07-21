@@ -1,0 +1,22 @@
+[package]
+name = "bolty-security-suite"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Dedicated security regression test suite (issue #41) — lnforward 12-domain pattern"
+publish = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+
+[dependencies]
+bolty-core = { path = "../../crates/bolty-core", features = ["std"] }
+bolty-ntag = { path = "../../crates/bolty-ntag" }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "security"
+path = "main.rs"

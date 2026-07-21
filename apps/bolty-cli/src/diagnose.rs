@@ -467,3 +467,222 @@ mod tests {
         );
     }
 }
+
+/// SECURITY regression suite for the diagnose classifiers (issue #41).
+///
+/// Pins the two pure classifier functions that decide a card's trust label and
+/// lifecycle state. A regression here would mislabel cards — e.g. calling an
+/// auth-delayed card "BLANK" (leading to brute-force that bricks the key) or
+/// labelling a factory card as "UnknownExternal" (hiding a genuine blank). The
+/// integration test in `tests/security/` covers the `KeyProvenance` *type*
+/// properties; this module covers the *decision logic* that maps auth results
+/// to those labels.
+#[cfg(test)]
+mod security_tests {
+    use super::{
+        DEFAULT_VERSION, build_diagnose_json, classify_card_state, classify_key_provenance,
+    };
+    use bolty_core::provenance::KeyProvenance;
+
+    const V1: u8 = DEFAULT_VERSION as u8;
+
+    // ── classify_key_provenance: trust priority ─────────────────────────
+
+    // SECURITY invariant: factory authentication must dominate every other
+    // signal. A card that authenticates with the factory (all-zero) key IS
+    // blank regardless of what else probes return — labelling it otherwise
+    // could trigger an unnecessary re-burn that wears the key-write limit.
+    #[test]
+    fn factory_auth_dominates_all_other_signals() {
+        assert_eq!(
+            classify_key_provenance(true, true, true),
+            KeyProvenance::FactoryDefault
+        );
+        assert_eq!(
+            classify_key_provenance(true, false, false),
+            KeyProvenance::FactoryDefault
+        );
+    }
+
+    // SECURITY invariant: SDM MAC verification (picc_ok) outranks a static
+    // test-key auth. Cryptographic proof of the issuer-key derivation must
+    // never be downgraded to "StaticTestKey" just because the static probe
+    // also succeeded.
+    #[test]
+    fn derived_issuer_outranks_static_test_key() {
+        assert_eq!(
+            classify_key_provenance(false, true, true),
+            KeyProvenance::DerivedIssuer { version: V1 }
+        );
+    }
+
+    // SECURITY invariant: a static test-key success alone labels the card as
+    // StaticTestKey — a recognised insecure tier, NOT UnknownExternal. This
+    // flags cards burned by the M5StickC firmware distinctly so they are not
+    // mistaken for foreign/unknown cards.
+    #[test]
+    fn static_test_key_alone_is_labelled_static() {
+        assert_eq!(
+            classify_key_provenance(false, false, true),
+            KeyProvenance::StaticTestKey
+        );
+    }
+
+    // SECURITY invariant: when no probe succeeds, the label must be the
+    // fail-closed UnknownExternal — never a trusted variant. This is the
+    // default-deny posture for unrecognised cards.
+    #[test]
+    fn no_probe_success_labels_unknown_external() {
+        assert_eq!(
+            classify_key_provenance(false, false, false),
+            KeyProvenance::UnknownExternal
+        );
+    }
+
+    // SECURITY invariant: picc_ok without factory auth must yield DerivedIssuer
+    // carrying the default version, so the audit log records which burn
+    // generation verified successfully.
+    #[test]
+    fn picc_ok_yields_derived_issuer_with_version() {
+        let p = classify_key_provenance(false, true, false);
+        assert_eq!(p, KeyProvenance::DerivedIssuer { version: V1 });
+        assert_eq!(p.json_version(), Some(V1));
+    }
+
+    // SECURITY invariant: the priority order is total — there is no input
+    // combination that leaves the function without a label. Enumerate the
+    // entire 3-bit input space and assert each maps to exactly one variant.
+    #[test]
+    fn provenance_classifier_is_total_over_input_space() {
+        for &factory in &[false, true] {
+            for &picc in &[false, true] {
+                for &statik in &[false, true] {
+                    let _ = classify_key_provenance(factory, picc, statik);
+                    // No panic / no fall-through: the function always returns.
+                }
+            }
+        }
+        // Spot-check the four boundary labels one more time.
+        assert_eq!(
+            classify_key_provenance(true, false, false),
+            KeyProvenance::FactoryDefault
+        );
+        assert_eq!(
+            classify_key_provenance(false, true, false),
+            KeyProvenance::DerivedIssuer { version: V1 }
+        );
+        assert_eq!(
+            classify_key_provenance(false, false, true),
+            KeyProvenance::StaticTestKey
+        );
+        assert_eq!(
+            classify_key_provenance(false, false, false),
+            KeyProvenance::UnknownExternal
+        );
+    }
+
+    // ── classify_card_state: lifecycle guards ───────────────────────────
+
+    // SECURITY invariant: AUTH_DELAY must override every other signal. Treating
+    // a rate-limited card as BLANK/PROVISIONED would trigger more auth attempts
+    // and push TotFailCtr toward the 1000-failure permanent lock.
+    #[test]
+    fn auth_delay_overrides_all_state_signals() {
+        assert_eq!(classify_card_state(true, true, true, true), "AUTH_DELAY");
+        assert_eq!(classify_card_state(true, false, false, false), "AUTH_DELAY");
+    }
+
+    // SECURITY invariant: a card with neither SDM nor NDEF content that ALSO
+    // fails factory auth is INCONSISTENT, not BLANK. Calling it BLANK would
+    // invite a burn against a card whose K0 is unknown — potentially writing
+    // over a third party's keys.
+    #[test]
+    fn blank_signals_without_factory_auth_is_inconsistent() {
+        assert_eq!(
+            classify_card_state(false, false, false, false),
+            "INCONSISTENT"
+        );
+    }
+
+    // SECURITY invariant: a genuinely blank card (no SDM, no NDEF, factory auth
+    // OK) is the only state safe to burn without a re-auth probe. This must
+    // stay labelled BLANK.
+    #[test]
+    fn blank_signals_with_factory_auth_is_blank() {
+        assert_eq!(classify_card_state(false, false, false, true), "BLANK");
+    }
+
+    // SECURITY invariant: SDM + NDEF content is PROVISIONED. This is the only
+    // state where deriving keys and verifying a tap is meaningful.
+    #[test]
+    fn sdm_plus_ndef_content_is_provisioned() {
+        assert_eq!(classify_card_state(false, true, true, false), "PROVISIONED");
+    }
+
+    // SECURITY invariant: a mixed state (SDM without NDEF, or NDEF without
+    // SDM) is HALF-WIPED — never PROVISIONED and never BLANK. Treating it as
+    // either would hide a half-finished wipe and corrupt the lifecycle model.
+    #[test]
+    fn mixed_state_is_half_wiped() {
+        assert_eq!(classify_card_state(false, true, false, false), "HALF-WIPED");
+        assert_eq!(classify_card_state(false, false, true, false), "HALF-WIPED");
+    }
+
+    // SECURITY invariant: factory auth success alone (without checking the SDM
+    // / NDEF signals) never flips a HALF-WIPED card to BLANK. The presence of
+    // residual data must dominate, so a half-wiped card is not silently
+    // treated as fresh.
+    #[test]
+    fn half_wiped_with_factory_auth_still_half_wiped() {
+        assert_eq!(classify_card_state(false, true, false, true), "HALF-WIPED");
+        assert_eq!(classify_card_state(false, false, true, true), "HALF-WIPED");
+    }
+
+    // ── build_diagnose_json: output-shape integrity ─────────────────────
+
+    // SECURITY invariant: the JSON output must always carry a key_provenance
+    // field, so a downstream consumer never has to guess the trust tier. The
+    // field is the machine-readable security label.
+    #[test]
+    fn json_always_carries_key_provenance_field() {
+        for prov in [
+            KeyProvenance::FactoryDefault,
+            KeyProvenance::DerivedIssuer { version: V1 },
+            KeyProvenance::StaticTestKey,
+            KeyProvenance::UnknownExternal,
+        ] {
+            let json = build_diagnose_json("041065FA967380", "BLANK", false, false, &prov);
+            assert!(
+                json.contains("\"key_provenance\":"),
+                "JSON must always include key_provenance for {prov:?}: {json}"
+            );
+        }
+    }
+
+    // SECURITY invariant: DerivedIssuer JSON must carry the version field so an
+    // auditor can distinguish burn generations. The other variants must omit
+    // it (no spurious null), keeping the schema strict.
+    #[test]
+    fn json_version_field_present_only_for_derived() {
+        let derived = build_diagnose_json(
+            "041065FA967380",
+            "PROVISIONED",
+            true,
+            true,
+            &KeyProvenance::DerivedIssuer { version: V1 },
+        );
+        assert!(derived.contains("\"key_provenance_version\":1"));
+
+        let factory = build_diagnose_json(
+            "041065FA967380",
+            "BLANK",
+            false,
+            false,
+            &KeyProvenance::FactoryDefault,
+        );
+        assert!(
+            !factory.contains("key_provenance_version"),
+            "non-derived JSON must omit key_provenance_version: {factory}"
+        );
+    }
+}

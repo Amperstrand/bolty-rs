@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/*",
     "apps/*",
+    "tests/security",
 ]
 
 [workspace.dependencies]
