@@ -482,6 +482,7 @@ mod security_tests {
     use super::{
         DEFAULT_VERSION, build_diagnose_json, classify_card_state, classify_key_provenance,
     };
+    use bolty_core::assessment::CardLifecycleState;
     use bolty_core::provenance::KeyProvenance;
 
     const V1: u8 = DEFAULT_VERSION as u8;
@@ -636,6 +637,40 @@ mod security_tests {
     fn half_wiped_with_factory_auth_still_half_wiped() {
         assert_eq!(classify_card_state(false, true, false, true), "HALF-WIPED");
         assert_eq!(classify_card_state(false, false, true, true), "HALF-WIPED");
+    }
+
+    // SECURITY invariant (issue #40): the new typed enum
+    // `CardLifecycleState::from_signals` must reproduce
+    // `classify_card_state` exactly across the full 16-input truth table.
+    // Any drift would split the lifecycle model from the string classifier
+    // and silently change burn/wipe/diagnose gating. This test enumerates
+    // every (auth_delay, has_sdm, has_ndef_content, factory_auth_ok)
+    // combination and asserts label equality.
+    #[test]
+    fn from_signals_matches_classify_card_state_exhaustive() {
+        for &auth_delay in &[false, true] {
+            for &has_sdm in &[false, true] {
+                for &has_ndef in &[false, true] {
+                    for &factory_auth in &[false, true] {
+                        let expected =
+                            classify_card_state(auth_delay, has_sdm, has_ndef, factory_auth);
+                        let got = CardLifecycleState::from_signals(
+                            auth_delay,
+                            has_sdm,
+                            has_ndef,
+                            factory_auth,
+                        )
+                        .as_str();
+                        assert_eq!(
+                            got, expected,
+                            "divergence at (auth_delay={auth_delay}, has_sdm={has_sdm}, \
+                             has_ndef={has_ndef}, factory_auth={factory_auth}): \
+                             enum said {got:?}, classifier said {expected:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // ── build_diagnose_json: output-shape integrity ─────────────────────

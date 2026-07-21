@@ -32,6 +32,89 @@ pub enum KeyConfidence {
     Full,
 }
 
+/// Formal card lifecycle state machine.
+///
+/// States follow the bolty-rs operational model:
+/// `Blank` → `Provisioned` → `HalfWiped` → `AuthDelay` (transient).
+///
+/// This is the type-backed counterpart of the string classifier
+/// `diagnose::classify_card_state`; [`Self::from_signals`] reproduces that
+/// function's logic exactly, and [`Self::as_str`] returns the matching label.
+///
+/// Invalid transitions are caught by the transition predicates
+/// ([`Self::can_burn_from`], [`Self::can_wipe_from`], [`Self::can_diagnose_from`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CardLifecycleState {
+    /// Factory keys (all-zero K0), no SDM, empty NDEF.
+    Blank,
+    /// SDM active, NDEF has content, keys are derived.
+    Provisioned,
+    /// Mixed state: SDM configured but NDEF invalid, or vice versa.
+    HalfWiped,
+    /// Auth delay active (SeqFailCtr >= 50). Transient — clears on successful auth.
+    AuthDelay,
+    /// Signals don't match any known state.
+    Inconsistent,
+}
+
+impl CardLifecycleState {
+    /// Whether a burn operation can start from this state.
+    pub fn can_burn_from(self) -> bool {
+        matches!(self, Self::Blank | Self::Provisioned)
+    }
+
+    /// Whether a wipe operation can start from this state.
+    /// Wipe requires authenticated K0 access — only possible from Provisioned.
+    pub fn can_wipe_from(self) -> bool {
+        matches!(self, Self::Provisioned)
+    }
+
+    /// Whether diagnose is meaningful (always true except Inconsistent).
+    pub fn can_diagnose_from(self) -> bool {
+        !matches!(self, Self::Inconsistent)
+    }
+
+    /// Human-readable label matching the existing classify_card_state output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blank => "BLANK",
+            Self::Provisioned => "PROVISIONED",
+            Self::HalfWiped => "HALF-WIPED",
+            Self::AuthDelay => "AUTH_DELAY",
+            Self::Inconsistent => "INCONSISTENT",
+        }
+    }
+
+    /// Classify from raw signals (same logic as diagnose::classify_card_state).
+    ///
+    /// Precedence mirrors `classify_card_state` exactly: auth_delay dominates,
+    /// then SDM+NDEF content, then the factory-auth disambiguator for the
+    /// no-SDM/no-NDEF case, finally HalfWiped for any mixed combination.
+    /// Factory auth does NOT override SDM/NDEF signals — a half-wiped card
+    /// whose factory K0 happens to work is still HalfWiped, not Blank.
+    pub fn from_signals(
+        auth_delay: bool,
+        has_sdm: bool,
+        has_ndef: bool,
+        factory_auth: bool,
+    ) -> Self {
+        if auth_delay {
+            return Self::AuthDelay;
+        }
+        if has_sdm && has_ndef {
+            Self::Provisioned
+        } else if !has_sdm && !has_ndef {
+            if factory_auth {
+                Self::Blank
+            } else {
+                Self::Inconsistent
+            }
+        } else {
+            Self::HalfWiped
+        }
+    }
+}
+
 /// Result of assessing a card in the field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardAssessment {
@@ -238,5 +321,96 @@ mod assessment_model {
         };
 
         assert!(!same_uid(&assessment, &test_uid));
+    }
+
+    // ── CardLifecycleState: signal classification ───────────────────
+
+    #[test]
+    fn state_from_signals_matches_classify_card_state() {
+        assert_eq!(
+            CardLifecycleState::from_signals(false, false, false, true).as_str(),
+            "BLANK"
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(false, true, true, false).as_str(),
+            "PROVISIONED"
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(true, true, true, true).as_str(),
+            "AUTH_DELAY"
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(false, false, false, false).as_str(),
+            "INCONSISTENT"
+        );
+    }
+
+    #[test]
+    fn state_signals_dominate_factory_auth() {
+        // Pins the precedence rule: SDM/NDEF signals dominate factory_auth.
+        // Mirrors diagnose::security_tests::half_wiped_with_factory_auth_still_half_wiped
+        // and the provisioned-with-factory-auth case.
+        assert_eq!(
+            CardLifecycleState::from_signals(false, true, false, true),
+            CardLifecycleState::HalfWiped
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(false, false, true, true),
+            CardLifecycleState::HalfWiped
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(false, true, true, true),
+            CardLifecycleState::Provisioned
+        );
+    }
+
+    #[test]
+    fn state_auth_delay_overrides_everything() {
+        assert_eq!(
+            CardLifecycleState::from_signals(true, false, false, false),
+            CardLifecycleState::AuthDelay
+        );
+        assert_eq!(
+            CardLifecycleState::from_signals(true, true, true, true),
+            CardLifecycleState::AuthDelay
+        );
+    }
+
+    // ── CardLifecycleState: transition predicates ───────────────────
+
+    #[test]
+    fn burn_only_from_blank_or_provisioned() {
+        assert!(CardLifecycleState::Blank.can_burn_from());
+        assert!(CardLifecycleState::Provisioned.can_burn_from());
+        assert!(!CardLifecycleState::HalfWiped.can_burn_from());
+        assert!(!CardLifecycleState::AuthDelay.can_burn_from());
+        assert!(!CardLifecycleState::Inconsistent.can_burn_from());
+    }
+
+    #[test]
+    fn wipe_only_from_provisioned() {
+        assert!(!CardLifecycleState::Blank.can_wipe_from());
+        assert!(CardLifecycleState::Provisioned.can_wipe_from());
+        assert!(!CardLifecycleState::HalfWiped.can_wipe_from());
+        assert!(!CardLifecycleState::AuthDelay.can_wipe_from());
+        assert!(!CardLifecycleState::Inconsistent.can_wipe_from());
+    }
+
+    #[test]
+    fn diagnose_meaningful_except_inconsistent() {
+        assert!(CardLifecycleState::Blank.can_diagnose_from());
+        assert!(CardLifecycleState::Provisioned.can_diagnose_from());
+        assert!(CardLifecycleState::HalfWiped.can_diagnose_from());
+        assert!(CardLifecycleState::AuthDelay.can_diagnose_from());
+        assert!(!CardLifecycleState::Inconsistent.can_diagnose_from());
+    }
+
+    #[test]
+    fn as_str_returns_expected_labels() {
+        assert_eq!(CardLifecycleState::Blank.as_str(), "BLANK");
+        assert_eq!(CardLifecycleState::Provisioned.as_str(), "PROVISIONED");
+        assert_eq!(CardLifecycleState::HalfWiped.as_str(), "HALF-WIPED");
+        assert_eq!(CardLifecycleState::AuthDelay.as_str(), "AUTH_DELAY");
+        assert_eq!(CardLifecycleState::Inconsistent.as_str(), "INCONSISTENT");
     }
 }
