@@ -21,6 +21,7 @@
 - [x] Root cause analysis: M5StickC polling bug identified and fixed
 - [x] Empirical NTAG424 auth delay testing (9 tests, all documented)
 - [x] `crashlog` command — boot count, reset reason, crash history via NVS
+- [x] Key provenance tracking in audit log (#39) — track key source (factory/derived/raw) per operation
 
 ### Platform Support
 - [x] PCSC desktop CLI (ACS ACR1252 verified — full burn/wipe/diagnose cycle)
@@ -62,11 +63,13 @@
 - [x] Hardware watchdog (TWDT 5s) — auto-reset on I2C hang
 - [x] `keys` command marked as advanced with standard reference
 - [x] NVS persistence: LNURL + button mode + OTA signing key + TLS cert survive reboots
+- [x] Property-based crypto testing with proptest (#36) — exhaustive edge case coverage for crypto operations
+- [x] Security regression test suite (#41) — prevent reintroduction of known vulnerabilities
 
 ## In Progress
 
 - [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
-- [ ] Issue #34: BLE pairing/bonding (NimBLE branch ready, blocked on hardware)
+- [x] Issue #34: BLE pairing/bonding (NimBLE branch ready, code-written, hardware verification pending)
 - [ ] M5StickC UART0 hardware failure — needs replacement device
 - [ ] iso14443-rs upstream contribution (waiting for stability proof)
 
