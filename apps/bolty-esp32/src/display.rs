@@ -591,8 +591,12 @@ pub fn update_battery() {
         None => (255u8, false),
     };
     with_screen(|s| {
-        s.state.battery_pct = pct;
-        s.state.usb_power = usb;
-        s.dirty = true;
+        // Only redraw when the displayed values actually change — ADC jitter
+        // would otherwise trigger a full (flickering) redraw every 5s poll.
+        if s.state.battery_pct != pct || s.state.usb_power != usb {
+            s.state.battery_pct = pct;
+            s.state.usb_power = usb;
+            s.dirty = true;
+        }
     });
 }
