@@ -169,6 +169,32 @@ cd /home/ubuntu/src/bolty-rs
 
 ## Hardware Test Results (2026-06-15)
 
+### KNOWN GOOD STATE (2026-08-24)
+
+Firmware `891d7f6` + working-tree fixes (partition sdkconfig removal, 4 REST/job
+compile fixes, display battery-poll redraw guard). Verified on M5StickC Plus:
+
+- Boot: clean, display ok (ST7789 via AXP192), MFRC522 @ I2C 0x28, no crashes
+- Card `04C474FA967380` (externally provisioned by psbt.me proxy — NO known K0,
+  do NOT wipe/burn; use only for read tests): uid/status/diagnose/picc all OK,
+  SDM MAC regenerates per read (live counters, crypto path healthy)
+- Serial console: ver/status/uid/button-mode/derivekeys/crashlog/inspect/picc/diagnose
+- Host test suite: 20/20 pass (`cargo test --workspace --exclude bolty-esp32`)
+- NOT yet hardware-tested: WiFi/REST (needs `wifi <ssid> <pass>` at runtime —
+  creds are not persisted), BLE (opt-in feature), OTA (needs custom partition
+  table flashed), physical buttons
+
+Artifacts:
+- Known-good binary: `~/fw-backup/bolty-esp32-knowngood-891d7f6-fixes.bin`
+  (sha256 `09e04aa0…a79a4`, ELF 1.17MB, features `board-m5stick,wifi,rest`)
+- Pre-session full-chip dumps (ccb3c74-dirty, working display):
+  `~/fw-backup/bolty-dump{1,2}.bin` — restore with
+  `esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 115200 write_flash 0x0 dump.bin`
+
+Auth-attempt budget note: the test card has ~12 of 50 SeqFailCtr failures spent
+(2026-08-24 key ladder). Unauthenticated commands (picc/diagnose/status) are free;
+authenticating with wrong keys consumes budget — avoid.
+
 ### PCSC ACS ACR1252 — FULLY WORKING
 Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → diagnose(blank)
 - Card UID: `040c60fa967380`
@@ -187,13 +213,38 @@ Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → 
 # One-time setup:
 cargo install espup espflash
 espup install
+# Verify xtensa std is present (interrupted espup installs lose it):
+rustup +esp target list --installed   # must NOT be only x86_64-unknown-linux-gnu
+# If missing: the build fails with E0463 "can't find crate for `core`".
+# espup 0.17 ships host-std-only toolchains; std is built from source
+# via -Zbuild-std (see apps/bolty-esp32/.cargo/config.toml).
 
-# Build firmware:
-cd /home/ubuntu/src/bolty-rs
+# Build firmware — MUST run from apps/bolty-esp32/ (the .cargo/config.toml
+# there supplies --target xtensa-esp32-espidf + build-std; building from
+# the workspace root silently produces a useless x86-64 host binary):
+cd /home/ubuntu/src/bolty-rs/apps/bolty-esp32
 . ~/export-esp.sh
-cargo +esp build --release -p bolty-esp32 --features 'board-m5stick,wifi,rest'
+cargo +esp build --release --features 'board-m5stick,wifi,rest'
+# Output: /home/ubuntu/src/bolty-rs/target/xtensa-esp32-espidf/release/bolty-esp32
 
-# Flash:
+# Flash (espflash default 115200 baud — reliable on this FT232 link):
+cd /home/ubuntu/src/bolty-rs
 espflash flash --port /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0 \
   target/xtensa-esp32-espidf/release/bolty-esp32
 ```
+
+### Flash Link Reliability (empirical, 2026-08-24)
+- `esptool read_flash` at 921600/460800: **fails** ("chip stopped responding" —
+  known issue class with marginal USB-UART bridges; esptool issues #250/#967).
+- 115200: 2× full 4MB reads 100% stable.
+- Full-chip dump checksums differ between reads **by design**: the firmware
+  writes boot-count/crash-log entries to NVS (0x9000–0xF000) on every boot and
+  each esptool run hard-resets the chip. Verify backups by diffing regions:
+  `cmp -l dump1 dump2` — differences must fall inside the NVS partition only.
+- Verified backup of known-good firmware (2026-08-24, ccb3c74-dirty +
+  working display): `~/fw-backup/bolty-dump{1,2}.bin` (sha256 differ only in
+  NVS 0x9025–0x92fb).
+- Custom partition tables: pass at flash time
+  (`espflash flash --partition-table apps/bolty-esp32/partitions.csv`);
+  `CONFIG_PARTITION_TABLE_CUSTOM` in sdkconfig.defaults breaks esp-idf-sys
+  cargo builds (esp-rs/esp-idf-sys#395).

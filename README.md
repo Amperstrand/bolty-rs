@@ -57,21 +57,36 @@ Additional optional runtime services:
 
 ## Build and flash
 
-Always build the application package explicitly from the workspace root:
+Build from **inside `apps/bolty-esp32/`** — its `.cargo/config.toml` supplies the
+`xtensa-esp32-espidf` target and `-Zbuild-std` settings. Building from the
+workspace root compiles a useless host (x86-64) binary instead:
 
 ```bash
+cd apps/bolty-esp32
+
 # M5StickC Plus
-cargo +esp build --release -p bolty-esp32 --features "board-m5stick"
-espflash flash --port /dev/ttyUSB1 target/xtensa-esp32-espidf/release/bolty-esp32
+cargo +esp build --release --features "board-m5stick"
 
 # M5StickC Plus with WiFi + REST
-cargo +esp build --release -p bolty-esp32 --features "board-m5stick,wifi,rest"
-espflash flash --port /dev/ttyUSB1 target/xtensa-esp32-espidf/release/bolty-esp32
+cargo +esp build --release --features "board-m5stick,wifi,rest"
 
 # M5Atom Matrix
-cargo +esp build --release -p bolty-esp32 --features "board-m5atom"
+cargo +esp build --release --features "board-m5atom"
+```
+
+The binary lands in the **workspace** target dir. Flash it from the workspace
+root (espflash's default 115200 baud is reliable on the M5StickC FT232 link;
+higher rates drop bytes):
+
+```bash
+cd ../..
 espflash flash --port /dev/ttyUSB0 target/xtensa-esp32-espidf/release/bolty-esp32
 ```
+
+Custom partition tables are supplied at flash time
+(`espflash flash --partition-table <csv>`) — `CONFIG_PARTITION_TABLE_CUSTOM`
+in `sdkconfig.defaults` does not work with esp-idf-sys cargo builds
+(esp-rs/esp-idf-sys#395).
 
 Exactly one board feature must be enabled for firmware builds.
 
