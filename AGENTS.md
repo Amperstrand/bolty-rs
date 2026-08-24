@@ -179,10 +179,20 @@ compile fixes, display battery-poll redraw guard). Verified on M5StickC Plus:
   do NOT wipe/burn; use only for read tests): uid/status/diagnose/picc all OK,
   SDM MAC regenerates per read (live counters, crypto path healthy)
 - Serial console: ver/status/uid/button-mode/derivekeys/crashlog/inspect/picc/diagnose
+- WiFi/REST VERIFIED (2026-08-24): `wifi <ssid> <pass>` → connect; REST is
+  **TLS-only** — needs `provision-cert` first (on-device RSA-2048 self-signed,
+  stored in NVS; without it `wifi` prints `rest start failed: ESP_ERR_INVALID_STATE`),
+  then reconnect WiFi. Server: HTTPS on :443→no, **https_port = REST_PORT+1 = 81**
+  (plain :80 refuses). Verified: bearer token auth (401 no/wrong token),
+  GET /api/status|uid|diagnose|inspect, POST /api/job → 201 + GET /api/job →
+  completed (wipe→`wipe_refused` with no keys staged, burn→`missing lnurl`),
+  400 invalid/missing command, 429 on rapid writes (5s cooldown). mDNS
+  advertise reports active (host has no resolver to confirm).
 - Host test suite: 20/20 pass (`cargo test --workspace --exclude bolty-esp32`)
-- NOT yet hardware-tested: WiFi/REST (needs `wifi <ssid> <pass>` at runtime —
-  creds are not persisted), BLE (opt-in feature), OTA (needs custom partition
-  table flashed), physical buttons
+- NOT yet hardware-tested: BLE (opt-in feature; build with
+  `--features 'board-m5stick,wifi,rest,ble'`), OTA (needs custom partition
+  table flashed), physical buttons, full burn→inspect→wipe cycle (needs a
+  blank NTAG424; the resident card has no known K0)
 
 Artifacts:
 - Known-good binary: `~/fw-backup/bolty-esp32-knowngood-891d7f6-fixes.bin`
