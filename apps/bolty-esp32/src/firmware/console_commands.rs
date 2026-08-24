@@ -17,7 +17,7 @@ use crate::display;
 #[cfg(feature = "ota")]
 use crate::ota::OtaUpdater;
 #[cfg(feature = "rest")]
-use crate::rest::{JobSlot, RestServer, SharedJobSlot};
+use crate::rest::{RestServer, SharedJobSlot};
 #[cfg(feature = "wifi")]
 use crate::wifi::WifiError;
 #[cfg(feature = "ota")]

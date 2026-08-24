@@ -278,9 +278,10 @@ where
         }
 
         {
+            let config = Arc::clone(&config);
             let js = Arc::clone(&job_slot);
             server.fn_handler("/api/job", Method::Get, move |request| {
-                handle_job_status(request, &js)
+                handle_job_status(request, &config, &js)
             })?;
         }
 
@@ -644,15 +645,12 @@ fn respond_rate_limited(
         .write_all(body.as_bytes())
 }
 
-fn handle_job_submit<S>(
+fn handle_job_submit(
     mut request: Request<&mut EspHttpConnection<'_>>,
     config: &SharedConfig,
     rate_limiter: &SharedRateLimiter,
     job_slot: &SharedJobSlot,
-) -> Result<(), EspIOError>
-where
-    S: RestBoltyService + Send + 'static,
-{
+) -> Result<(), EspIOError> {
     if !is_authorized(&request, config, TokenScope::Write) {
         return respond_json(
             request,
@@ -770,7 +768,7 @@ fn handle_job_status(
     respond_json(request, 200, body.as_str())
 }
 
-fn workflow_result_json(result: &WorkflowResult) -> String {
+fn workflow_result_json(result: &WorkflowResult) -> std::string::String {
     match result {
         WorkflowResult::Success => r#""success""#.to_string(),
         WorkflowResult::CardNotPresent => r#""card_not_present""#.to_string(),

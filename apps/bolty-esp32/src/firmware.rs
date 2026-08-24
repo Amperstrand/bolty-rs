@@ -547,7 +547,7 @@ fn process_rest_job<I2C>(
 
     let result = match (config.lock(), service.lock()) {
         (Ok(mut cfg), Ok(mut svc)) => {
-            let result = dispatch_command(cmd.to_command(), &mut svc, &mut cfg);
+            let result = dispatch_command(cmd.to_command(), &mut *svc, &mut cfg);
             svc.sync_from(&cfg);
             result
         }
