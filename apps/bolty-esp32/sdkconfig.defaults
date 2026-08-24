@@ -1,6 +1,11 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
-CONFIG_PARTITION_TABLE_CUSTOM=y
-CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# NOTE: Do NOT set CONFIG_PARTITION_TABLE_CUSTOM here. esp-idf-sys cargo
+# builds resolve a relative partition CSV against the synthesized cmake
+# project dir (out/), where it never exists — the build fails with
+# "partitions.csv missing and no known rule to make it".
+# See https://github.com/esp-rs/esp-idf-sys/issues/395.
+# Supply the partition table at flash time instead:
+#   espflash flash --partition-table partitions.csv ...
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_TASK_WDT_EN=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
