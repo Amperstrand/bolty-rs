@@ -432,7 +432,15 @@ pub fn main() {
 
         if now >= heartbeat_at {
             let mut hb = String::<48>::new();
-            let _ = write!(hb, "[HB] alive t={}ms", now);
+            // nfc health rides the heartbeat itself (bolty-rs docs/lessons-learned.md B5):
+            // boot-time logs scroll away; a tollgate that cannot read cards is DOWN,
+            // not degraded, and the heartbeat is the only always-visible channel.
+            let _ = write!(
+                hb,
+                "[HB] alive t={}ms nfc={}",
+                now,
+                if nfc_ready { "ok" } else { "DOWN" }
+            );
             serial.line(hb.as_str());
             heartbeat_at = now.saturating_add(10_000);
         }
