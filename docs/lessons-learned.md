@@ -289,3 +289,42 @@ Three stacked host-side causes:
 2. Control-line state after pyserial open is ASSERTED by default — that
    is a valid download-mode request on these boards, not a neutral state.
 3. Device paths in any daemon/config that survive reboots must be by-id.
+
+---
+
+## B14 — A preventive power-cycle recommendation is a bug in your mental model
+**Date:** 2026-08-25 · **Found in:** post-B13 closeout of the role-switch audit
+**Class:** hardware debugging / process
+
+After B13's fixes landed, the session's final report still recommended "one
+physical cold-unplug of the stick to clear any lingering MFRC522 state."
+That was unnecessary — and it is instructive exactly why:
+
+1. The stuck-slave state that motivates cold power-cycles was **never
+   observed**: every boot's `recover_i2c_bus` logged `SDA high, bus OK`.
+   All afternoon "hangs" were 100% the DTR/IO0 download-mode trap (B13) —
+   a host-side cause, with the reader hardware healthy throughout.
+2. The MFRC522 shares the stick's always-on USB rail. It has NOT been
+   power-cycled in days, yet bolty reads `nfc=ok` and the CCID role
+   completes card transactions (verified 2026-08-25, both roles, twice).
+3. Every esp32-ccid boot now runs bus recovery + 50 ms settle + a bus
+   probe before the first MFRC522 access — each boot is itself a
+   self-healing attempt.
+
+**Escalation policy (reactive, never preventive):** physically unplug ONLY
+when a boot log prints `i2c recovery: SDA still LOW` after the 9 SCL
+pulses — that is the one reader state software cannot clear.
+
+For the record: the "module is marginal at 400 kHz" claim in
+ccid-firmware-rs 244a309 was an artifact of the same confounded debugging
+(the 08:06 known-good build ran 400 kHz all morning). The committed
+100 kHz bring-up stays as deliberate parity with bolty's production
+configuration — the RF side runs 106 kbps, so the I2C rate is not the
+bottleneck — not as a proven-necessary fix.
+
+**Rules:**
+1. Recommend a hardware action only with a positive hardware-state
+   observation behind it (e.g. an actual `SDA still LOW`), never as a
+   residual "just in case" from a superseded theory.
+2. When a root cause is found, sweep every earlier recommendation that was
+   derived from the confounded theory — including your own.
