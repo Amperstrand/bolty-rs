@@ -750,11 +750,11 @@ fn handle_job_status(
                 JobStatus::Completed => "completed",
             };
             let cmd_str = slot.command.map(|c| c.as_str()).unwrap_or("none");
-            let result_str = slot
-                .result
-                .as_ref()
-                .map(|r| workflow_result_json(r))
-                .unwrap_or_else(|| "null".to_string());
+            let mut result_str = String::<128>::new();
+            result_str.push_str("null").ok();
+            if let Some(r) = slot.result.as_ref() {
+                result_str = workflow_result_json(r);
+            }
             (slot.id, status_str, cmd_str, result_str)
         }
         Err(_) => {
@@ -768,15 +768,24 @@ fn handle_job_status(
     respond_json(request, 200, body.as_str())
 }
 
-fn workflow_result_json(result: &WorkflowResult) -> std::string::String {
-    match result {
-        WorkflowResult::Success => r#""success""#.to_string(),
-        WorkflowResult::CardNotPresent => r#""card_not_present""#.to_string(),
-        WorkflowResult::AuthFailed => r#""auth_failed""#.to_string(),
-        WorkflowResult::AuthDelay => r#""auth_delay""#.to_string(),
-        WorkflowResult::WipeRefused => r#""wipe_refused""#.to_string(),
-        WorkflowResult::Error(msg) => format!(r#""error: {}""#, msg.as_str()),
-    }
+fn workflow_result_json(result: &WorkflowResult) -> String<128> {
+    let mut out = String::<128>::new();
+    let prefix = match result {
+        WorkflowResult::Success => r##""success""##,
+        WorkflowResult::CardNotPresent => r##""card_not_present""##,
+        WorkflowResult::AuthFailed => r##""auth_failed""##,
+        WorkflowResult::AuthDelay => r##""auth_delay""##,
+        WorkflowResult::WipeRefused => r##""wipe_refused""##,
+        WorkflowResult::Error(msg) => {
+            let mut prefix = String::<128>::new();
+            prefix.push_str(r##""error: "##);
+            let _ = push_escaped_json(&mut prefix, msg.as_str());
+            let _ = prefix.push('"');
+            return prefix;
+        }
+    };
+    let _ = out.push_str(prefix);
+    out
 }
 
 fn handle_keyver<S>(
@@ -903,11 +912,15 @@ where
     });
 
     let status = service.lock().map(|s| s.get_status()).unwrap_or_default();
+    let mut lnurl = String::<128>::new();
+    if let Some(configured) = status.lnurl.as_ref() {
+        let _ = push_escaped_json(&mut lnurl, configured.as_str());
+    }
     let body = format!(
         "{{\"ok\":true,\"nfc_ready\":{},\"uid\":\"{}\",\"lnurl\":\"{}\"}}",
         status.nfc_ready,
         uid_hex_string(&status),
-        status.lnurl.as_ref().map(|s| s.as_str()).unwrap_or("")
+        lnurl
     );
     respond_json(request, 200, body.as_str())
 }
