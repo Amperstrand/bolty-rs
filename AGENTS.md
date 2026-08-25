@@ -258,3 +258,8 @@ espflash flash --port /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-po
   (`espflash flash --partition-table apps/bolty-esp32/partitions.csv`);
   `CONFIG_PARTITION_TABLE_CUSTOM` in sdkconfig.defaults breaks esp-idf-sys
   cargo builds (esp-rs/esp-idf-sys#395).
+
+## Lessons Learned
+
+See docs/lessons-learned.md — append-only engineering log: rig facts (M5Stick pins, MFRC522 at 0x28), ESP-IDF sdkconfig traps, NTAG424 card-safety refinements (911E vs 91AE), and the byte-exact crypto port method.
+
