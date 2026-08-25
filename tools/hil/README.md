@@ -53,3 +53,11 @@ before decrypting p=, which an anonymous first tap cannot provide. Raw-key
 Verified cycle (2026-08-25): burn → `sdm=ok uid_match=true` → live worker
 `HTTP 200 withdrawRequest` → wipe → `state=blank`, zero port wedges across
 the whole session.
+
+## Role switching
+
+The same stick can also run the esp32-ccid reader firmware (pcscd role).
+`ccid-firmware-rs tools/switch_role.sh bolty|ccid` orchestrates the flip
+(daemon vs pcscd, rebuild, flash, verification) — see
+ccid-firmware-rs docs/role-switch.md. Lesson B13 in this repo covers the
+control-line/tty-name traps that made switching flaky before.

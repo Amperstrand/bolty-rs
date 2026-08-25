@@ -142,6 +142,10 @@ def main() -> None:
     state["journal"] = open(args.log, "a", buffering=1)
 
     ser = serial.Serial(args.port, 115200, bytesize=8, parity="N", stopbits=2, timeout=0.1)
+    # Settle control lines ONCE to neutral (DTR asserted on open holds IO0 low on
+    # this board family -> download mode -> silent UART). No further toggling (B11).
+    ser.dtr = False
+    ser.rts = False
     state["ser"] = ser  # NOTE: opened once; DTR/RTS are never touched again (B11)
     threading.Thread(target=reader_thread, args=(ser,), daemon=True).start()
 

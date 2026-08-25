@@ -258,3 +258,34 @@ command is a setter only — the live substituted URL comes from `picc`
 1. Cards meant for anonymous first-tap service get deterministic burns.
 2. HIL assertions check `sdm=ok` + `uid_match=true` (this build prints
    that, not `mac=true`), and extract p=/c= from picc output.
+
+---
+
+## B13 — Three ways a lab stick plays dead (DTR/IO0, stale tty names, pcscd fatality)
+**Date:** 2026-08-25 · **Found in:** ccid-firmware role-switch audit on the M5Stick rig
+**Class:** host tooling / hardware debugging
+
+An entire afternoon of "firmware freezes at first I2C transaction" —
+across every build including the known-good binary — was none of those.
+Three stacked host-side causes:
+
+1. **RTS-pulse reset without clearing DTR**: pyserial asserts DTR on
+   open; on this board family DTR→IO0, so DTR-high + an RTS (EN) pulse
+   parks the ESP32 in download mode. Symptom: boot logs, then eternal
+   silence that perfectly mimics a hang. Always `s.dtr = False;
+   s.rts = False` before pulsing RTS. bolty-console now settles lines to
+   neutral once at open.
+2. **Stale `/dev/ttyUSBx` in configs**: USB rebinds re-enumerate the
+   stick to a different tty number. Use the by-id path everywhere
+   (daemon, pcscd reader.conf, scripts).
+3. **pcscd exits fatally on a missing DEVICENAME** (status 1, repeated
+   → systemd start-limit-hit → "Access denied" for clients). A disabled
+   serial reader config must not reference a device that can vanish.
+
+**Rules:**
+1. Before blaming firmware, verify the chip is actually running: clear
+   DTR/RTS, pulse reset, and watch for the full boot banner ending in
+   your app's first log line.
+2. Control-line state after pyserial open is ASSERTED by default — that
+   is a valid download-mode request on these boards, not a neutral state.
+3. Device paths in any daemon/config that survive reboots must be by-id.
