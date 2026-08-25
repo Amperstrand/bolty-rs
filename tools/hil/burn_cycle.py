@@ -55,6 +55,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--issuer", default=PUBLIC_ISSUER, help="issuer key hex (default: public deterministic v1)")
     ap.add_argument("--keys", help="raw per-card keys 'k0 k1 k2 k3 k4' (overrides --issuer)")
+    ap.add_argument("--percard", action="store_true",
+                    help="burn with percard keys from HIL_PERCARD_KEYS env ('k0 k1 k2 k3 k4') "
+                         "and expect the worker to route the anonymous tap via its percard "
+                         "K1 fallback (ENABLE_PERCARD_FALLBACK, docs/percard-fallback.md)")
     ap.add_argument("--skip-burn", action="store_true")
     ap.add_argument("--skip-wipe", action="store_true")
     args = ap.parse_args()
@@ -69,6 +73,13 @@ def main() -> int:
         return 2
 
     results = {}
+    if args.percard:
+        import os
+        percard_keys = os.environ.get("HIL_PERCARD_KEYS", "").strip()
+        if not percard_keys or len(percard_keys.split()) != 5:
+            print("FAIL: --percard requires HIL_PERCARD_KEYS='k0 k1 k2 k3 k4' (source: worker keys/ CSV)")
+            return 2
+        args.keys = percard_keys
     if not args.skip_burn:
         print("=== stage + burn ===")
         if args.keys:
