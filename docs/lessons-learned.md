@@ -218,3 +218,43 @@ warnings already in `ccid-firmware-rs/firmware/esp32-ccid/flash_and_test.sh`:
    only for interactive speed.
 2. Reset the target yourself (RTS pulse) and capture from t=0 — "flash
    verified" ≠ "new firmware is running".
+
+---
+
+## B11 — FT232 open/close wedges: one persistent owner, ModemManager off the port
+**Date:** 2026-08-25 · **Found in:** HIL scripting against the M5Stick rig
+**Class:** host tooling / reliability
+
+Every open()/close() of the FT232 USB-UART fires DTR/RTS TIOCMSET
+transitions that corrupt this bridge's USB state machine — the device
+disconnects from the bus (11 events in the lab kernel log, timestamps
+matching every debugging session) and only a USB rebind recovers it.
+Compounding it, ModemManager probes each new ttyUSB enumeration and races
+real clients for the port. Symptom: the first open after a rebind works,
+the second silently dies.
+
+**Rules:**
+1. The tty has exactly ONE owner, opened once per boot: `bolty-console`
+   (tools/hil/) serving a unix socket. Tooling talks to the socket, never
+   to /dev/ttyUSB*.
+2. udev rule 99-bolty-stick.rules sets ID_MM_DEVICE_IGNORE (box has no
+   modems) and power/control=on.
+3. DTR/RTS are never touched after the daemon's single open.
+
+## B12 — Anonymous taps need deterministic keys; picc is the live-URL getter
+**Date:** 2026-08-25 · **Found in:** burn_cycle against boltcardpoc.psbt.me
+**Class:** card lifecycle / service integration
+
+A percard-CSV burn is cryptographically valid (p decrypts to the UID, CMAC
+verifies — proven offline) yet the worker answers 400 "unable to decode
+UID": routing an anonymous tap requires knowing the UID to pick the CSV
+row, and the row to decrypt the UID. Deterministic issuer keys
+(0000…0001, v1) are the anonymous-tap path; the same burn with them
+yields HTTP 200 withdrawRequest end-to-end. Also: the `url` console
+command is a setter only — the live substituted URL comes from `picc`
+(`sdm=ok uid_match=true`, ndef= line).
+
+**Rules:**
+1. Cards meant for anonymous first-tap service get deterministic burns.
+2. HIL assertions check `sdm=ok` + `uid_match=true` (this build prints
+   that, not `mac=true`), and extract p=/c= from picc output.

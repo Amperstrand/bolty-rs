@@ -191,8 +191,8 @@ compile fixes, display battery-poll redraw guard). Verified on M5StickC Plus:
 - Host test suite: 20/20 pass (`cargo test --workspace --exclude bolty-esp32`)
 - NOT yet hardware-tested: BLE (opt-in feature; build with
   `--features 'board-m5stick,wifi,rest,ble'`), OTA (needs custom partition
-  table flashed), physical buttons, full burn→inspect→wipe cycle (needs a
-  blank NTAG424; the resident card has no known K0)
+  table flashed), physical buttons. (burn→inspect→wipe cycle: DONE
+  2026-08-25, see the newer KNOWN GOOD section above)
 
 Artifacts:
 - Known-good binary: `~/fw-backup/bolty-esp32-knowngood-891d7f6-fixes.bin`
@@ -204,6 +204,30 @@ Artifacts:
 Auth-attempt budget note: the test card has ~12 of 50 SeqFailCtr failures spent
 (2026-08-24 key ladder). Unauthenticated commands (picc/diagnose/status) are free;
 authenticating with wrong keys consumes budget — avoid.
+
+### KNOWN GOOD STATE (2026-08-25 — current)
+
+Firmware: bolty-esp32 main @ `beaf99a` (heartbeat carries `nfc=ok|DOWN`).
+Stick on the bolty serial console, served by the `bolty-console` daemon
+(tools/hil/ — port opened once per boot, unix socket at
+/run/bolty/console.sock; udev rule ignores ModemManager; see
+docs/lessons-learned.md B11). Zero USB wedges across a full session since.
+
+**Full burn→inspect→live-tap→wipe→blank cycle COMPLETED on card
+04C474FA967380** (the 2026-08-24 gap below is closed):
+- Deterministic burn (public issuer `0000…0001`, v1,
+  `https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac}`) → `burn complete`
+- `picc` → `sdm=ok uid_match=true`
+- Live worker tap → **HTTP 200 withdrawRequest** (callback + k1=c convention)
+- `wipe` → `state=blank`; re-burn/wipe cycles repeatable
+- Run it: `python3 tools/hil/burn_cycle.py` (B12: deterministic keys are the
+  anonymous-tap path; percard `--keys` burns are valid but not routable by an
+  anonymous first tap)
+- Card state after the test run: **blank** (returned to lab stock)
+
+ccid-firmware-rs (same stick, when used as a CCID reader): board-m5stick
+feature, sdkconfig gate via flash_and_test.sh — switching roles means
+reflashing; bolty is the default role.
 
 ### PCSC ACS ACR1252 — FULLY WORKING
 Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → diagnose(blank)
