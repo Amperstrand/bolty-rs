@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Firmware-build gate: the pre-commit suite checks host crates only —
+# bolty-esp32 breakages (feature/cfg issues) must be caught before push.
+set -euo pipefail
+export PATH="$HOME/.cargo/bin:$PATH"
+cd "$(git rev-parse --show-toplevel)/apps/bolty-esp32"
+cargo +esp build --release --features board-m5stick
