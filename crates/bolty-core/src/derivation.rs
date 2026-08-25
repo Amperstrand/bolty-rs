@@ -4,14 +4,40 @@ use crate::uid::CardUid;
 use core::fmt;
 use zeroize::Zeroize;
 
+// Deterministic key derivation per the boltcard DETERMINISTIC.md scheme.
+//
+// BOLT_DET: `K0` is the `App Master Key`, it is the only key permitted to change the application keys.
+// BOLT_DET: `K1` serves as the `encryption key` for the `PICCData`, represented by the `p=` parameter.
+// BOLT_DET: `K2` is the `authentication key` used for calculating the SUN MAC of the `PICCData`, represented by the `c=` parameter.
+// BOLT_DET: `K3` and `K4` are not used but should be configured as recommended in the [NTag424 application notes](https://www.nxp.com/docs/en/application-note/AN12196.pdf).
+//
+// BOLT_DET: The Pseudo Random Function `PRF(key, message)` applied during the key generation is the CMAC algorithm described in NIST Special Publication 800-38B. [See implementation notes](#notes)
+
+// The AN10922 diversification strategy (ntag424 crate `diversify_ntag424`)
+// is intentionally NOT the default here — see docs decision record for
+// Issue #44 (commit 894d808): boltcard-spec derivation is the product
+// behavior; AN10922 remains available for low-level/compatibility paths.
+
 const DEFAULT_BOLTCARD_VERSION: u32 = 1;
 
+// BOLT_DET: CardKey = PRF(IssuerKey, '2d003f75' || UID || Version)
 const TAG_CARD_KEY: [u8; 4] = [0x2D, 0x00, 0x3F, 0x75];
+// BOLT_DET: K0 = PRF(CardKey, '2d003f76')
 const TAG_K0: [u8; 4] = [0x2D, 0x00, 0x3F, 0x76];
+// BOLT_DET: K1 = PRF(IssuerKey, '2d003f77')
+
+// Note K1 derives from the IssuerKey, not the CardKey — it is shared across
+// all cards of one issuer (that is what makes unknown-card p= decryption
+// cheap on the service side; the psbt.me proxy stores it globally as
+// AES_DECRYPT_KEY).
 const TAG_K1: [u8; 4] = [0x2D, 0x00, 0x3F, 0x77];
+// BOLT_DET: K2 = PRF(CardKey, '2d003f78')
 const TAG_K2: [u8; 4] = [0x2D, 0x00, 0x3F, 0x78];
+// BOLT_DET: K3 = PRF(CardKey, '2d003f79')
 const TAG_K3: [u8; 4] = [0x2D, 0x00, 0x3F, 0x79];
+// BOLT_DET: K4 = PRF(CardKey, '2d003f7a')
 const TAG_K4: [u8; 4] = [0x2D, 0x00, 0x3F, 0x7A];
+// BOLT_DET: ID = PRF(IssuerKey, '2d003f7b' || UID)
 const TAG_CARD_ID: [u8; 4] = [0x2D, 0x00, 0x3F, 0x7B];
 
 /// Which key derivation strategy to use.

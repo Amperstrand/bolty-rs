@@ -144,6 +144,27 @@ nmap --script broadcast-dns-service-discovery
 
 If `bolty.local` does not resolve, verify that the host has mDNS enabled (`avahi-daemon` or `systemd-resolved`) and that UDP/5353 is not blocked. Do not confuse the router address with the device address; `192.168.13.1` is typically the gateway, not the ESP32.
 
+## Spec conformance (greatspectations)
+
+Spec-relevant code carries verbatim boltcard-spec quotes as comments
+(`// BOLT_SPEC:`, `// BOLT_DET:`, `// BOLT_PRIV:` markers for
+[spec/docs/SPEC.md](https://github.com/boltcard/boltcard/blob/main/docs/SPEC.md),
+DETERMINISTIC.md, and CARD_PRIVACY.md). CI (`.github/workflows/spec-quote-drift.yml`)
+verifies every quote against a fresh clone of the spec, so comments claiming
+spec behavior cannot drift silently. Cross-implementation audits (e.g. the
+p/c verification vs the Go boltcard proxy's `check_cmac`) are recorded in
+`Audited ... against ...` comments at the audited site.
+
+```bash
+git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+python -m greatspectations check --config specquotes.toml \
+  --comment-start '// ' --comment-continue '//' -k \
+  $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs')
+```
+
+NXP-layer wire formats (datasheet, AN12196) have no canonical text source and
+are guarded by byte-exact fixture vectors instead.
+
 ## Repository hygiene and dependency policy
 
 - Direct dependency versions are pinned with `=x.y.z` syntax.

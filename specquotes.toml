@@ -1,0 +1,38 @@
+# greatspectations spec-quote drift config for bolty-rs
+#
+# Tool: https://github.com/rustyrussell/greatspectations
+# Specs: https://github.com/boltcard/boltcard (docs/ — markdown)
+#
+# Comment marker syntax in Rust source:
+#   // BOLT_SPEC: <verbatim quote from spec/docs/SPEC.md>
+#   // BOLT_DET:  <verbatim quote from spec/docs/DETERMINISTIC.md>
+#   // BOLT_PRIV: <verbatim quote from spec/docs/CARD_PRIVACY.md>
+#
+# Setup (one-time, local):
+#   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+#   uv venv .gs-env && uv pip install --python .gs-env/bin/python \
+#       -e /path/to/greatspectations   (or: pip install git+https://github.com/rustyrussell/greatspectations.git)
+#
+# Run (from repo root):
+#   .gs-env/bin/python -m greatspectations check --config specquotes.toml \
+#       --comment-start '// ' --comment-continue '//' -k -v \
+#       crates/bolty-core/src crates/bolty-ntag/src
+#
+# NXP-layer facts (NTAG424 datasheet, AN12196) are NOT covered here: they are
+# proprietary PDFs with no canonical text source. Coverage for that layer
+# comes from byte-exact fixture vectors, not quotes.
+
+[sources.BOLT_SPEC]
+format = "markdown"
+file = "spec/docs/SPEC.md"
+comment_marker = "BOLT_SPEC"
+
+[sources.BOLT_DET]
+format = "markdown"
+file = "spec/docs/DETERMINISTIC.md"
+comment_marker = "BOLT_DET"
+
+[sources.BOLT_PRIV]
+format = "markdown"
+file = "spec/docs/CARD_PRIVACY.md"
+comment_marker = "BOLT_PRIV"

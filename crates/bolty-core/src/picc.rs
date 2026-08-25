@@ -5,6 +5,14 @@ use aes::Aes128;
 use cbc::cipher::BlockModeEncrypt;
 use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::NoPadding};
 
+// BOLT_PRIV: The URI that is programmed into the card and returned as the NDEF consists of three parts.
+// BOLT_PRIV: 1. The static part
+// BOLT_PRIV: 2. The encrypted part
+// BOLT_PRIV: 3. The authentication part
+
+// (The p= parameter handled here is the "encrypted part"; the c= parameter
+// verified by `picc_verify_c` is the "authentication part".)
+
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 #[cfg(test)]
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
@@ -49,6 +57,7 @@ pub fn extract_p_and_c(url: &str) -> Option<(&str, &str)> {
     }
 }
 
+// BOLT_SPEC: for the `p` value and the `SDM Meta Read Access Key` value, decrypt the UID and counter with AES
 pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     if p_hex.len() != 32 {
         return None;
@@ -79,6 +88,10 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     };
 
     picc.uid.copy_from_slice(&buf[1..1 + PICC_UID_BYTE_LEN]);
+    // BOLT_SPEC: the bolt card service must only accept an increasing counter value
+
+    // Bolty surfaces the counter here; the monotonicity check itself is the
+    // card service's job (boltcard stores last_counter_value per card).
     picc.counter = u32::from(buf[8]) | (u32::from(buf[9]) << 8) | (u32::from(buf[10]) << 16);
 
     Some(picc)
@@ -96,6 +109,12 @@ pub fn sdm_build_sv2(uid: &[u8; 7], counter: u32) -> [u8; 16] {
     sv2
 }
 
+// BOLT_SPEC: for the `c` value and the `SDM File Read Access Key` value, check with AES-CMAC
+
+// Audited 2026-08-25 against boltcard (Go) lnurlw/lnurlw_request.go
+// `check_cmac`: SV2 layout (3cc3 0001 0080 || uid || ctr_lsb3), double-CMAC
+// derivation (ks = CMAC(K2, SV2); mac = CMAC(ks, empty)), and odd-byte
+// truncation match byte-for-byte.
 pub fn picc_verify_c(k2: &[u8; 16], picc: &PiccData, c_hex: &str) -> bool {
     if !picc.has_uid || !picc.has_counter || c_hex.len() != 16 {
         return false;

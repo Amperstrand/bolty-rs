@@ -1,0 +1,50 @@
+---
+# Workflow: greatspectations spec-quote drift detection for bolty-rs.
+#
+# Verifies that `// BOLT_SPEC:` / `// BOLT_DET:` / `// BOLT_PRIV:` quotes in
+# crates/ match the boltcard spec (boltcard/boltcard docs/) verbatim, so
+# comments claiming spec behavior cannot silently drift from the spec.
+#
+# Tool: https://github.com/rustyrussell/greatspectations
+#
+# Local usage:
+#   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+#   python -m greatspectations check --config specquotes.toml \
+#     --comment-start '// ' --comment-continue '//' -k \
+#     crates/bolty-core/src crates/bolty-ntag/src
+#
+# NXP-layer facts (NTAG424 datasheet, AN12196) are intentionally not covered:
+# proprietary PDFs have no canonical text source; that layer is guarded by
+# byte-exact fixture vectors instead.
+
+name: spec-quote-drift
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # weekly: catch upstream spec changes
+
+jobs:
+  spec-quote-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install greatspectations
+        run: pip install git+https://github.com/rustyrussell/greatspectations.git
+      - name: Clone boltcard spec
+        run: git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+      - name: Spec-quote check
+        run: |
+          python -m greatspectations check --config specquotes.toml \
+            --comment-start '// ' --comment-continue '//' -k -v \
+            --coverage .coverage \
+            $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs')
+      - name: Spec-quote coverage report
+        run: |
+          python -m greatspectations coverage --config specquotes.toml \
+            --coverage .coverage
