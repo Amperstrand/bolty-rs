@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use bolty_core::config::BoltyConfig;
 use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
+use mfrc522_pcd::recover_i2c_bus;
 
 use esp_idf_hal::{
     delay::FreeRtos,
@@ -825,83 +826,6 @@ fn handle_button_events<I2C>(
             esp_idf_sys::esp_sleep_enable_ext0_wakeup(esp_idf_sys::gpio_num_t_GPIO_NUM_39, 0);
             esp_idf_sys::esp_deep_sleep_start();
         }
-    }
-}
-
-fn recover_i2c_bus(scl_pin: i32, sda_pin: i32) {
-    use esp_idf_sys::{
-        esp_rom_delay_us, gpio_config, gpio_config_t, gpio_get_level, gpio_reset_pin,
-        gpio_set_level,
-    };
-
-    const GPIO_MODE_INPUT: u32 = 1;
-    const GPIO_MODE_OUTPUT: u32 = 2;
-
-    let mask = |pin: i32| -> u64 { 1u64 << pin };
-
-    let sda_cfg = gpio_config_t {
-        pin_bit_mask: mask(sda_pin),
-        mode: GPIO_MODE_INPUT as u32,
-        pull_up_en: 1,
-        pull_down_en: 0,
-        intr_type: 0,
-    };
-
-    let result = unsafe { gpio_config(&sda_cfg) };
-    if result != 0 {
-        log::warn!("I2C recovery: SDA gpio_config failed: {result}");
-        return;
-    }
-
-    if unsafe { gpio_get_level(sda_pin) } != 0 {
-        log::info!("I2C recovery: SDA high, bus OK — no recovery needed");
-        unsafe {
-            gpio_reset_pin(sda_pin);
-        }
-        return;
-    }
-
-    log::warn!("I2C recovery: SDA stuck LOW — sending 9 SCL clock pulses");
-
-    let scl_cfg = gpio_config_t {
-        pin_bit_mask: mask(scl_pin),
-        mode: GPIO_MODE_OUTPUT as u32,
-        pull_up_en: 1,
-        pull_down_en: 0,
-        intr_type: 0,
-    };
-
-    let result = unsafe { gpio_config(&scl_cfg) };
-    if result != 0 {
-        log::warn!("I2C recovery: SCL gpio_config failed: {result}");
-        unsafe {
-            gpio_reset_pin(sda_pin);
-        }
-        return;
-    }
-
-    for _ in 0..9 {
-        unsafe {
-            gpio_set_level(scl_pin, 1);
-            esp_rom_delay_us(10);
-            gpio_set_level(scl_pin, 0);
-            esp_rom_delay_us(10);
-        }
-    }
-
-    let recovered = unsafe { gpio_get_level(sda_pin) } != 0;
-    log::info!(
-        "I2C recovery: {}",
-        if recovered {
-            "SDA released — OK"
-        } else {
-            "SDA still LOW — may need power cycle"
-        }
-    );
-
-    unsafe {
-        gpio_reset_pin(scl_pin);
-        gpio_reset_pin(sda_pin);
     }
 }
 

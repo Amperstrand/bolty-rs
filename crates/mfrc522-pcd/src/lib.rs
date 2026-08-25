@@ -225,3 +225,9 @@ fn log_crc_error<I2C: I2c>(mfrc522: &mut Mfrc522<I2cInterface<I2C>, Initialized>
         level
     );
 }
+
+#[cfg(target_arch = "xtensa")]
+pub mod bus_recovery;
+
+#[cfg(target_arch = "xtensa")]
+pub use bus_recovery::recover_i2c_bus;

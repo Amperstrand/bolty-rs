@@ -13,3 +13,8 @@ log = "=0.4.29"
 
 [lints]
 workspace = true
+
+[target.'cfg(target_arch = "xtensa")'.dependencies]
+# Pinned to match the workspace firmware crates so a single esp-idf-sys
+# instance is shared across the dependency graph.
+esp-idf-sys = "=0.37.2"

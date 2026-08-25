@@ -26,6 +26,7 @@ ble = []
 [dependencies]
 bolty-core = { path = "../../crates/bolty-core" }
 bolty-ntag = { path = "../../crates/bolty-ntag" }
+mfrc522-pcd = { path = "../../crates/mfrc522-pcd" }
 bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
 embedded-hal = "=1.0.0"
 embedded-svc = "=0.29.0"
