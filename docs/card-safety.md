@@ -213,6 +213,7 @@ From empirical testing and proxmark3 community experience:
 - Repeated failures: delay escalates (seconds to tens of seconds)
 - No permanent lockout observed from auth failures alone
 - The counter resets on successful authentication
+- **Measured 2026-08-26 (bounded experiment, host-tools/authdelay.py, blank card 04c474fa967380)**: with a KNOWN correct key the next auth succeeds instantly after 1/2/3/5 consecutive wrong-key failures (0.08-0.10s, no 91AD observed) — failed auths cost nothing when recovery is possible. Delays only bite wrong-key retry loops (unknown-key hunting). The "sacrificial card" precaution is unnecessary for known-key experiments.
 
 ---
 
