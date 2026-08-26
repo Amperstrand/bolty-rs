@@ -1,0 +1,11 @@
+# bolty-rs lab rig: M5StickC Plus (Hades2001 "M5stack", FT232 0403:6001) on ai-legion-small
+#
+# 1) ModemManager probes this port on every USB enumeration and races real
+#    clients (port-busy + control-line storms). The box has no modems.
+# 2) Keep the device powered (no runtime autosuspend) — resume transitions are
+#    another wedge trigger for this bridge.
+# See bolty-rs docs/lessons-learned.md B11.
+ACTION=="add|change", SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6001", \
+  TEST=="power/control", ATTR{power/control}="on"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", \
+  ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0"

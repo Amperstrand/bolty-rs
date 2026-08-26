@@ -1,0 +1,17 @@
+[Unit]
+Description=bolty persistent serial console (M5Stick rig, ai-legion-small)
+# Bind to the device unit: on USB re-enumeration (rebind/unplug) the service
+# stops and Restart=always reopens the port cleanly when the device returns.
+BindsTo=dev-serial-by\x2did-usb\x2dHades2001_M5stack_49D6163EBE\x2dif00\x2dport0.device
+After=dev-serial-by\x2did-usb\x2dHades2001_M5stack_49D6163EBE\x2dif00\x2dport0.device
+
+[Service]
+Type=simple
+User=ubuntu
+RuntimeDirectory=bolty
+ExecStart=/usr/bin/python3 /home/ubuntu/src/bolty-rs/tools/hil/bolty-console.py --socket /run/bolty/console.sock
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
