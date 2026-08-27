@@ -1968,7 +1968,7 @@ dependencies = [
 [[package]]
 name = "ntag424"
 version = "0.1.0"
-source = "git+https://github.com/Amperstrand/ntag424.git?branch=ai-experiments#c86237100da0d838e21ae2cbb9e69b9601524258"
+source = "git+https://github.com/Amperstrand/ntag424.git?branch=ai-experiments#bc2ef41d695d326390376720b69b7c1ea6b183ab"
 dependencies = [
  "aes",
  "arrayvec",
