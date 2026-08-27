@@ -328,3 +328,53 @@ bottleneck — not as a proven-necessary fix.
    residual "just in case" from a superseded theory.
 2. When a root cause is found, sweep every earlier recommendation that was
    derived from the confounded theory — including your own.
+
+---
+
+## B15 — An echo-only CI job is worse than no CI job
+**Date:** 2026-08-27 · **Found in:** esp32-check.yml stub vs REST job API breakage
+**Class:** CI / process
+
+`esp32-check.yml` "verified" the firmware by printing the commands it would
+run. It looked green on every PR for months while the firmware target never
+compiled anywhere — the REST job API merged with four compile errors, and the
+partition-table breakage (B4-adjacent) shipped invisible. The stub even echoed
+the *wrong* commands (workspace-root invocations that can't see
+`apps/bolty-esp32/.cargo/config.toml`).
+
+**Rules:**
+1. A CI job that cannot fail is a lie with a green checkmark — delete it or
+   make it real; never leave it as documentation theater.
+2. Local hooks (pre-push builds) protect one machine; only the shared runner
+   protects every contributor. Both are needed.
+3. When replacing a stub, run the real thing once before trusting it — the
+   first esp32-check run on GitHub runners is still pending at B15 time.
+
+## B16 — Unused-result warnings on dispatch calls are behavioral bugs, not noise
+**Date:** 2026-08-27 · **Found in:** REST /api/keyver and /api/inspect
+**Class:** API correctness
+
+Both handlers computed `let result = with_state(...)` and dropped it, always
+returning `{"ok":true,...}` — including on authentication failure. The
+compiler had been pointing at exactly this (`unused variable: result`) for
+weeks. Any client using /api/keyver to check key state got a lying 200.
+
+**Rules:**
+1. An unused dispatch/operation result in an HTTP handler means the response
+   does not reflect the operation — treat the warning as a bug report.
+2. Match every workflow dispatch to the respond-with-result pattern (see
+   `handle_diagnose`) — one shape for all handlers, no bespoke omissions.
+
+## B17 — Verify hardware on committed source, or stamp provenance explicitly
+**Date:** 2026-08-27 · **Found in:** 2026-08-27 known-good stamping
+
+The burn-cycle verification ran on a build whose REST fix was still
+uncommitted; the "known good" binary therefore had no commit sha of its own
+until the fix landed minutes later. The stamp had to say "HEAD + uncommitted
+rest.rs at time of stamping" to stay honest.
+
+**Rules:**
+1. Commit first, then hardware-verify, then stamp — the stamp should name a
+   commit that exists.
+2. If verification must precede the commit, record the dirty state in the
+   stamp (files + shas), never imply a clean provenance.

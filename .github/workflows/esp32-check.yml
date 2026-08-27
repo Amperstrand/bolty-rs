@@ -1,19 +1,49 @@
-name: ESP32 Check
+---
+# Workflow: real ESP32 firmware build.
+#
+# This REPLACED a stub that only echoed `cargo +esp check -p bolty-esp32
+# --target xtensa-esp32-espidf` — commands that do not even work as written
+# (workspace-root invocation misses apps/bolty-esp32/.cargo/config.toml;
+# see AGENTS.md "ESP32 Build Commands"). The REST job API merged with four
+# compile errors because nothing anywhere built the firmware target.
+#
+# Release builds (not `cargo check`) so link errors surface too.
+
+name: esp32-check
+
 on:
   push:
     branches: [main]
   pull_request:
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # espup queries the GitHub API
+
 jobs:
-  esp32-check:
+  esp32-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: ESP32 cross-check
+      - name: Install xtensa toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          buildtargets: esp32
+          ldproxy: true # required for std targets (linker)
+      - name: Build firmware (board-m5stick, wifi+rest+ota)
         run: |
-          echo "ESP32 cross-check requires esp toolchain."
-          echo "Run locally:"
-          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf"
-          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features wifi"
-          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features rest"
-          echo "  cargo +esp check -p bolty-esp32 --target xtensa-esp32-espidf --features ota"
-          echo "See docs/architecture.md for setup instructions."
+          . $HOME/export-esp.sh
+          cd apps/bolty-esp32
+          cargo +esp build --release --features "board-m5stick,wifi,rest,ota"
+      - name: Build firmware (board-m5atom)
+        run: |
+          . $HOME/export-esp.sh
+          cd apps/bolty-esp32
+          cargo +esp build --release --features "board-m5atom"
+      - name: Build firmware (board-m5stick, ble)
+        run: |
+          . $HOME/export-esp.sh
+          cd apps/bolty-esp32
+          cargo +esp build --release --features "board-m5stick,ble"
+
+  # Host-side spec-quote drift check lives in spec-quote-drift.yml.

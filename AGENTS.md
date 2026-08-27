@@ -195,6 +195,43 @@ cd /home/ubuntu/src/bolty-rs
 
 ## Hardware Test Results (2026-06-15)
 
+### KNOWN GOOD STATE (2026-08-27 — current)
+
+Firmware: HEAD `e2d9252` + REST result-reporting fix (uncommitted rest.rs at
+time of stamping — see commits) + cmac-crate swap. Verified this session:
+
+- **Full burn cycle on HEAD: ALL PASS** (`tools/hil/burn_cycle.py`): burn
+  (deterministic issuer) → `inspect provisioned` → `picc sdm=ok uid_match=true`
+  → **live worker tap HTTP 200** (boltcardpoc.psbt.me) → wipe → `state=blank`.
+  This hardware-proves the `cmac` crate swap on the real derivation path
+  (fixtures said bit-identical; hardware agrees).
+- **REST keyver/inspect now report operation results** (previously always
+  200/ok:true even on auth failure — matched to diagnose's pattern).
+  Positive paths hardware-verified; negative path verified by pattern parity
+  with diagnose + job API error reporting.
+- REST full matrix re-verified on this build: TLS :81, 401/200 auth, JSON
+  escaping (hostile lnurl with `\"`/`\\` round-trips valid), 400/429 paths.
+- Spec-quote CI: 22 greatspectations quotes green; `esp32-check.yml` is now a
+  REAL xtensa build (was an echo-only stub) — note: not yet exercised on
+  GitHub runners at stamping time.
+- Host suite 20/20, fmt/clippy clean, firmware builds with **zero warnings**.
+
+Device state at stamping: **mid-OTA-test** — flashed with the
+`board-m5stick,wifi,rest,ota` build + custom partition table
+(`partitions.csv`: factory@0x20000, otadata, ota_0@0x200000). OTA image +
+Ed25519 pubkey/sig prepared and saved. Standard-layout restore pending after
+the OTA test (see `~/fw-backup/`).
+
+Artifacts:
+- Burn-cycle-verified binary (features `board-m5stick,wifi,rest`):
+  `~/fw-backup/bolty-esp32-knowngood-restfix-20260827.bin`
+  (sha256 `4a2fae08…`)
+- OTA test materials: `~/fw-backup/bolty-esp32-ota-image-20260827.bin` +
+  `ota_pub.hex` / `ota_sig.hex` (Ed25519 over SHA-256 of the image)
+
+Still not hardware-tested: BLE (item queued), OTA update flow (in progress),
+physical buttons.
+
 ### KNOWN GOOD STATE (2026-08-24)
 
 Firmware `891d7f6` + working-tree fixes (partition sdkconfig removal, 4 REST/job
@@ -231,7 +268,7 @@ Auth-attempt budget note: the test card has ~12 of 50 SeqFailCtr failures spent
 (2026-08-24 key ladder). Unauthenticated commands (picc/diagnose/status) are free;
 authenticating with wrong keys consumes budget — avoid.
 
-### KNOWN GOOD STATE (2026-08-25 — current)
+### KNOWN GOOD STATE (2026-08-25)
 
 Firmware: bolty-esp32 main @ `beaf99a` (heartbeat carries `nfc=ok|DOWN`).
 Stick on the bolty serial console, served by the `bolty-console` daemon
