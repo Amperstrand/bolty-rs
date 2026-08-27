@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use enumset::enum_set;
 use esp_idf_svc::bt::ble::gap::{AdvConfiguration, BleGapEvent, EspBleGap};
 use esp_idf_svc::bt::ble::gatt::server::{ConnectionId, EspGatts, GattsEvent, TransferId};
 use esp_idf_svc::bt::ble::gatt::{
@@ -17,9 +18,11 @@ const APP_ID: u16 = 0;
 const MAX_CONNECTIONS: usize = 2;
 const CMD_QUEUE_SIZE: usize = 8;
 
-const SERVICE_UUID: u128 = 0x_b0lt_0000_0000_1000_8000_00805f9b34fb;
-const CMD_CHAR_UUID: u128 = 0x_b0lt_0001_0000_1000_8000_00805f9b34fb;
-const RSP_CHAR_UUID: u128 = 0x_b0lt_0002_0000_1000_8000_00805f9b34fb;
+// Base UUID "b017..." — leetspeak "bolt" ('1'=l, '7'=t); the previous
+// `b0lt` spelling was not valid hex and never compiled.
+const SERVICE_UUID: u128 = 0x_b017_0000_0000_1000_8000_00805f9b34fb;
+const CMD_CHAR_UUID: u128 = 0x_b017_0001_0000_1000_8000_00805f9b34fb;
+const RSP_CHAR_UUID: u128 = 0x_b017_0002_0000_1000_8000_00805f9b34fb;
 
 type ExBtDriver = BtDriver<'static, Ble>;
 type ExEspBleGap = Arc<EspBleGap<'static, Ble, Arc<ExBtDriver>>>;

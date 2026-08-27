@@ -14,3 +14,16 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 CONFIG_ESP_HTTPS_SERVER_ENABLE=y
+# BLE groundwork — DO NOT UNCOMMENT until the esp-idf-svc/ESP-IDF matrix
+# unblocks (esp-idf-svc 0.53.0 release; see [patch.crates-io] in the
+# workspace Cargo.toml). Enabling Bluedroid compiles the esp-idf-svc bt
+# module, which needs ESP-IDF >= 5.3 symbols (esp_ble_conn_params_t,
+# esp_ble_gatt_creat_conn_params_t) absent from the pinned v5.2.3 —
+# breaking EVERY build config, not just the `ble` feature.
+# CONFIG_BT_ENABLED=y
+# CONFIG_BT_BLUEDROID_ENABLED=y
+# CONFIG_BT_CLASSIC_ENABLED=n
+# CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+# CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+# CONFIG_BT_BTC_TASK_STACK_SIZE=15000
+# CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY=y

@@ -40,10 +40,10 @@ jobs:
           . $HOME/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5atom"
-      - name: Build firmware (board-m5stick, ble)
-        run: |
-          . $HOME/export-esp.sh
-          cd apps/bolty-esp32
-          cargo +esp build --release --features "board-m5stick,ble"
+      # The `board-m5stick,ble` config is deliberately absent: it cannot
+      # compile on the pinned ESP-IDF 5.2.x matrix (the esp-idf-svc fork's
+      # bt module needs IDF >= 5.3 symbols). Unblock with esp-idf-svc 0.53.0
+      # + the matching esp-idf-sys/hal bump, then uncomment the BT block in
+      # apps/bolty-esp32/sdkconfig.defaults (see that comment for details).
 
   # Host-side spec-quote drift check lives in spec-quote-drift.yml.
