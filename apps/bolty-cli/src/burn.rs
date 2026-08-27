@@ -1,5 +1,5 @@
 use bolty_core::constants::FACTORY_KEY;
-use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
+use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::provenance::KeyProvenance;
 use bolty_core::secret::{AesKey, CardKeys};
 use bolty_core::uid::CardUid;
@@ -28,6 +28,69 @@ where
     let uid_fixed = bolty_ntag::preflight(transport)
         .await
         .map_err(map_ntag_error)?;
+
+    let keys = BoltcardDeterministicDeriver::derive_keys(
+        issuer_key,
+        CardUid::new(uid_fixed),
+        version as u32,
+    );
+    let card_keys = CardKeys {
+        k0: keys.k0.clone(),
+        k1: keys.k1.clone(),
+        k2: keys.k2.clone(),
+        k3: keys.k3.clone(),
+        k4: keys.k4.clone(),
+    };
+
+    burn_card(
+        transport,
+        &card_keys,
+        url,
+        BurnOptions {
+            version,
+            verbose,
+            dry_run,
+            confirm_uid,
+            force,
+            provenance: KeyProvenance::DerivedIssuer { version },
+        },
+    )
+    .await
+}
+
+/// Flags shared by all burn entry points (derived, proxy-issued, raw).
+pub struct BurnOptions<'a> {
+    pub version: u8,
+    pub verbose: bool,
+    pub dry_run: bool,
+    pub confirm_uid: Option<&'a [u8; 7]>,
+    pub force: bool,
+    pub provenance: KeyProvenance,
+}
+
+/// Burn `keys` to the card. Shared by issuer-derived burns and proxy-issued
+/// (one-time-code) provisioning; the caller decides key provenance.
+pub async fn burn_card<T: Transport>(
+    transport: &mut T,
+    keys: &CardKeys,
+    url: &str,
+    opts: BurnOptions<'_>,
+) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    let BurnOptions {
+        version,
+        verbose,
+        dry_run,
+        confirm_uid,
+        force,
+        provenance,
+    } = opts;
+
+    let uid_fixed = bolty_ntag::preflight(transport)
+        .await
+        .map_err(map_ntag_error)?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     if let Some(expected) = confirm_uid {
@@ -41,13 +104,13 @@ where
         println!("  ✓ UID confirmed");
     }
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(
-        issuer_key,
-        CardUid::new(uid_fixed),
-        version as u32,
-    );
     if verbose || dry_run {
-        print_derived_keys(&keys, version);
+        println!("Keys ({}):", provenance.to_audit_tag());
+        println!("  K0:      {}", crate::to_hex(keys.k0.as_bytes()));
+        println!("  K1:      {}", crate::to_hex(keys.k1.as_bytes()));
+        println!("  K2:      {}", crate::to_hex(keys.k2.as_bytes()));
+        println!("  K3:      {}", crate::to_hex(keys.k3.as_bytes()));
+        println!("  K4:      {}", crate::to_hex(keys.k4.as_bytes()));
     }
 
     if dry_run {
@@ -123,15 +186,15 @@ where
         if factory_like {
             println!("  Card is BLANK (factory keys).");
         } else {
-            println!("  Card is PROVISIONED — will attempt re-burn with derived K0.");
+            println!("  Card is PROVISIONED — will attempt re-burn with provided K0.");
         }
     }
 
     // --- Probe auth: determine current_key and previous_keys ---
-    // Try factory K0 first (fresh card), then derived K0 (re-burn).
+    // Try factory K0 first (fresh card), then the caller-provided K0 (re-burn).
     // This probe is separate from the library's internal auth — the card supports re-auth.
     println!("[1/7] Authenticating...");
-    let (current_key, previous_keys, provenance): (AesKey, CardKeys, KeyProvenance) = {
+    let (current_key, previous_keys): (AesKey, CardKeys) = {
         let factory_works = {
             let mut retry = AuthRetry::new();
             loop {
@@ -170,12 +233,11 @@ where
                     k3: AesKey::new(FACTORY_KEY),
                     k4: AesKey::new(FACTORY_KEY),
                 },
-                KeyProvenance::FactoryDefault,
             )
         } else {
-            println!("  Factory K0 rejected, trying derived K0...");
+            println!("  Factory K0 rejected, trying provided K0...");
             let mut retry = AuthRetry::new();
-            let derived_works = loop {
+            let provided_works = loop {
                 let rnd_a = gen_rnd_a()?;
                 match Session::default()
                     .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
@@ -195,27 +257,16 @@ where
                 }
             };
 
-            if derived_works {
-                println!("  Authenticated with derived K0 (re-burn)");
+            if provided_works {
+                println!("  Authenticated with provided K0 (re-burn)");
                 audit::log_event_with_provenance(
-                    &format!("burn: authenticated with derived K0 v{version}"),
-                    Some(KeyProvenance::DerivedIssuer { version }),
+                    "burn: authenticated with provided K0 (re-burn)",
+                    Some(provenance),
                 );
-                let derived_keyset = CardKeys {
-                    k0: keys.k0.clone(),
-                    k1: keys.k1.clone(),
-                    k2: keys.k2.clone(),
-                    k3: keys.k3.clone(),
-                    k4: keys.k4.clone(),
-                };
-                (
-                    keys.k0.clone(),
-                    derived_keyset,
-                    KeyProvenance::DerivedIssuer { version },
-                )
+                (keys.k0.clone(), keys.clone())
             } else {
                 anyhow::bail!(
-                    "authentication failed with both factory and derived K0 — \
+                    "authentication failed with both factory and provided K0 — \
                      card may use a different issuer key"
                 );
             }
@@ -223,13 +274,7 @@ where
     };
 
     // --- Delegate to library: it handles NDEF write, SDM config, key install, verification ---
-    let new_keys = CardKeys {
-        k0: keys.k0.clone(),
-        k1: keys.k1.clone(),
-        k2: keys.k2.clone(),
-        k3: keys.k3.clone(),
-        k4: keys.k4.clone(),
-    };
+    let new_keys = keys.clone();
 
     let params = bolty_ntag::BurnParams {
         lnurl: url,
@@ -254,21 +299,14 @@ where
     }
 
     audit::log_event_with_provenance(
-        &format!("burn: SUCCESS — K0 v{version}, K1-K4 installed"),
+        &format!(
+            "burn: SUCCESS — K1-K4 + K0 installed ({})",
+            provenance.to_audit_tag()
+        ),
         Some(provenance),
     );
     println!("\n✅ Card burned and verified successfully!");
     Ok(())
-}
-
-fn print_derived_keys(keys: &CardKeySet, version: u8) {
-    println!("Derived keys (version {version}):");
-    println!("  cardKey: {}", crate::to_hex(keys.card_key.as_bytes()));
-    println!("  K0:      {}", crate::to_hex(keys.k0.as_bytes()));
-    println!("  K1:      {}", crate::to_hex(keys.k1.as_bytes()));
-    println!("  K2:      {}", crate::to_hex(keys.k2.as_bytes()));
-    println!("  K3:      {}", crate::to_hex(keys.k3.as_bytes()));
-    println!("  K4:      {}", crate::to_hex(keys.k4.as_bytes()));
 }
 
 #[cfg(test)]

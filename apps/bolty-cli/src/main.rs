@@ -10,6 +10,7 @@ mod keyver;
 #[path = "mock_transport.rs"]
 mod mock_transport;
 mod picc;
+mod provision;
 mod scan_keys;
 mod testck;
 mod transport;
@@ -83,6 +84,35 @@ enum Cli {
         verbose: bool,
 
         /// Preview planned actions without sending any APDUs
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Require this UID (14 hex chars) before proceeding — safety against wrong card
+        #[arg(long)]
+        confirm_uid: Option<String>,
+
+        /// Bypass safety checks (state guard, URL validation)
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Provision card with proxy-issued keys (one-time-code flow):
+    /// fetches k0-k4 + lnurlw base from a bolt-card proxy, then burns.
+    Provision {
+        /// Proxy base URL, e.g. https://proxy.example.com
+        #[arg(long)]
+        proxy: String,
+
+        /// One-time code issued by the proxy (createboltcard)
+        #[arg(long)]
+        code: String,
+
+        /// Print the fetched key material
+        #[arg(long)]
+        verbose: bool,
+
+        /// Preview the plan without touching a card (the one-time code is
+        /// still consumed by the fetch)
         #[arg(long)]
         dry_run: bool,
 
@@ -302,6 +332,45 @@ async fn run() -> anyhow::Result<()> {
                 version,
                 verbose,
                 dry_run,
+                confirm_uid.as_ref(),
+                force,
+            )
+            .await?;
+        }
+
+        Cli::Provision {
+            proxy,
+            code,
+            verbose,
+            dry_run,
+            confirm_uid,
+            force,
+        } => {
+            let confirm_uid = confirm_uid.map(|s| parse_hex_7(&s)).transpose()?;
+            let provisioned = provision::fetch_provision_keys(&proxy, &code)?;
+            println!("Provisioning response accepted (one-time code consumed)");
+
+            if dry_run {
+                println!("\n=== DRY RUN — no card contact ===");
+                println!("URL:  {}", provisioned.url);
+                println!("K0:   {}", to_hex(provisioned.keys.k0.as_bytes()));
+                println!("K1:   {}", to_hex(provisioned.keys.k1.as_bytes()));
+                println!("K2:   {}", to_hex(provisioned.keys.k2.as_bytes()));
+                println!("K3:   {}", to_hex(provisioned.keys.k3.as_bytes()));
+                println!("K4:   {}", to_hex(provisioned.keys.k4.as_bytes()));
+                if provisioned.uid_privacy {
+                    println!("  ⚠ uid_privacy=true requested — not yet applied by this burner");
+                }
+                println!("\nNo APDUs sent. No card needed.");
+                let _ = verbose;
+                return Ok(());
+            }
+
+            let mut transport = connect_transport()?;
+            provision::burn_provisioned(
+                &mut transport,
+                &provisioned,
+                verbose,
                 confirm_uid.as_ref(),
                 force,
             )

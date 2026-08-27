@@ -4,6 +4,7 @@ pub enum KeyProvenance {
     FactoryDefault,
     DerivedIssuer { version: u8 },
     StaticTestKey,
+    ProxyIssued,
     UnknownExternal,
 }
 
@@ -14,6 +15,7 @@ impl KeyProvenance {
             KeyProvenance::FactoryDefault => "FactoryDefault".to_string(),
             KeyProvenance::DerivedIssuer { version } => format!("DerivedIssuer({version})"),
             KeyProvenance::StaticTestKey => "StaticTestKey".to_string(),
+            KeyProvenance::ProxyIssued => "ProxyIssued".to_string(),
             KeyProvenance::UnknownExternal => "UnknownExternal".to_string(),
         }
     }
@@ -24,6 +26,7 @@ impl KeyProvenance {
             KeyProvenance::FactoryDefault => "FactoryDefault",
             KeyProvenance::DerivedIssuer { .. } => "DerivedIssuer",
             KeyProvenance::StaticTestKey => "StaticTestKey",
+            KeyProvenance::ProxyIssued => "ProxyIssued",
             KeyProvenance::UnknownExternal => "UnknownExternal",
         }
     }
@@ -56,6 +59,7 @@ mod tests {
             "DerivedIssuer(200)"
         );
         assert_eq!(KeyProvenance::StaticTestKey.to_audit_tag(), "StaticTestKey");
+        assert_eq!(KeyProvenance::ProxyIssued.to_audit_tag(), "ProxyIssued");
         assert_eq!(
             KeyProvenance::UnknownExternal.to_audit_tag(),
             "UnknownExternal"
@@ -77,6 +81,7 @@ mod tests {
             "DerivedIssuer"
         );
         assert_eq!(KeyProvenance::StaticTestKey.as_json_name(), "StaticTestKey");
+        assert_eq!(KeyProvenance::ProxyIssued.as_json_name(), "ProxyIssued");
         assert_eq!(
             KeyProvenance::UnknownExternal.as_json_name(),
             "UnknownExternal"
@@ -95,6 +100,7 @@ mod tests {
             Some(200)
         );
         assert_eq!(KeyProvenance::StaticTestKey.json_version(), None);
+        assert_eq!(KeyProvenance::ProxyIssued.json_version(), None);
         assert_eq!(KeyProvenance::UnknownExternal.json_version(), None);
     }
 }
