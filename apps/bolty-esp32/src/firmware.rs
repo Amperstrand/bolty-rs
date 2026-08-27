@@ -17,7 +17,6 @@ use log::info;
 
 use core::fmt::Write as _;
 
-#[cfg(feature = "board-m5stick")]
 use crate::button::{self, ButtonEvent, ButtonHandler};
 #[cfg(feature = "board-m5stick")]
 use crate::commands::ButtonMode;
@@ -320,6 +319,9 @@ pub fn main() {
             }
         }
     };
+
+    #[cfg(not(feature = "board-m5stick"))]
+    let mut buttons: Option<ButtonHandler> = None;
 
     #[cfg(feature = "board-m5stick")]
     {

@@ -44,6 +44,12 @@ mod display;
 #[cfg(all(target_arch = "xtensa", feature = "board-m5stick"))]
 mod button;
 
+// Boards without physical buttons (M5Atom) get the no-op module so shared
+// code (console, hwtest, main loop) compiles without per-site cfgs.
+#[cfg(not(all(target_arch = "xtensa", feature = "board-m5stick")))]
+#[path = "button_stub.rs"]
+mod button;
+
 #[cfg(all(
     target_arch = "xtensa",
     feature = "board-m5atom",
