@@ -195,42 +195,55 @@ cd /home/ubuntu/src/bolty-rs
 
 ## Hardware Test Results (2026-06-15)
 
-### KNOWN GOOD STATE (2026-08-27 — current)
+### KNOWN GOOD STATE (2026-08-27 — current, updated post-OTA)
 
-Firmware: HEAD `e2d9252` + REST result-reporting fix (uncommitted rest.rs at
-time of stamping — see commits) + cmac-crate swap. Verified this session:
+Firmware: HEAD `5011a97` — all session work committed (the earlier partial
+stamp referenced uncommitted rest.rs; that landed as `0706cf2`). Verified:
 
-- **Full burn cycle on HEAD: ALL PASS** (`tools/hil/burn_cycle.py`): burn
+- **Full burn cycle ALL PASS, twice** (`tools/hil/burn_cycle.py`): burn
   (deterministic issuer) → `inspect provisioned` → `picc sdm=ok uid_match=true`
   → **live worker tap HTTP 200** (boltcardpoc.psbt.me) → wipe → `state=blank`.
-  This hardware-proves the `cmac` crate swap on the real derivation path
-  (fixtures said bit-identical; hardware agrees).
-- **REST keyver/inspect now report operation results** (previously always
-  200/ok:true even on auth failure — matched to diagnose's pattern).
-  Positive paths hardware-verified; negative path verified by pattern parity
-  with diagnose + job API error reporting.
-- REST full matrix re-verified on this build: TLS :81, 401/200 auth, JSON
-  escaping (hostile lnurl with `\"`/`\\` round-trips valid), 400/429 paths.
-- Spec-quote CI: 22 greatspectations quotes green; `esp32-check.yml` is now a
-  REAL xtensa build (was an echo-only stub) — note: not yet exercised on
-  GitHub runners at stamping time.
-- Host suite 20/20, fmt/clippy clean, firmware builds with **zero warnings**.
+  Hardware-proves the `cmac` crate swap on the real derivation path; the
+  final restored binary got its own second full cycle.
+- **OTA update flow VERIFIED end-to-end** (first time on hardware):
+  `board-m5stick,wifi,rest,ota` build + flash-time `--partition-table
+  partitions.csv`, `provision-ota-key`, HTTP-served signed image → 1,266,864
+  bytes streamed over WiFi → SHA-256 → **Ed25519 signature VERIFIED —
+  committed** → reboot → booted **ota_0 @ 0x200000** (boot-log proof, otadata
+  persistence included). Device afterwards restored to the standard default
+  partition table.
+- **REST keyver/inspect report operation results** (previously always-200;
+  commit `0706cf2`).
+- REST full matrix re-verified: TLS :81, 401/200 auth, JSON escaping,
+  400/429 paths.
+- Spec-quote CI: 22 greatspectations quotes green; `esp32-check.yml` is a
+  REAL xtensa build (first GitHub-runner run still pending at stamping).
+- Host suite 20/20; firmware builds clean (ldproxy stderr warning is benign).
 
-Device state at stamping: **mid-OTA-test** — flashed with the
-`board-m5stick,wifi,rest,ota` build + custom partition table
-(`partitions.csv`: factory@0x20000, otadata, ota_0@0x200000). OTA image +
-Ed25519 pubkey/sig prepared and saved. Standard-layout restore pending after
-the OTA test (see `~/fw-backup/`).
+**BLE: blocked upstream, not a local bug** (commit `5011a97`). Two stacked
+causes: (1) `[package.metadata.esp-idf-sys.sdkconfig]` BT table silently
+ignored by esp-idf-sys 0.37.2 (0 CONFIG_BT lines in gen-sdkconfig.defaults) —
+removed; (2) the esp-idf-svc fork's bt module needs ESP-IDF ≥5.3 symbols
+(`esp_ble_conn_params_t`, `esp_ble_gatt_creat_conn_params_t`) absent from the
+pinned v5.2.3. WARNING: enabling Bluedroid in sdkconfig.defaults compiles the
+broken bt module for EVERY build config — wifi/rest/ota all stop compiling.
+Unblock = esp-idf-svc 0.53.0 + matching esp-idf-sys/hal bump; BT block is a
+commented reference in sdkconfig.defaults; ble config dropped from
+esp32-check.yml until then.
+
+Device state at stamping: **standard layout restored** (default partition
+table, factory @ 0x10000), final build flashed and burn-cycle-verified,
+console daemon running, card `04C474FA967380` returned to blank lab stock.
 
 Artifacts:
-- Burn-cycle-verified binary (features `board-m5stick,wifi,rest`):
-  `~/fw-backup/bolty-esp32-knowngood-restfix-20260827.bin`
-  (sha256 `4a2fae08…`)
+- Final verified binary: `~/fw-backup/bolty-esp32-knowngood-20260827-final.bin`
+  (sha256 `c1dc3751…243e2`, features `board-m5stick,wifi,rest`)
+- Same-day earlier binary: `~/fw-backup/bolty-esp32-knowngood-restfix-20260827.bin`
+  (`4a2fae08…`; differs only by embedded build time + dead-metadata removal)
 - OTA test materials: `~/fw-backup/bolty-esp32-ota-image-20260827.bin` +
   `ota_pub.hex` / `ota_sig.hex` (Ed25519 over SHA-256 of the image)
 
-Still not hardware-tested: BLE (item queued), OTA update flow (in progress),
-physical buttons.
+Still not hardware-tested: BLE (blocked upstream, see above), physical buttons.
 
 ### KNOWN GOOD STATE (2026-08-24)
 

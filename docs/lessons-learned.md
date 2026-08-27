@@ -378,3 +378,36 @@ rest.rs at time of stamping" to stay honest.
    commit that exists.
 2. If verification must precede the commit, record the dirty state in the
    stamp (files + shas), never imply a clean provenance.
+
+---
+
+## B18 — A never-compiled feature has two layers of causes; un-gating one can break every build
+**Date:** 2026-08-27 · **Found in:** ble feature bring-up (commits 5011a97)
+**Class:** dependency matrix / build configuration
+
+The `ble` feature had never compiled, for two stacked reasons invisible from
+bolty's own tree:
+
+1. The `[package.metadata.esp-idf-sys.sdkconfig]` BT table was **silently
+   ignored** by esp-idf-sys 0.37.2 — the generated gen-sdkconfig.defaults
+   carried 0 CONFIG_BT lines, so `esp_idf_svc::bt` stayed cfg-gated off and
+   every BLE error surfaced as "module not found" rather than "BT not built".
+2. With BT forced on via sdkconfig.defaults, the esp-idf-svc fork's bt module
+   itself fails: it needs ESP-IDF ≥5.3 symbols (`esp_ble_conn_params_t`,
+   `esp_ble_gatt_creat_conn_params_t`) absent from the pinned v5.2.3. And
+   because Bluedroid un-gates the bt module for EVERY configuration, the
+   wifi/rest/ota builds broke too — not just the ble feature that needed it.
+
+**Rules:**
+1. A cargo feature that never compiled anywhere is a CI gap first and a code
+   bug second — the CI matrix must build every config the repo ships.
+2. Global sdkconfig flags un-gate dependency code for ALL build configs.
+   Before committing such a flag, build every configuration, not just the
+   feature that motivated it.
+3. Dependency-matrix mismatches (svc fork ↔ IDF version) are diagnosed by
+   grepping the dependency's source for the missing symbols against the
+   vendored SDK headers — not by reading app code.
+4. When a feature is blocked upstream, commit the groundwork (commented
+   config block, corrected constants, CI placeholder) with the unblock
+   conditions written next to it — the next session starts at the blocker,
+   not at zero.
