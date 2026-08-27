@@ -1,5 +1,31 @@
 # AGENTS.md — bolty-rs Project Knowledge Base
 
+## Spec Conformance (greatspectations)
+
+Spec-relevant code carries verbatim boltcard-spec quotes as `//` comments with
+markers `BOLT_SPEC:` / `BOLT_DET:` / `BOLT_PRIV:` (sources: boltcard/boltcard
+`docs/SPEC.md`, `docs/DETERMINISTIC.md`, `docs/CARD_PRIVACY.md`). CI
+(`spec-quote-drift.yml`) verifies every quote against a fresh spec clone on
+push/PR + weekly cron. Run locally:
+
+```bash
+git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+python -m greatspectations check --config specquotes.toml \
+  --comment-start '// ' --comment-continue '//' -k \
+  $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs')
+```
+
+Rules learned the hard way (2026-08-25):
+- Consecutive `//` comment lines join into ONE multi-line quote matched
+  against contiguous spec text — separate quotes from prose with a blank line.
+- Quotes must be verbatim: backticks, markdown links, trailing table pipes,
+  even upstream typos ("specfying" is pinned deliberately).
+- Directories are not accepted as file args — enumerate `.rs` files.
+- Cross-implementation audits use plain `Audited <date> against <impl>` comments
+  at the audited site (e.g. `picc_verify_c` vs Go boltcard `check_cmac`).
+- NXP PDF-layer facts (datasheet, AN12196) have no canonical text source and
+  are NOT quote-covered — that layer is guarded by byte-exact fixture vectors.
+
 ## Card Recovery: UID 043365FA967380
 
 ### Status: RECOVERABLE (use "keep trying" — rapid AuthFirst in same connection)
