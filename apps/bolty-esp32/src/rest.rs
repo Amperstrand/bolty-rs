@@ -778,7 +778,7 @@ fn workflow_result_json(result: &WorkflowResult) -> String<128> {
         WorkflowResult::WipeRefused => r##""wipe_refused""##,
         WorkflowResult::Error(msg) => {
             let mut prefix = String::<128>::new();
-            prefix.push_str(r##""error: "##);
+            let _ = prefix.push_str(r##""error: "##);
             let _ = push_escaped_json(&mut prefix, msg.as_str());
             let _ = prefix.push('"');
             return prefix;
@@ -810,13 +810,23 @@ where
         result
     });
 
-    let status = service.lock().map(|s| s.get_status()).unwrap_or_default();
-    let body = format!(
-        "{{\"ok\":true,\"nfc_ready\":{},\"uid\":\"{}\"}}",
-        status.nfc_ready,
-        uid_hex_string(&status)
-    );
-    respond_json(request, 200, body.as_str())
+    match result {
+        Ok(WorkflowResult::Success) => {
+            let status = service.lock().map(|s| s.get_status()).unwrap_or_default();
+            let body = format!(
+                "{{\"ok\":true,\"nfc_ready\":{},\"uid\":\"{}\"}}",
+                status.nfc_ready,
+                uid_hex_string(&status)
+            );
+            respond_json(request, 200, body.as_str())
+        }
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
+        Err(message) => respond_json(request, 500, json_err(message).as_str()),
+    }
 }
 
 fn handle_ndef<S>(
@@ -922,7 +932,16 @@ where
         uid_hex_string(&status),
         lnurl
     );
-    respond_json(request, 200, body.as_str())
+
+    match result {
+        Ok(WorkflowResult::Success) => respond_json(request, 200, body.as_str()),
+        Ok(other) => respond_json(
+            request,
+            200,
+            json_err(workflow_error_message(&other)).as_str(),
+        ),
+        Err(message) => respond_json(request, 500, json_err(message).as_str()),
+    }
 }
 
 fn uid_hex_string(status: &ServiceStatus) -> String<32> {
