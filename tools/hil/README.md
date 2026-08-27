@@ -54,6 +54,24 @@ Verified cycle (2026-08-25): burn → `sdm=ok uid_match=true` → live worker
 `HTTP 200 withdrawRequest` → wipe → `state=blank`, zero port wedges across
 the whole session.
 
+## Proxy healthcheck
+
+`proxy.psbt.me` (the bolt-card worker the HIL tap depends on) intermittently
+returns HTTP 530 — Cloudflare error 1033, tunnel down (observed 2026-08-26/27;
+caught live again 2026-08-27 18:25). While down, every card tap silently
+fails. Install the 5-minute monitor on the lab box:
+
+```bash
+sudo install -m 755 tools/hil/proxy_healthcheck.sh /usr/local/bin/bolty-proxy-healthcheck
+sudo install -m 644 tools/hil/proxy-healthcheck.service tools/hil/proxy-healthcheck.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now proxy-healthcheck.timer
+journalctl -t bolty-proxy-health -f   # state transitions
+```
+
+Healthy = any non-52x/530/000 response (the app 4xx-ing a bare `/ln` proves
+the origin is alive); DOWN is logged on every transition and on each check
+that stays down.
+
 ## Role switching
 
 The same stick can also run the esp32-ccid reader firmware (pcscd role).

@@ -1,0 +1,6 @@
+[Unit]
+Description=bolty psbt.me proxy healthcheck (tunnel-down detection)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bolty-proxy-healthcheck

@@ -32,12 +32,10 @@ jobs:
           ldproxy: true # required for std targets (linker)
       - name: Build firmware (board-m5stick, wifi+rest+ota)
         run: |
-          . $HOME/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5stick,wifi,rest,ota"
       - name: Build firmware (board-m5atom)
         run: |
-          . $HOME/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5atom"
       # The `board-m5stick,ble` config is deliberately absent: it cannot
