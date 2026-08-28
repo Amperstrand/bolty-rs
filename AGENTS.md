@@ -26,6 +26,29 @@ Rules learned the hard way (2026-08-25):
 - NXP PDF-layer facts (datasheet, AN12196) have no canonical text source and
   are NOT quote-covered — that layer is guarded by byte-exact fixture vectors.
 
+## Lab & Service Topology (documented 2026-08-27)
+
+Two lab machines + Cloudflare edge. **Use mDNS names, not IPs** (DHCP drift:
+this box was .218 in early docs, .221 now).
+
+| Host | What runs there | Why |
+|---|---|---|
+| `ai-legion-small` (Lenovo, GNOME, WiFi, mDNS `ai-legion-small.local`) | bolty-rs dev + esp toolchain; M5Stick HIL rig (`/dev/ttyUSB0`) + `bolty-console` daemon; `proxy-healthcheck` timer; parallel AI-agent sessions; rotating Docker LN/regtest lab (CLN nodes, swapserver experiments) | the working machine; rig colocated with the human |
+| `ai-legion` (RTX 3080 box, `192.168.13.208`, mDNS `ai-legion.local`, SSH-only from outside) | archival Bitcoin full node (coldcardforensic project). **Currently hosts NO visible boltcard/proxy services** (ports 9000/9001/5432 closed at 2026-08-27 audit) — whether the psbt.me proxy stack ever ran here is unconfirmed | heavy always-on-ish compute |
+| Cloudflare edge | `boltcardpoc.psbt.me` = edge-native HIL tap worker (Worker-style headers; routes deterministic-key anonymous taps — B12); DNS/proxying for `*.psbt.me` | edge = immune to lab-host outages |
+| **UNKNOWN — the gap** | `proxy.psbt.me` origin: Go boltcard + PostgreSQL + LND + `cloudflared` tunnel. DOWN since ≤2026-08-27 18:25 (530/err 1033, tunnel disconnected). Not on ai-legion-small (verified), not listening on ai-legion (verified) | undocumented host = bus factor 1 |
+
+Diagnosis runbook for proxy outages:
+1. `journalctl -t bolty-proxy-health -f` (ai-legion-small) — current state
+2. Cloudflare Zero Trust → Tunnels — connector host + last-seen (identifies
+   the origin machine and when it dropped)
+3. On the origin: `systemctl status cloudflared` / `docker ps` — restart
+   policy must be `always`
+4. While there: confirm internal API (:9001, unauthenticated
+   `createboltcard`/`wipeboltcard`) is NOT reachable from the internet
+5. boltcardpoc (edge) is independent — HIL taps stay green during proxy
+   outages by design
+
 ## Card Recovery: UID 043365FA967380
 
 ### Status: RECOVERABLE (use "keep trying" — rapid AuthFirst in same connection)
