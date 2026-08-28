@@ -218,7 +218,43 @@ cd /home/ubuntu/src/bolty-rs
 
 ## Hardware Test Results (2026-06-15)
 
-### KNOWN GOOD STATE (2026-08-27 — current, updated post-OTA)
+### KNOWN GOOD STATE (2026-08-28 — current)
+
+Firmware: HEAD `51e8a50` (keyver fix), features `board-m5stick,wifi,rest`,
+sha256 `06fd7912…` (workspace target; restamp on rebuild). Extensive battery
+run DURING the proxy.psbt.me outage (which blocked nothing below):
+
+- **Outage immunity proven**: full burn cycle ALL PASS with live worker tap
+  HTTP 200 while proxy.psbt.me returned 530 simultaneously — HIL depends on
+  the edge worker (boltcardpoc), not the proxy.
+- **REST key lifecycle, both directions**: provisioned card + no staged keys →
+  `/api/inspect` AND `/api/keyver` honestly return `authentication failed`
+  (closed the always-200 caveat); correct keys staged via `POST /api/keys` →
+  ok + live SDM confirm (`sdm=ok keys_confirmed=true`, ctr=155).
+- **keyver was a silent no-op** (reported success without touching the card)
+  — found by the negative test, fixed (`51e8a50`), hardware-verified.
+- **Percard mode ALL PASS** (`burn_cycle.py --percard`, April k0/k1/k2 +
+  synthetic k3/k4): the edge worker routes per-card taps via the K1
+  fallback; the psbt.me global decrypt key is shared with the worker.
+- **OTA NEGATIVE attack**: wrong-key Ed25519 signature → full 1.27 MB
+  download → `signature verification FAILED` → update Dropped (not
+  committed) → device unaffected on factory slot. OTA trust chain holds.
+- **Endurance**: 6 full burn→tap→wipe lifecycles in one day (2× standard,
+  1× skip-wipe, 1× percard, 2× endurance), zero failures, zero port wedges.
+- **hwtest ×2**: non-button hardware ALL OK (i2c 0x28, nfc, display,
+  battery 4100 mV USB); button software subsystem VERIFIED (mode get/set,
+  legacy/simple switching, NVS persistence across reboot); interactive
+  mechanism works (honest timeout FAILs, clean END). Physical button
+  presses + card-removal still need a human at the rig.
+
+Device state at stamping: standard layout (factory @ 0x10000), keyver-fix
+build, card `04C474FA967380` blank lab stock, button mode simple, console
+daemon up, REST unprovisioned this boot (runtime creds).
+
+Still not hardware-tested: BLE (blocked upstream), physical button presses
+(user action — run `hwtest` and press front then side button on prompt).
+
+### KNOWN GOOD STATE (2026-08-27)
 
 Firmware: HEAD `5011a97` — all session work committed (the earlier partial
 stamp referenced uncommitted rest.rs; that landed as `0706cf2`). Verified:
