@@ -28,11 +28,18 @@ What it watches and what it does:
      passive-monitor degrade (keep observing, timeline rows only).
 
   3. CCID-WINDOW MONITOR (readers() poll 60s): GemPCTwin gone >= 5min ->
-     ``sudo systemctl restart pcscd.socket pcscd.service`` (<= 3 times, the
-     proven switch_role.sh:66 pattern), then a degraded row. WINDOW2 under
-     Mode B keeps the bolty playbook instead (the bolty role persists), so we
-     never issue pointless pcscd restarts against a stick that is not a
-     reader (pcscd probing the port is the B11 wedge class — issues.md).
+     request a pcscd restart via the MARKER PROTOCOL (round-2 amendment): as
+     an independent process the watchdog cannot hold overnight.py's global
+     pcscd-maintenance lock, so while the scheduler is ALIVE it writes
+     ``PCSCD_RESTART_REQUEST`` (the scheduler restarts pcscd.socket/service
+     UNDER the lock, switch_role.sh:66 pattern, then deletes the marker;
+     watchdog polls removal, 10-min timeout -> degraded row). Only a
+     CONFIRMED-DEAD scheduler (pid gone or heartbeat stale — its lanes are
+     dead too) permits a direct restart. Cap 3 restarts total across both
+     modes, then degraded rows. WINDOW2 under Mode B keeps the bolty playbook
+     instead (the bolty role persists), so we never issue pointless pcscd
+     restarts against a stick that is not a reader (pcscd probing the port is
+     the B11 wedge class — issues.md).
 
   4. EVENT JOURNAL: every event lands in ``watchdog.jsonl`` (append-only
      sidecar, fsync per line) AND best-effort in the shared ``results.json``
@@ -99,9 +106,10 @@ DEFAULT_CFG = {
     "daemon_settle_s": 6.0,       # switch_role.sh:88 settle after start
     "ping_verify_tries": 3,
     "readers_poll_s": 60.0,
-    "reader_gone_s": 300.0,       # GemPCTwin absent >= 5min -> restart pcscd
-    "pcscd_restart_cap": 3,       # then degraded row
-    "pcscd_settle_s": 10.0,       # switch_role.sh:66 settle after restart
+    "reader_gone_s": 300.0,        # GemPCTwin absent >= 5min -> restart pcscd
+    "pcscd_restart_cap": 3,        # then degraded row (shared across modes)
+    "pcscd_settle_s": 10.0,        # switch_role.sh:66 settle after restart
+    "marker_timeout_s": 600.0,     # PCSCD_RESTART_REQUEST unhandled -> degrade
     "pcscd_units": ("pcscd.socket", "pcscd.service"),
 }
 
@@ -558,24 +566,50 @@ class ConsoleRecovery:
 
 
 class ReaderMonitor:
-    """pcscd-side monitor: readers() poll; GemPCTwin gone >= 5min ->
-    pcscd restart (<= 3, switch_role.sh:66 pattern), then degraded rows."""
+    """pcscd-side monitor: readers() poll; GemPCTwin gone >= 5min -> request a
+    pcscd restart. Round-2 amendment: as an INDEPENDENT process the watchdog
+    cannot hold overnight.py's in-process global pcscd-maintenance lock, so
+    while the scheduler is ALIVE it never restarts pcscd itself (that would
+    kill every reader context without pausing lanes). Instead it writes
+    PCSCD_RESTART_REQUEST; the scheduler's monitor executes the restart UNDER
+    the lock and deletes the marker. The watchdog polls for the marker's
+    removal (10-min timeout -> degraded row). Only a CONFIRMED-DEAD scheduler
+    (pid gone or heartbeat stale — lanes are dead too) permits a direct
+    `systemctl restart pcscd`. One restart counter, cap 3 across both modes,
+    then degraded rows."""
 
-    def __init__(self, sysctl, clock, journal, cfg: dict):
+    def __init__(self, sysctl, clock, journal, cfg: dict, *, hb_path,
+                 scheduler_pid, probe):
         self.sysctl, self.clock, self.journal = sysctl, clock, journal
         self.poll_s = float(cfg["readers_poll_s"])
         self.gone_s = float(cfg["reader_gone_s"])
         self.cap = int(cfg["pcscd_restart_cap"])
         self.settle_s = float(cfg["pcscd_settle_s"])
         self.units = tuple(cfg["pcscd_units"])
+        self.marker_timeout_s = float(cfg["marker_timeout_s"])
+        self.hb_path, self.pid, self.probe = Path(hb_path), scheduler_pid, probe
+        self.fresh_s = float(cfg["hb_fresh_s"])
+        self.marker_path = Path(journal.dir) / "PCSCD_RESTART_REQUEST"
         self.next_due = 0.0
         self.gone_since = None
+        self.marker_at = None
         self.restarts = 0
         self.passive = False
         self.degraded_noted = False
 
     def reset(self) -> None:
         self.gone_since = None
+
+    def scheduler_alive(self) -> bool:
+        """The amendment's liveness gate: PID alive AND heartbeat fresh.
+        A fresh heartbeat outweighs an unknown pid (probe returned None)."""
+        age = hb_age_s(load_heartbeat(self.hb_path), self.clock.time())
+        hb_ok = age is not None and age <= self.fresh_s
+        try:
+            alive = self.probe(self.pid)
+        except Exception:  # noqa: BLE001 — an unreadable pid is not evidence
+            alive = None
+        return hb_ok and alive is not False
 
     def poll_if_due(self, now_mono: float) -> None:
         if now_mono < self.next_due:
@@ -591,11 +625,22 @@ class ReaderMonitor:
             if self.gone_since is not None:
                 self.gone_since = None
                 self.journal.event("reader_back")
+            if self.marker_at is not None and self.marker_path.exists():
+                # reader recovered before the scheduler handled the request:
+                # retract it so no spurious restart is ever executed
+                self.marker_path.unlink(missing_ok=True)
+                self.journal.event("marker_retracted",
+                                   detail="GemPCTwin returned before the "
+                                          "request was handled")
+            self.marker_at = None
             return
         if self.gone_since is None:
             self.gone_since = now_mono
             self.journal.anomaly("reader_gone", detail="GemPCTwin not in "
                                                        "readers()")
+            return
+        if self.marker_at is not None:
+            self._poll_marker(now_mono)
             return
         if (now_mono - self.gone_since) < self.gone_s:
             return
@@ -608,8 +653,46 @@ class ReaderMonitor:
                 self.degraded_noted = True
             self.gone_since = now_mono  # re-armed; keep observing
             return
+        self._request_restart(now_mono)
+
+    def _poll_marker(self, now_mono: float) -> None:
+        if not self.marker_path.exists():
+            # the scheduler restarted pcscd under its lock and deleted the
+            # marker — count it and open a fresh observation window
+            self.restarts += 1
+            self.marker_at = None
+            self.gone_since = None
+            self.journal.anomaly("pcscd_restart", via="scheduler_marker",
+                                 attempt=self.restarts)
+            if self.restarts >= self.cap:
+                self.passive = True
+        elif (now_mono - self.marker_at) >= self.marker_timeout_s:
+            self.journal.anomaly(
+                "recovery_degraded", component="pcscd",
+                reason=f"PCSCD_RESTART_REQUEST unhandled for "
+                       f"{self.marker_timeout_s:.0f}s (scheduler alive but "
+                       f"not honoring the marker); never direct-restart "
+                       f"while it lives")
+            self.passive = True
+            self.degraded_noted = True
+
+    def _request_restart(self, now_mono: float) -> None:
+        if self.scheduler_alive():
+            _atomic_write_json(self.marker_path, {
+                "requested_at": _iso(self.clock.time()), "source": "watchdog",
+                "reason": f"GemPCTwin absent from readers() for "
+                          f">= {self.gone_s:.0f}s",
+                "action": "restart pcscd under the global maintenance lock, "
+                          "then delete this file"})
+            self.marker_at = now_mono
+            self.journal.anomaly("pcscd_restart_requested",
+                                 marker=self.marker_path.name)
+            return
+        # scheduler CONFIRMED dead: its lanes are dead too, so no live reader
+        # context can be harmed — a direct restart is now safe
         self.restarts += 1
-        self.journal.anomaly("pcscd_restart", attempt=self.restarts)
+        self.journal.anomaly("pcscd_restart", via="direct_scheduler_dead",
+                             attempt=self.restarts)
         self.sysctl.systemctl("restart", *self.units)
         self.clock.sleep(self.settle_s)
         self.gone_since = None  # fresh 5-minute window after the restart
@@ -675,7 +758,10 @@ class Watchdog:
                                grace_s=self.cfg["startup_grace_s"],
                                started_mono=clock.monotonic())
         self.bolty = ConsoleRecovery(self.sysctl, clock, self.journal, self.cfg)
-        self.ccid = ReaderMonitor(self.sysctl, clock, self.journal, self.cfg)
+        probe_fn = probe if probe is not None else default_pid_probe
+        self.ccid = ReaderMonitor(self.sysctl, clock, self.journal, self.cfg,
+                                  hb_path=self.hb_path, scheduler_pid=scheduler_pid,
+                                  probe=probe_fn)
         self.abortw = AbortWatch(self.results_dir, self.journal)
         self.done_reason: str | None = None
 
@@ -726,6 +812,11 @@ class Watchdog:
         self.journal.anomaly("scheduler_dead", reasons=list(reasons),
                              scheduler_pid=self.deadman.pid,
                              hb_phase=(hb or {}).get("phase"))
+        marker = self.results_dir / "PCSCD_RESTART_REQUEST"
+        if marker.exists():
+            self.journal.event("pcscd_restart_request_pending_at_death",
+                               detail="marker left in place as evidence; the "
+                                      "dead scheduler cannot honor it")
         state = self.journal.merge_sidecar(self.journal.load_state())
         run = state.setdefault("run", {})
         run["scheduler_died_at"] = _iso(now_wall)
@@ -956,26 +1047,39 @@ def run_selftest() -> bool:
         check("abort flag written", flag.exists() and dog.done_reason is None)
         check("scheduler untouched", all(s[1] == 0 for s in probe.signals))
 
-    # 5. pcscd cap
+    # 5. pcscd marker protocol (round-2): alive scheduler -> request marker
+    #    (never a direct restart); dead scheduler -> direct restart allowed;
+    #    one shared restart cap of 3, then degraded rows
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
         clock, sys_, probe = Clock(), Sys(), Probe()
         dog = Watchdog(d, clock, sysctl=sys_, probe=probe,
                        scheduler_pid=4242, **tiny)
         sys_.gem = False
-        for _ in range(20):
-            tick(dog, clock, d, 2, phase="WINDOW2")
-            restarts = [c for c in sys_.calls
-                        if c[:2] == ("systemctl", "restart")]
-            if len(restarts) >= 3:
-                break
-        tick(dog, clock, d, 1, phase="WINDOW2")   # observe gone again
-        tick(dog, clock, d, 10, phase="WINDOW2")  # >= gone_s -> degrade row
-        restarts = [c for c in sys_.calls if c[:2] == ("systemctl", "restart")]
-        check("pcscd restarts capped at 3", len(restarts) == 3)
+        marker = d / "PCSCD_RESTART_REQUEST"
+        tick(dog, clock, d, 0, phase="WINDOW2")
+        tick(dog, clock, d, 4, phase="WINDOW2")  # gone >= 3s -> request
+        check("pcscd marker requested, no direct restart",
+              marker.exists() and
+              not [c for c in sys_.calls if c[:2] == ("systemctl", "restart")])
+        marker.unlink()  # scheduler restarted under its lock
+        tick(dog, clock, d, 2, phase="WINDOW2")  # consumption observed (1/3)
+        probe.alive = False  # scheduler dies mid-night
+        for _ in range(2):  # dead-mode episodes -> direct restarts (2/3, 3/3)
+            clock.sleep(4)
+            dog.ccid.poll_if_due(clock.m)  # observe
+            clock.sleep(4)
+            dog.ccid.poll_if_due(clock.m)  # trigger: direct restart
+        clock.sleep(4)
+        dog.ccid.poll_if_due(clock.m)  # observe again
+        clock.sleep(4)
+        dog.ccid.poll_if_due(clock.m)  # cap reached -> degraded row only
+        direct = [c for c in sys_.calls if c[:2] == ("systemctl", "restart")]
         kinds = [json.loads(ln)["kind"] for ln in
                  (d / "watchdog.jsonl").read_text().splitlines()]
-        check("pcscd degrade row", "recovery_degraded" in kinds)
+        check("direct restarts only after scheduler death", len(direct) == 2)
+        check("shared cap 3 across marker+direct", kinds.count("pcscd_restart")
+              == 3 and "recovery_degraded" in kinds)
 
     ok = all(results)
     print(f"watchdog selftest: {'OK' if ok else 'FAILED'} "

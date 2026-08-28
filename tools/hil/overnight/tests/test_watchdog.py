@@ -442,7 +442,10 @@ def test_mode_b_window2_still_watches_console(tmp_path):
 # ------------------------------------------------------------- ccid ----
 
 
-def test_pcscd_restart_only_after_5min_gone(tmp_path):
+def test_pcscd_restart_request_via_marker_when_scheduler_alive(tmp_path):
+    # round-2 amendment: while the scheduler lives, the watchdog may NOT
+    # restart pcscd itself (it cannot hold overnight.py's in-process
+    # maintenance lock) — it writes PCSCD_RESTART_REQUEST instead
     clock = FakeClock()
     write_hb(tmp_path, clock, phase="WINDOW2")
     partial_results(tmp_path)
@@ -450,11 +453,15 @@ def test_pcscd_restart_only_after_5min_gone(tmp_path):
     dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
     poll(dog, clock, tmp_path, advance=0, phase="WINDOW2")    # first observed
     poll(dog, clock, tmp_path, advance=299, phase="WINDOW2")  # below 5min
-    assert not any(c[:2] == ("systemctl", "restart") for c in sysctl.calls)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    assert not marker.exists()
     poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")  # 301s >= 300s
-    restarts = [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")]
-    assert len(restarts) == 1
-    assert "pcscd" in " ".join(restarts[0])
+    assert marker.exists()  # marker protocol, not a restart
+    req = json.loads(marker.read_text())
+    assert req["requested_at"]
+    assert "GemPCTwin" in req["reason"]
+    # NO systemctl restart anywhere in the generated command list
+    assert not any(c[:2] == ("systemctl", "restart") for c in sysctl.calls)
 
 
 def test_pcscd_restart_cap_three_then_degraded(tmp_path):
@@ -463,15 +470,117 @@ def test_pcscd_restart_cap_three_then_degraded(tmp_path):
     partial_results(tmp_path)
     sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
     dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
-    for _ in range(4):  # four 5-minute gone episodes
-        poll(dog, clock, tmp_path, advance=0, phase="WINDOW2")    # observe
-        poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")  # >= 5min
-    restarts = [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")]
-    assert len(restarts) == 3  # capped
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    for _ in range(3):  # three handled requests (scheduler restarts + deletes)
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")    # observe
+        poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")  # request
+        assert marker.exists()
+        marker.unlink()  # scheduler executed the restart under its lock
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")  # consumption
+    # cap reached: 4th episode -> degraded row, no 4th request, no restarts
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")
+    assert not marker.exists()
+    assert [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")] == []
+    journal = [json.loads(ln) for ln in
+               (tmp_path / "watchdog.jsonl").read_text().splitlines()]
+    kinds = [e["kind"] for e in journal]
+    assert kinds.count("pcscd_restart") == 3
+    assert "recovery_degraded" in kinds
+    assert any(c[0] == "journalctl" for c in sysctl.calls)  # anomaly snapshot
+
+
+def test_pcscd_marker_timeout_escalates_never_direct_restart(tmp_path):
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    poll(dog, clock, tmp_path, advance=0, phase="WINDOW2")
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")  # request written
+    assert marker.exists()
+    poll(dog, clock, tmp_path, advance=599, phase="WINDOW2")  # still pending
+    journal = [json.loads(ln) for ln in
+               (tmp_path / "watchdog.jsonl").read_text().splitlines()]
+    assert "recovery_degraded" not in [e["kind"] for e in journal]
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")  # 10min timeout hit
     journal = [json.loads(ln) for ln in
                (tmp_path / "watchdog.jsonl").read_text().splitlines()]
     assert "recovery_degraded" in [e["kind"] for e in journal]
-    assert any(c[0] == "journalctl" for c in sysctl.calls)  # anomaly snapshot
+    # never a direct restart while the scheduler is alive — not even now
+    assert [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")] == []
+    assert marker.exists()  # left in place as evidence
+
+
+def test_pcscd_direct_restart_only_when_scheduler_dead(tmp_path):
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    probe = FakeProbe(alive=False)  # scheduler CONFIRMED dead (pid gone)
+    dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl, probe=probe)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    # drive the monitor directly (the dead-man exits the composition first —
+    # this unit level proves the liveness gate itself)
+    dog.ccid.poll_if_due(clock.monotonic())          # observe gone
+    clock.advance(301)
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    dog.ccid.poll_if_due(clock.monotonic())          # trigger
+    restarts = [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")]
+    assert len(restarts) == 1  # lanes are dead too — direct restart is safe
+    assert "pcscd" in " ".join(restarts[0])
+    assert not marker.exists()  # marker protocol is for a LIVE scheduler
+
+
+def test_pcscd_counter_shared_across_both_modes(tmp_path):
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    probe = FakeProbe(alive=True)
+    dog, sysctl, probe = make_dog(tmp_path, clock, sysctl=sysctl, probe=probe)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    for _ in range(2):  # two restarts via handled marker requests
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+        poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")
+        marker.unlink()  # scheduler handled both
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+    probe.alive = False  # scheduler dies mid-night
+    clock.advance(2)
+    dog.ccid.poll_if_due(clock.monotonic())  # observe
+    clock.advance(301)
+    dog.ccid.poll_if_due(clock.monotonic())  # direct restart #3 -> passive
+    clock.advance(2)
+    dog.ccid.poll_if_due(clock.monotonic())  # observe
+    clock.advance(301)
+    dog.ccid.poll_if_due(clock.monotonic())  # 4th trigger: degrade only
+    restarts = [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")]
+    assert len(restarts) == 1  # only the dead-mode direct restart ran
+    journal = [json.loads(ln) for ln in
+               (tmp_path / "watchdog.jsonl").read_text().splitlines()]
+    kinds = [e["kind"] for e in journal]
+    assert kinds.count("pcscd_restart") == 3  # 2 marker + 1 direct
+    assert "recovery_degraded" in kinds
+
+
+def test_pcscd_marker_retracted_when_reader_returns(tmp_path):
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    poll(dog, clock, tmp_path, advance=0, phase="WINDOW2")
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")  # request
+    assert marker.exists()
+    sysctl.readers_list.append("GemPCTwin serial 00 00")  # reader back on own
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+    assert not marker.exists()  # retracted: no restart needed anymore
+    assert [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")] == []
+    journal = [json.loads(ln) for ln in
+               (tmp_path / "watchdog.jsonl").read_text().splitlines()]
+    assert "marker_retracted" in [e["kind"] for e in journal]
 
 
 # ------------------------------------------------------------- ABORT ----
