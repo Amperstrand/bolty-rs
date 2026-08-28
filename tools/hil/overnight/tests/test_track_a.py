@@ -12,6 +12,7 @@ Run:  cd /home/ubuntu/src/bolty-rs && \
 """
 
 import contextlib
+import re
 import subprocess
 import sys
 import time
@@ -177,7 +178,8 @@ def test_audit_line_start_rejects_forbidden_and_accepts_safe():
     for bad in (b"burn", b"wipe now", b"keys 1111", b"ota http://x",
                 b"reset", b"button-mode", b"provision-ota-key", b"auth",
                 b"INSPECT", b"picc", b"wifi 2 pass", b"token abc",
-                b"   burn", b"\twipe"):  # daemon strips leading whitespace
+                b"   burn", b"\twipe", b"\x0bburn", b"\xa0wipe", b"\x1cburn",
+                b"\x85ota", b"\x1fkeys"):  # daemon strips the full isspace set
         assert not audit_line_start(bad), bad
     for good in (b"help", b"ver", b"status x", b"uid", b"i2cscan",
                  b"hwinfo", b"crashlog", b"derivekeys --uid 04",
@@ -191,10 +193,14 @@ def test_fuzz_10k_sample_zero_forbidden_at_line_start():
     lines = gen.generate(10_000)
     assert len(lines) == 10_000
     for line in lines:
-        assert b"\n" not in line, "fuzz lines are single console lines"
-        low = line.lstrip(b" \t\r\v\f").lower()
+        # CR/LF exclusion proof: with the invariant held, splitting on [\r\n]
+        # yields exactly ONE segment per line (zero device-side line breaks
+        # the generator did not choose) and every segment start is clean.
+        segments = re.split(r"[\r\n]+", line.decode("latin1", "replace"))
+        assert len(segments) == 1, repr(line[:40])
+        low = segments[0].lstrip(" \t\n\r\v\f\x1c\x1d\x1e\x1f\x85\xa0").lower()
         for p in FORBIDDEN_PREFIXES:
-            assert not low.startswith(p.encode()), (p, line[:40])
+            assert not low.startswith(p), (p, line[:40])
         assert audit_line_start(line), line[:40]
 
 
@@ -204,6 +210,7 @@ def test_fuzz_corpus_shapes_and_determinism():
     joined = b"".join(lines)
     for byte in (0x00, 0x03, 0x15):  # framing-relevant control bytes present
         assert bytes([byte]) in joined, hex(byte)
+    assert b"\r" not in joined and b"\n" not in joined  # round-2 invariant
     assert any(len(ln) >= 4096 for ln in lines)  # 4KB lines exist
     allow = {w.encode() for w in FUZZ_ALLOWLIST}
     assert any(ln.split(b" ", 1)[0].lower() in allow
