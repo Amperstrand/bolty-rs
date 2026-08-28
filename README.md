@@ -53,7 +53,11 @@ Additional optional runtime services:
 | `rest` | Enable REST API (implies `wifi`) |
 | `ota` | Enable OTA update command (implies `wifi`) |
 
-`display-st7789` is currently a **capability gate**, not a shipped UI implementation yet. It exists so the board/capability model is explicit before display support lands. Future NFC frontends such as PN532 should follow the same pattern as a separate frontend capability rather than being hidden inside board selection.
+`display-st7789` ships a working status UI on M5StickC Plus (boot state,
+card UID + state, battery/USB indicator, command results, battery-poll
+redraw guard) — hardware-verified since 2026-08-24. Future NFC frontends
+such as PN532 should follow the same pattern as a separate frontend
+capability rather than being hidden inside board selection.
 
 ## Build and flash
 

@@ -65,13 +65,23 @@
 - [x] NVS persistence: LNURL + button mode + OTA signing key + TLS cert survive reboots
 - [x] Property-based crypto testing with proptest (#36) — exhaustive edge case coverage for crypto operations
 - [x] Security regression test suite (#41) — prevent reintroduction of known vulnerabilities
+- [x] Spec conformance: greatspectations annotations (22 verbatim boltcard-spec quotes) + drift CI (2026-08-27)
+- [x] Real ESP32 firmware CI — esp32-check.yml builds xtensa target on GitHub runners (2026-08-28; also caught never-compiled board-m5atom)
+- [x] Cross-implementation audits: ChangeKey K0–K4 + FS_RESET byte-exact vs bolt-card-programmer; p/c verify vs Go `check_cmac` (2026-08-27/28, see docs/parity-matrix.md)
+- [x] Hand-rolled AES-CMAC → `cmac` crate (RFC 4493 vectors + hardware burn-cycle proof)
+- [x] OTA signed updates end-to-end on hardware (Ed25519 commit + wrong-key rejection) (2026-08-27/28)
+- [x] `bolty-cli provision` — proxy-issued keys via one-time-code flow (2026-08-28)
+- [x] HIL rig: bolty-console daemon + burn_cycle.py (incl. `--percard` mode, hardware-verified 2026-08-28) + proxy healthcheck
+- [x] keyver honest reporting on firmware (was silent no-op; fix `51e8a50`, hardware-verified)
 
 ## In Progress
 
 - [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
-- [x] Issue #34: BLE pairing/bonding (NimBLE branch ready, code-written, hardware verification pending)
+- [x] Issue #34: BLE pairing/bonding — code complete but BLOCKED upstream: esp-idf-svc fork bt module needs ESP-IDF ≥5.3 symbols on pinned 5.2.3; unblock = esp-idf-svc 0.53.0 + matrix bump (see sdkconfig.defaults comment + lesson B18)
 - [ ] M5StickC UART0 hardware failure — needs replacement device
 - [ ] iso14443-rs upstream contribution (waiting for stability proof)
+- [ ] AuthFirst/AuthSecond handshake byte-parity vs bolt-card-programmer (fixtures exist for ChangeKey/FS_RESET suite)
+- [ ] Physical button press test (software subsystem verified; needs a human at the rig — `hwtest`)
 
 ## Planned
 
@@ -105,7 +115,7 @@
 - [ ] Card lifecycle management — track card state across sessions
 
 ### Polish (Priority: Low)
+- [x] ESP32 CI workflow (actually build firmware in GitHub Actions) — DONE 2026-08-28 (esp32-check.yml, green on runners)
 - [ ] Firmware versioning in REST API responses
-- [ ] ESP32 CI workflow (actually build firmware in GitHub Actions)
 - [ ] Additional documentation: ADRs, threat model
 - [ ] Performance benchmarks for APDU exchange latency
