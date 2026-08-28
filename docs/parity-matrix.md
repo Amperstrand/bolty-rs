@@ -18,7 +18,7 @@ lesson B8) or line-by-line source comparison, pinned as tests.
 | ChangeKey K1–K4 (XOR+ver+CRC32) | TS app | byte-exact (ntag424 fork `change_key` parity) | ✅ 2026-08-27 |
 | ChangeMasterKey K0 | TS app | byte-exact (same suite) | ✅ 2026-08-27 |
 | FS_RESET / ChangeFileSettings | TS app | byte-exact (`change_file_settings` parity) | ✅ 2026-08-28 |
-| AuthFirst/AuthSecond handshake | TS app | — | ❌ pending (hardware-proven daily; byte-parity not yet pinned) |
+| AuthFirst/AuthSecond handshake | NXP AN12196 + TS app (transitive) | AN12196 APDU fixtures (ntag424 fork, 314 green) + session-key parity via command vectors + daily hardware auth | ✅ 2026-08-28: AuthFirst APDU pinned to AN12196 form (LenCap=0x03); SV1/SV2 session derivations verified transitively — the refchangekey.js session keys used by the ChangeKey/FS_RESET parity tests ARE the TS app's session-key construction, and every command-parity byte depends on them; plus every hardware burn/inspect authenticates |
 | File read/write MAC exchanges (0xAD/0x8D) | any reference | — | ❌ pending |
 | NDEF write bytes | TS app | — | ❌ pending |
 | SDM URL templating (`[[{mac}`) | real worker + ACR1252 | hardware `mac=true` + live taps | ✅ hardware-audited |
