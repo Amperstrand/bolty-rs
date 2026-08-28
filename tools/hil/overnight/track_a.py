@@ -1,0 +1,970 @@
+#!/usr/bin/env python3
+"""Overnight Track A (plan todo 7): burn-cycle driver + console fuzz + hw checks.
+
+Three window-1 components over the bolty-console unix socket (the daemon owns
+the serial port — this module NEVER opens the tty; B11 wedge class):
+
+1. ``BurnCycleDriver`` — subprocess-wraps ``python3 tools/hil/burn_cycle.py``
+   with the deterministic issuer from overnight.env and HIL_UID set to the
+   ledger stick uid; parses the 6 summary gates (burn / inspect_provisioned /
+   picc_sdm_ok / worker_tap_200 / wipe / inspect_blank) into result rows;
+   paces >= 30s between cycle starts; time-budget aware (never starts a cycle
+   inside the reserved tail of the deadline); kills the subprocess when the
+   lane is asked to stop. Every cycle output is classified via
+   ``ledger.classify_output``; an observed 91AE/91AD feeds the card-safety
+   ledger, a plain gate FAIL does not. ``ledger.assert_may_proceed`` gates each
+   cycle (CardSafetyHalt halts only this card's lane).
+2. ``ConsoleFuzzer`` — random bytes, 4KB lines, binary incl. 0x00/0x03/0x15,
+   arg garbage. STRICT AUTH-FREE ALLOWLIST (oracle r1): the only reachable
+   commands are help|ver|status|uid|i2cscan|hwinfo|crashlog|derivekeys; every
+   other line is binary garbage whose FIRST byte can never begin an ASCII
+   command token — card-auth and mutating commands are unreachable BY
+   CONSTRUCTION, not by blocklist filtering. ``audit_line_start`` mirrors the
+   daemon's leading-whitespace strip before judging the first token. After
+   every 25 inputs: PING must be alive AND a fresh [HB] must arrive within
+   60s (offline transport errors are soft — anomaly + stop; ``strict=True``
+   makes liveness failures raise, for dry mode).
+3. ``HwChecker`` — hourly read-only ``hwinfo``/``i2cscan``/``status``/
+   ``crashlog`` with epoch-aware crashlog diffing: a reflash resets the NVS
+   boot count (task 15), so a DECREASING boot count is an epoch change
+   (baseline reset), while an abnormal reset reason or a changed "Last crash"
+   line WITHIN an epoch is an anomaly.
+
+Sink contract (component -> lane): every row/anomaly is ONE dict handed to
+``sink``; anomalies carry ``"anomaly": "<kind>"``. Lanes translate that into
+the todo-5 PhaseContext protocol (``ctx.row`` / ``ctx.anomaly``).
+
+Integration: ``register(orchestrator)`` appends the three LaneSpecs to
+``orchestrator.specs``; ``build_lane()`` returns the primary spec for
+``overnight.load_track_specs``. While todo 5 (overnight.py) is in flight the
+module still imports: a documented-field fallback LaneSpec is used and lane
+targets only rely on the documented PhaseContext members.
+
+Standalone: ``python3 track_a.py --selftest`` exercises the generator,
+parsers, pacing and budget offline (no hardware, no socket).
+"""
+
+import argparse
+import contextlib
+import os
+import random
+import re
+import string
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+import ledger  # todo 6 (same directory)
+import console_ctl
+
+try:  # todo 5; tolerated while overnight.py is in flight
+    import overnight  # noqa: F401
+except ImportError:
+    overnight = None
+
+__all__ = [
+    "FUZZ_ALLOWLIST",
+    "FORBIDDEN_PREFIXES",
+    "EXPECTED_GATES",
+    "MIN_CYCLE_GAP_S",
+    "LIVENESS_EVERY_INPUTS",
+    "HB_MAX_WAIT_S",
+    "HWCHECK_INTERVAL_S",
+    "NORMAL_RESET_REASONS",
+    "MutationWindowClosed",
+    "LivenessError",
+    "ConsoleError",
+    "FakeClock",
+    "RealClock",
+    "load_env_file",
+    "env_value",
+    "audit_line_start",
+    "line_start_token",
+    "FuzzGenerator",
+    "ConsoleFuzzer",
+    "BurnCycleDriver",
+    "parse_cycle_output",
+    "parse_crashlog",
+    "diff_crashlog",
+    "HwChecker",
+    "cycles_lane",
+    "fuzz_lane",
+    "hwchecks_lane",
+    "build_specs",
+    "build_lane",
+    "register",
+    "main",
+]
+
+# ------------------------------------------------------------- constants ----
+
+# Oracle r1 allowlist: auth/keyver/inspect/ndef/check/diagnose/picc are
+# card-auth-touching; keys/issuer/url/burn/wipe/force/wifi/token/ota/reset/
+# button-mode/provision-* are mutating/system commands. NONE of them is
+# reachable: the generator only emits these eight tokens or token-free
+# binary garbage.
+FUZZ_ALLOWLIST = (
+    "help", "ver", "status", "uid", "i2cscan", "hwinfo", "crashlog", "derivekeys",
+)
+
+# Plan todo 7 grep-audit list: sampled fuzz lines must contain ZERO of these
+# at any line start. Audited (not relied on) — safety is by construction.
+FORBIDDEN_PREFIXES = (
+    "auth", "keyver", "inspect", "ndef", "check", "diagnose", "picc",
+    "keys", "issuer", "url", "burn", "wipe", "force", "wifi", "token",
+    "ota", "reset", "button-mode", "provision",
+)
+
+# burn_cycle.py "CYCLE SUMMARY" gates, in printed order.
+EXPECTED_GATES = (
+    "burn", "inspect_provisioned", "picc_sdm_ok", "worker_tap_200",
+    "wipe", "inspect_blank",
+)
+
+MIN_CYCLE_GAP_S = 30.0          # pacing between cycle starts (plan todo 7)
+LIVENESS_EVERY_INPUTS = 25      # PING + HB assert cadence for the fuzzer
+HB_MAX_WAIT_S = 60.0            # next [HB] must arrive within this window
+HWCHECK_INTERVAL_S = 3600.0     # hourly non-interactive checks
+NORMAL_RESET_REASONS = frozenset({"POWERON", "SW_RESET", "DEEPSLEEP"})
+
+_DEFAULT_ENV_PATH = Path(__file__).resolve().parent / "overnight.env"
+ConsoleError = console_ctl.ConsoleError
+
+
+class MutationWindowClosed(Exception):
+    """Fallback mirror of overnight.MutationWindowClosed (todo-5 protocol)."""
+
+    def __init__(self, card="", reason=""):
+        super().__init__(f"mutation window closed for card {card!r}: {reason or 'closed'}")
+        self.card, self.reason = card, reason or "closed"
+
+
+class LivenessError(Exception):
+    """Strict-mode liveness failure (dry mode asserts; live mode records)."""
+
+
+if overnight is not None:
+    _LaneSpec = overnight.LaneSpec
+    # catch both the real todo-5 exception and our fallback/stub mirror
+    MWC_TYPES = (overnight.MutationWindowClosed, MutationWindowClosed)
+else:
+    # documented-protocol fallback while todo 5 is in flight
+    @dataclass
+    class _LaneSpec:  # noqa: D401 - mirrors overnight.LaneSpec fields
+        name: str
+        target: Callable
+        window: str = "window1"
+        cards: tuple = ()
+        needs_pcscd: bool = False
+        pace_s: float = 1.0
+
+    MWC_TYPES = (MutationWindowClosed,)
+
+
+# --------------------------------------------------------------- clocks ----
+
+
+class RealClock:
+    def monotonic(self):
+        return time.monotonic()
+
+    def time(self):
+        return time.time()
+
+    def sleep(self, s):
+        if s > 0:
+            time.sleep(s)
+
+
+class FakeClock:
+    """Deterministic clock for tests/selftest (single-threaded use only)."""
+
+    def __init__(self):
+        self._mono = 0.0
+
+    def monotonic(self):
+        return self._mono
+
+    def time(self):
+        return self._mono + 1_800_000_000.0
+
+    def sleep(self, s):
+        self._mono += max(0.0, s)
+
+
+# ----------------------------------------------------------------- env ----
+
+
+def load_env_file(path=None):
+    """Parse a KEY=VALUE env file ('#' comments skipped, no interpolation)."""
+    data = {}
+    p = Path(path) if path is not None else _DEFAULT_ENV_PATH
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return data
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        data[key.strip()] = value.strip()
+    return data
+
+
+_ENV_FILE_CACHE = None
+
+
+def env_value(name):
+    """Process environment wins over overnight.env; values never logged."""
+    if name in os.environ:
+        return os.environ[name]
+    global _ENV_FILE_CACHE
+    if _ENV_FILE_CACHE is None:
+        _ENV_FILE_CACHE = load_env_file()
+    return _ENV_FILE_CACHE.get(name)
+
+
+# ----------------------------------------------------- fuzz construction ----
+
+_ASCII_LETTERS = set(string.ascii_letters.encode())
+# Bytes the daemon's str.strip() would remove — a line may not rely on them
+# for safety (they are stripped before the firmware sees the line).
+_WS_STRIP = b" \t\r\v\f"
+# First bytes for binary-garbage lines: never an ASCII letter (no command
+# token can start there) and never strippable whitespace.
+_NON_LEADING_BYTES = bytes(
+    b for b in range(256) if b not in _ASCII_LETTERS and b not in set(b" \t\n\r\v\f")
+)
+_TOKEN_RE = re.compile(rb"[A-Za-z][A-Za-z0-9_-]*")
+_ALLOW_SET = frozenset(FUZZ_ALLOWLIST)
+
+
+def line_start_token(line):
+    """First ASCII command token of the line after the daemon's strip(), or
+    None when no letter-initial token starts the line (pure garbage)."""
+    m = _TOKEN_RE.match(bytes(line).lstrip(_WS_STRIP))
+    return m.group(0).lower() if m else None
+
+
+def audit_line_start(line):
+    """True iff the line is safe to forward: its first token is an allowlisted
+    command, or no ASCII token starts the line at all."""
+    token = line_start_token(line)
+    return token is None or token.decode("latin1") in _ALLOW_SET
+
+
+class FuzzGenerator:
+    """Strictly auth-free console-line corpus (seedable, deterministic).
+
+    Modes: allowlisted command + garbage args; allowlisted + 4KB arg line;
+    allowlisted + weird arg shapes; short binary garbage; 4KB binary garbage.
+    Binary lines pin the framing-relevant control bytes (0x00/0x03/0x15) and
+    start with a byte from _NON_LEADING_BYTES, so a forbidden command token
+    is unreachable by construction. Lines never contain 0x0A.
+    """
+
+    def __init__(self, seed=None):
+        self.rng = random.Random(seed)
+
+    def generate(self, n):
+        return [self.gen_line() for _ in range(n)]
+
+    def gen_line(self):
+        r = self.rng.random()
+        if r < 0.30:
+            return self._allowlisted_args()
+        if r < 0.45:
+            return self._allowlisted_long()
+        if r < 0.60:
+            return self._arg_shapes()
+        if r < 0.80:
+            return self._binary(self.rng.randrange(1, 257))
+        return self._binary(4096)
+
+    def _junk(self, n):
+        return self.rng.randbytes(n).replace(b"\n", b"\x0b")
+
+    def _allowlisted_args(self):
+        cmd = self.rng.choice(FUZZ_ALLOWLIST).encode()
+        args = self._junk(self.rng.randrange(0, 65))
+        return cmd + (b" " + args if args else b"")
+
+    def _allowlisted_long(self):
+        return self.rng.choice(FUZZ_ALLOWLIST).encode() + b" " + self._junk(4096)
+
+    def _arg_shapes(self):
+        cmd = self.rng.choice(FUZZ_ALLOWLIST).encode()
+        shape = self.rng.choice([
+            b"--flag=\xc3\x84\xc3\x96", b"{}", b"[]", b"null", b"-1e999",
+            b'"quoted arg"', b"a" * 512, b"0123456789abcdef" * 4,
+            b"a b\tc\rd", b"\x01\x02\x7f", b"-",
+        ])
+        return cmd + b" " + shape
+
+    def _binary(self, n):
+        first = self.rng.choice(_NON_LEADING_BYTES)
+        body = bytearray(self.rng.randbytes(max(0, n - 1)))
+        if len(body) >= 3:  # framing-relevant control bytes always present
+            body[0], body[1], body[2] = 0x00, 0x03, 0x15
+        return bytes([first]) + bytes(body).replace(b"\n", b"\x0b")
+
+
+# ----------------------------------------------------------- cycle parse ----
+
+_GATE_RE = re.compile(r"^[ \t]{2,}([a-z0-9_]+)[ \t]*:[ \t]*(PASS|FAIL)[ \t]*$", re.M)
+_RESULT_RE = re.compile(r"^RESULT:[ \t]*(.+?)[ \t]*$", re.M)
+_TAP_URL_RE = re.compile(r"^TAP_URL:[ \t]+(\S+)", re.M)
+
+
+def parse_cycle_output(text):
+    """Parse burn_cycle.py stdout. Robust to truncation/garbage: missing
+    gates are reported, nothing raises. ``ok`` requires the full 6-gate
+    summary with every gate PASS AND 'RESULT: ALL PASS'."""
+    text = text or ""
+    gates = {m.group(1): m.group(2) for m in _GATE_RE.finditer(text)}
+    missing = [g for g in EXPECTED_GATES if g not in gates]
+    m = _RESULT_RE.search(text)
+    result_line = m.group(0) if m else None
+    ok = (
+        not missing
+        and all(v == "PASS" for v in gates.values())
+        and result_line == "RESULT: ALL PASS"
+    )
+    tap = _TAP_URL_RE.search(text)
+    return {
+        "gates": gates,
+        "missing_gates": missing,
+        "result_line": result_line,
+        "ok": ok,
+        "tap_url": tap.group(1) if tap else None,
+    }
+
+
+def _make_subprocess_runner(should_stop):
+    """Popen-based runner: honors lane stop (kill) and the cycle timeout,
+    which a blocking subprocess.run cannot do mid-call."""
+
+    def runner(argv, env, timeout, cwd):
+        proc = subprocess.Popen(
+            argv, env=env, cwd=cwd, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
+        )
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                out, err = proc.communicate(timeout=0.5)
+                return proc.returncode, out or "", err or ""
+            except subprocess.TimeoutExpired:
+                pass
+            if should_stop is not None and should_stop():
+                proc.kill()
+                out, err = proc.communicate()
+                return proc.returncode, f"lane stopped; subprocess killed\n{out or ''}", err or ""
+            if time.monotonic() >= deadline:
+                proc.kill()
+                out, err = proc.communicate()
+                raise subprocess.TimeoutExpired(
+                    " ".join(map(str, argv)), timeout, output=out, stderr=err
+                )
+
+    return runner
+
+
+def _plain_subprocess_runner(argv, env, timeout, cwd):
+    proc = subprocess.run(argv, env=env, cwd=cwd, capture_output=True,
+                          text=True, timeout=timeout, check=False)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+class BurnCycleDriver:
+    """Runs one burn_cycle.py per call and turns it into a result row.
+
+    Pacing (>=30s between starts), deadline reservation and ledger hookup
+    live here so both the lane and standalone users share them.
+    """
+
+    def __init__(self, burn_cycle_path=None, repo_root=None, issuer=None,
+                 uid=None, clock=None, min_cycle_gap_s=MIN_CYCLE_GAP_S,
+                 cycle_timeout_s=420.0, runner=None, sink=None,
+                 ledger_inst=None, classify=None, should_stop=None):
+        self.repo_root = Path(repo_root) if repo_root else \
+            Path(__file__).resolve().parents[3]
+        self.burn_cycle_path = Path(burn_cycle_path) if burn_cycle_path else \
+            self.repo_root / "tools" / "hil" / "burn_cycle.py"
+        self.issuer = (issuer or env_value("HIL_ISSUER") or "").strip()
+        self.uid = (uid or env_value("HIL_UID_STICK") or
+                    os.environ.get("HIL_UID") or "").strip()
+        if not self.uid:
+            raise ValueError(
+                "stick uid required (uid=, HIL_UID_STICK in overnight.env or "
+                "HIL_UID) — the harness enforces the expected card"
+            )
+        self.clock = clock or RealClock()
+        self.min_cycle_gap_s = float(min_cycle_gap_s)
+        self.cycle_timeout_s = float(cycle_timeout_s)
+        self.runner = runner or (
+            _make_subprocess_runner(should_stop) if should_stop is not None
+            else _plain_subprocess_runner
+        )
+        self.sink = sink or (lambda ev: None)
+        self.ledger_inst = ledger_inst
+        self.classify = classify or ledger.classify_output
+
+    def run_cycle(self, cycle=0):
+        """One bounded burn cycle. Raises CardSafetyHalt/ExcludedCardError
+        (ledger gate) BEFORE the subprocess starts; never raises on a mere
+        FAIL — a FAIL row is recorded and the caller's loop continues."""
+        if self.ledger_inst is not None:
+            self.ledger_inst.assert_may_proceed(self.uid)
+        argv = [sys.executable, str(self.burn_cycle_path)]
+        if self.issuer:
+            argv += ["--issuer", self.issuer]
+        env = dict(os.environ)
+        env["HIL_UID"] = self.uid
+        start = self.clock.monotonic()
+        rc, out, err, note = None, "", "", None
+        try:
+            rc, out, err = self.runner(argv, env, self.cycle_timeout_s,
+                                       str(self.repo_root))
+        except subprocess.TimeoutExpired:
+            note = f"cycle timeout after {self.cycle_timeout_s:.0f}s"
+        except OSError as exc:
+            note = f"runner error: {exc!r}"
+        duration = self.clock.monotonic() - start
+        text = "\n".join(part for part in (out, err, note) if part)
+        parsed = parse_cycle_output(text)
+        kind = self.classify(text)
+        ok = bool(parsed["ok"] and rc == 0)
+        if self.ledger_inst is not None:
+            if kind == "auth_fail":
+                self.ledger_inst.record_auth_failure(self.uid)
+            self.ledger_inst.record_op(self.uid, "burn_cycle")
+        row = {
+            "type": "cycle", "cycle": cycle,
+            "status": "PASS" if ok else "FAIL", "ok": ok, "rc": rc,
+            "gates": parsed["gates"], "missing_gates": parsed["missing_gates"],
+            "result_line": parsed["result_line"], "tap_url": parsed["tap_url"],
+            "duration_s": round(duration, 3), "classification": kind,
+            "raw_tail": text.strip()[-300:],
+        }
+        self.sink(row)
+        return row
+
+    def run_cycles(self, max_cycles=None, deadline=None, running=None,
+                   sleep=None, min_remaining_s=0.0, hold_card=None):
+        """Paced, budget-aware loop. ``hold_card`` (optional) yields a
+        per-cycle context manager (the todo-5 card mutex) — never held
+        across the pacing sleep. MutationWindowClosed from acquiring it and
+        CardSafetyHalt from the ledger gate propagate to the caller."""
+        sleep_fn = sleep or self.clock.sleep
+        rows = []
+        n = 0
+        last_start = None
+        while (max_cycles is None or n < max_cycles) and \
+                (running is None or running()):
+            if deadline is not None and \
+                    self.clock.monotonic() + min_remaining_s >= deadline:
+                break
+            if last_start is not None:
+                wait = last_start + self.min_cycle_gap_s - self.clock.monotonic()
+                if wait > 0:
+                    sleep_fn(wait)
+            start = self.clock.monotonic()
+            mgr = hold_card() if hold_card is not None else contextlib.nullcontext()
+            with mgr:
+                row = self.run_cycle(cycle=n)
+            rows.append(row)
+            last_start = start
+            n += 1
+        return rows
+
+
+# ------------------------------------------------------------ crashlog ----
+
+_BC_RE = re.compile(r"Boot count:[ \t]*(\d+)")
+_BR_RE = re.compile(r"This boot reason:[ \t]*([A-Z_]+)")
+_LC_RE = re.compile(r"Last crash:[ \t]+([A-Z_]+)[ \t]+on boot #(\d+)")
+
+
+def parse_crashlog(text):
+    """Parse the console `crashlog` block (firmware.rs run_crashlog).
+    Never raises; unparsed fields stay None."""
+    text = text or ""
+    bc, br, lc = _BC_RE.search(text), _BR_RE.search(text), _LC_RE.search(text)
+    return {
+        "boot_count": int(bc.group(1)) if bc else None,
+        "boot_reason": br.group(1) if br else None,
+        "last_crash": lc.group(1) if lc else None,
+        "last_crash_boot": int(lc.group(2)) if lc else None,
+    }
+
+
+def diff_crashlog(prev, cur):
+    """Epoch-aware diff of two parsed crashlogs (plan todo 7).
+
+    A DECREASING boot count means the NVS was wiped by a reflash (task 15
+    NVS expectation) — that is a new firmware epoch: re-baseline, no alarm.
+    Within an epoch, an abnormal reset reason on a reboot, or any change in
+    the "Last crash" line, is an anomaly.
+    """
+    out = {"first": False, "epoch_changed": False, "rebooted": False,
+           "abnormal_reboot": False, "new_crash": False, "anomaly": False}
+    if prev is None:
+        out["first"] = True
+        return out
+    bc_p, bc_c = prev.get("boot_count"), cur.get("boot_count")
+    if bc_p is None or bc_c is None:
+        out["unparsable"] = True  # cannot judge — never a false alarm
+        return out
+    if bc_c < bc_p:
+        out["epoch_changed"] = True  # reflash reset bootcnt — new epoch
+        return out
+    out["rebooted"] = bc_c != bc_p
+    if out["rebooted"]:
+        reason = cur.get("boot_reason")
+        out["abnormal_reboot"] = reason is not None and \
+            reason not in NORMAL_RESET_REASONS
+    out["new_crash"] = (
+        (cur.get("last_crash"), cur.get("last_crash_boot"))
+        != (prev.get("last_crash"), prev.get("last_crash_boot"))
+    )
+    out["anomaly"] = out["abnormal_reboot"] or out["new_crash"]
+    return out
+
+
+class HwChecker:
+    """Hourly read-only hardware checks + epoch-aware crashlog watch."""
+
+    HW_COMMANDS = ("hwinfo", "i2cscan", "status", "crashlog")
+
+    def __init__(self, console_fn=None, sink=None, sock_path=None, classify=None):
+        if console_fn is None:
+            sock = sock_path or (env_value("HIL_CONSOLE_SOCK")
+                                 or console_ctl.DEFAULT_SOCKET)
+            console_fn = lambda cmd: console_ctl.console_cmd(sock, cmd)  # noqa: E731
+        self.console_fn = console_fn
+        self.sink = sink or (lambda ev: None)
+        self.classify = classify or ledger.classify_output
+        self._prev = None
+
+    def run_once(self):
+        """One sweep of the four read-only commands; returns the rows."""
+        rows = []
+        for cmd in self.HW_COMMANDS:
+            try:
+                text = self.console_fn(cmd)
+            except OSError as exc:  # ConsoleError included — transport only
+                self.sink({"anomaly": "hwcheck_transport", "cmd": cmd,
+                           "error": repr(exc)})
+                continue
+            row = {"type": "hwcheck", "status": "PASS", "cmd": cmd,
+                   "classification": self.classify(text),
+                   "raw_tail": text.strip()[-160:]}
+            if cmd == "crashlog":
+                cur = parse_crashlog(text)
+                d = diff_crashlog(self._prev, cur)
+                row.update(boot_count=cur["boot_count"],
+                           boot_reason=cur["boot_reason"],
+                           last_crash=cur["last_crash"], crashlog_diff=d)
+                if d["anomaly"]:
+                    row["status"] = "FAIL"
+                    self.sink({"anomaly": "abnormal_reset", "cmd": "crashlog",
+                               "boot_count": cur["boot_count"],
+                               "boot_reason": cur["boot_reason"],
+                               "last_crash": cur["last_crash"],
+                               "epoch_changed": d["epoch_changed"],
+                               "abnormal_reboot": d["abnormal_reboot"],
+                               "new_crash": d["new_crash"]})
+                self._prev = cur
+            self.sink(row)
+            rows.append(row)
+        return rows
+
+
+# ---------------------------------------------------------- fuzz driver ----
+
+
+class ConsoleFuzzer:
+    """Drives the auth-free corpus over the console socket.
+
+    ``send(payload: bytes) -> response text`` and ``ping() -> dict`` are
+    injectable (tests/dry mode inject fakes; lanes inject console_ctl
+    callables). Offline transport errors are SOFT: anomaly row + stop, never
+    an exception. Liveness failures (PING dead / no fresh [HB] within
+    hb_max_wait_s) record an anomaly and stop the fuzz; ``strict=True``
+    (dry mode) raises LivenessError instead. Responses are classified via
+    ledger.classify_output — an observed auth_fail is anomalous (the
+    allowlist makes it impossible by construction; classification is the
+    defense-in-depth audit).
+    """
+
+    def __init__(self, send, ping, sink=None, clock=None, generator=None,
+                 liveness_every=LIVENESS_EVERY_INPUTS,
+                 hb_max_wait_s=HB_MAX_WAIT_S, poll_s=5.0,
+                 ledger_inst=None, card_uid=None, classify=None):
+        self.send = send
+        self.ping_fn = ping
+        self.sink = sink or (lambda ev: None)
+        self.clock = clock or RealClock()
+        self.generator = generator or FuzzGenerator()
+        self.liveness_every = int(liveness_every)
+        self.hb_max_wait_s = float(hb_max_wait_s)
+        self.poll_s = float(poll_s)
+        self.ledger_inst = ledger_inst
+        self.card_uid = card_uid
+        self.classify = classify or ledger.classify_output
+
+    def _emit(self, ev):
+        self.sink(ev)
+
+    def _safe_ping(self):
+        try:
+            return self.ping_fn()
+        except OSError as exc:
+            return {"hb_age": None, "lines": [], "error": repr(exc)}
+
+    def liveness_check(self):
+        """PING alive AND a fresh [HB] line within hb_max_wait_s."""
+        p = self._safe_ping()
+        if p.get("error"):
+            return {"ok": False, "reason": "ping_error", "detail": p["error"]}
+        lines = p.get("lines") or []
+        if not any(str(ln).startswith("alive") for ln in lines):
+            return {"ok": False, "reason": "ping_not_alive",
+                    "hb_age": p.get("hb_age")}
+        deadline = self.clock.monotonic() + self.hb_max_wait_s
+        while not any(str(ln).startswith("[HB]") for ln in lines):
+            if self.clock.monotonic() >= deadline:
+                return {"ok": False, "reason": "hb_timeout",
+                        "hb_age": p.get("hb_age")}
+            self.clock.sleep(self.poll_s)
+            p = self._safe_ping()
+            if p.get("error"):
+                continue  # transient — keep polling until the deadline
+            lines = p.get("lines") or []
+        return {"ok": True, "hb_age": p.get("hb_age")}
+
+    def run(self, max_inputs=None, deadline=None, running=None, strict=False):
+        stats = {"inputs": 0, "liveness_checks": 0, "liveness_failures": 0,
+                 "auth_fail_responses": 0, "stop_reason": None}
+
+        def finished():
+            if max_inputs is not None and stats["inputs"] >= max_inputs:
+                return True
+            if deadline is not None and self.clock.monotonic() >= deadline:
+                return True
+            return running is not None and not running()
+
+        while not finished():
+            line = self.generator.gen_line()
+            try:
+                resp = self.send(line)
+            except OSError as exc:  # offline: soft-assert, never raise
+                self._emit({"anomaly": "fuzz_console_offline",
+                            "error": repr(exc), "inputs": stats["inputs"]})
+                stats["stop_reason"] = "offline"
+                self._emit({"type": "fuzz_stats", "status": "INFO", **stats})
+                return stats
+            kind = self.classify(resp)
+            if kind == "auth_fail":
+                stats["auth_fail_responses"] += 1
+                if self.ledger_inst is not None and self.card_uid:
+                    self.ledger_inst.record_auth_failure(self.card_uid)
+                self._emit({"anomaly": "fuzz_auth_fail_response",
+                            "response_tail": str(resp)[-160:],
+                            "input_index": stats["inputs"]})
+            stats["inputs"] += 1
+            if self.liveness_every and \
+                    stats["inputs"] % self.liveness_every == 0:
+                stats["liveness_checks"] += 1
+                res = self.liveness_check()
+                if not res.get("ok"):
+                    stats["liveness_failures"] += 1
+                    self._emit({"anomaly": "fuzz_liveness_failed", **res})
+                    if strict:
+                        raise LivenessError(str(res))
+                    stats["stop_reason"] = "liveness"
+                    self._emit({"type": "fuzz_stats", "status": "INFO", **stats})
+                    return stats
+                self._emit({"type": "fuzz_liveness", "status": "PASS",
+                            "inputs": stats["inputs"],
+                            "hb_age": res.get("hb_age")})
+        stats["stop_reason"] = (
+            "max_inputs" if max_inputs is not None and
+            stats["inputs"] >= max_inputs else "stopped"
+        )
+        self._emit({"type": "fuzz_stats", "status": "INFO", **stats})
+        return stats
+
+
+# ------------------------------------------------------------- lanes ----
+
+
+def _lane_sink(ctx):
+    """Translate the component sink contract into todo-5 PhaseContext calls."""
+
+    def sink(ev):
+        ev = dict(ev)
+        kind = ev.pop("anomaly", None)
+        if kind is not None:
+            ctx.anomaly(kind, **ev)
+        else:
+            ctx.row(**ev)
+
+    return sink
+
+
+def _build_ledger_instance(issuer):
+    """Shared card-safety Ledger for the cycles lane (single writer: only the
+    cycles lane constructs an instance; fuzz/hwchecks lanes never write)."""
+    path = (env_value("OVERNIGHT_LEDGER_PATH")
+            or str(Path(__file__).resolve().parent / "results" / "card_ledger.json"))
+    kwargs = {"issuer_key": issuer}
+    for env_name, arg in (("CONSECUTIVE_LIMIT", "consecutive_limit"),
+                          ("TOTAL_LIMIT", "total_limit")):
+        raw = env_value(env_name)
+        if raw:
+            kwargs[arg] = int(raw)
+    return ledger.Ledger(path, **kwargs)
+
+
+def cycles_lane(ctx):
+    """Window-1 lane: paced burn/wipe cycles through tools/hil/burn_cycle.py.
+
+    Mutations run inside ``ctx.card("stick")`` (todo-5 cross-track card
+    mutex); drain closes the window via MutationWindowClosed -> honest SKIP.
+    CardSafetyHalt halts only this lane (the ACR track keeps running).
+    """
+    uid = (env_value("HIL_UID_STICK") or env_value("HIL_UID") or "").strip()
+    issuer = (env_value("HIL_ISSUER") or "").strip()
+    if not uid or not issuer:
+        ctx.skip("HIL_UID_STICK/HIL_ISSUER not staged in overnight.env "
+                 "(stick uid is captured at rehearsal, task 18) — no cycles")
+        return
+    try:
+        led = _build_ledger_instance(issuer)
+    except (ledger.CardSafetyError, ValueError) as exc:
+        ctx.skip(f"card-safety ledger unavailable: {exc!r}")
+        return
+    driver = BurnCycleDriver(
+        uid=uid, issuer=issuer, ledger_inst=led, sink=_lane_sink(ctx),
+        should_stop=lambda: not ctx.running(),
+    )
+    try:
+        driver.run_cycles(running=ctx.running, sleep=ctx.sleep,
+                          hold_card=lambda: ctx.card("stick"))
+    except MWC_TYPES:
+        ctx.skip("mutation window closed (drain) — cycles lane exiting")
+    except ledger.CardSafetyHalt as exc:
+        ctx.anomaly("card_safety_halt", card=exc.card, reason=exc.reason,
+                    detail=str(exc))
+    except ledger.CardSafetyError as exc:
+        ctx.skip(f"card-safety refusal: {exc!r}")
+
+
+def fuzz_lane(ctx):
+    """Window-1 lane: auth-free console fuzz (allowlist by construction).
+
+    Fuzz inputs cannot mutate the card, so the lane does NOT take the card
+    mutex — the daemon's own per-connection lock serializes console traffic
+    with the cycles lane, and holding the stick lock for a 25-input batch
+    (minutes) would starve the cycles lane past its 5s lock timeout.
+    """
+    sock = env_value("HIL_CONSOLE_SOCK") or console_ctl.DEFAULT_SOCKET
+    fuzzer = ConsoleFuzzer(
+        send=lambda payload: console_ctl.send_raw(sock, payload),
+        ping=lambda: console_ctl.ping(sock),
+        sink=_lane_sink(ctx),
+        clock=RealClock(),
+    )
+    fuzzer.run(running=ctx.running)  # offline/liveness failures are recorded
+
+
+def hwchecks_lane(ctx):
+    """Window-1 lane: immediate baseline sweep, then hourly hw checks."""
+    sock = env_value("HIL_CONSOLE_SOCK") or console_ctl.DEFAULT_SOCKET
+    hw = HwChecker(sock_path=sock, sink=_lane_sink(ctx))
+    while ctx.running():
+        hw.run_once()
+        if not ctx.running():
+            break
+        ctx.sleep(HWCHECK_INTERVAL_S)  # pause-aware; exits on lane stop
+
+
+_LANE_TABLE = (
+    ("track_a_cycles", cycles_lane, "window1", ("stick",)),
+    ("track_a_console_fuzz", fuzz_lane, "window1", ()),
+    ("track_a_hwchecks", hwchecks_lane, "window1", ()),
+)
+
+
+def build_specs():
+    """All three Track A lane specs (todo-5 LaneSpec or documented fallback)."""
+    return [
+        _LaneSpec(name=name, target=target, window=window, cards=cards,
+                  pace_s=1.0)
+        for name, target, window, cards in _LANE_TABLE
+    ]
+
+
+def build_lane():
+    """Primary spec for overnight.load_track_specs (module contract)."""
+    name, target, window, cards = _LANE_TABLE[0]
+    return _LaneSpec(name=name, target=target, window=window, cards=cards,
+                     pace_s=1.0)
+
+
+def register(orchestrator):
+    """Register Track A lanes with the todo-5 orchestrator (appends to
+    ``orchestrator.specs``); returns the specs for convenience."""
+    specs = build_specs()
+    orchestrator.specs.extend(specs)
+    return specs
+
+
+# ------------------------------------------------------------ selftest ----
+
+_SELF_UID = "04C474FA967380"  # stick card uid (public lab stock, AGENTS.md)
+
+_SELF_PASS = """\
+=== PING (daemon health) ===
+alive hb_age=1s opened=123s ago
+OK
+=== uid (expect our card) ===
+UID: 04C474FA967380
+OK
+=== stage + burn ===
+burn complete
+OK
+TAP_URL: https://boltcardpoc.psbt.me/?p=SDMPICCPAYLOADNOTHEXPLACEHOLDERX&c=00112233
+worker tap HTTP: 200
+wipe complete
+OK
+
+===== CYCLE SUMMARY =====
+  burn                   : PASS
+  inspect_provisioned    : PASS
+  picc_sdm_ok            : PASS
+  worker_tap_200         : PASS
+  wipe                   : PASS
+  inspect_blank          : PASS
+TAP_URL: https://boltcardpoc.psbt.me/?p=SDMPICCPAYLOADNOTHEXPLACEHOLDERX&c=00112233
+RESULT: ALL PASS
+"""
+
+_SELF_FAIL = _SELF_PASS.replace(
+    "  worker_tap_200         : PASS", "  worker_tap_200         : FAIL"
+).replace("RESULT: ALL PASS", "RESULT: FAILURES PRESENT")
+
+_SELF_CRASHLOG = ("[CRASHLOG]\n  Boot count: 7\n"
+                  "  This boot reason: POWERON\n  Last crash: none\n"
+                  "[CRASHLOG] END\nOK 4 lines")
+
+
+def _selftest(count, seed):
+    ok_all = True
+
+    def check(name, ok):
+        nonlocal ok_all
+        ok_all = ok_all and bool(ok)
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
+
+    print(f"track_a offline selftest: {count} fuzz samples (no hardware)")
+    gen = FuzzGenerator(seed=seed)
+    lines = gen.generate(count)
+    check("fuzz corpus: every line-start token allowlisted or token-free",
+          all(audit_line_start(ln) for ln in lines))
+    joined = b"".join(lines)
+    low_starts = [ln.lstrip(_WS_STRIP).lower() for ln in lines]
+    check("fuzz corpus: zero forbidden prefixes at line start (grep audit)",
+          not any(ls.startswith(p.encode()) for ls in low_starts
+                  for p in FORBIDDEN_PREFIXES))
+    check("fuzz corpus: control bytes 0x00/0x03/0x15 and 4KB lines present",
+          all(bytes([b]) in joined for b in (0x00, 0x03, 0x15))
+          and any(len(ln) >= 4096 for ln in lines))
+
+    p = parse_cycle_output(_SELF_PASS)
+    check("gate parser: 6/6 PASS fixture",
+          p["ok"] and len(p["gates"]) == 6 and not p["missing_gates"])
+    f = parse_cycle_output(_SELF_FAIL)
+    check("gate parser: FAIL variant detected",
+          (not f["ok"]) and f["gates"]["worker_tap_200"] == "FAIL")
+
+    c1 = parse_crashlog(_SELF_CRASHLOG)
+    c2 = {"boot_count": 8, "boot_reason": "TASK_WDT",
+          "last_crash": "TASK_WDT", "last_crash_boot": 7}
+    check("crashlog: parse + baseline",
+          c1["boot_count"] == 7 and c1["last_crash"] is None
+          and not diff_crashlog(None, c1)["anomaly"])
+    check("crashlog: epoch reset (reflash) is NOT an anomaly",
+          diff_crashlog({"boot_count": 200, "boot_reason": "POWERON",
+                         "last_crash": None, "last_crash_boot": None},
+                        c1)["epoch_changed"])
+    check("crashlog: abnormal reset within epoch IS an anomaly",
+          diff_crashlog(c1, c2)["anomaly"])
+
+    clock = FakeClock()
+    starts = []
+
+    def fake_runner(argv, env, timeout, cwd):
+        starts.append(clock.monotonic())
+        clock.sleep(5.0)
+        return 0, _SELF_PASS, ""
+
+    drv = BurnCycleDriver(runner=fake_runner, uid=_SELF_UID,
+                          clock=clock)
+    drv.run_cycles(max_cycles=2)
+    check("pacing: >=30s between cycle starts",
+          len(starts) == 2 and starts[1] - starts[0] >= 30.0)
+
+    clock2 = FakeClock()
+    starts2 = []
+
+    def fake_runner2(argv, env, timeout, cwd):
+        starts2.append(clock2.monotonic())
+        clock2.sleep(10.0)
+        return 0, _SELF_PASS, ""
+
+    drv2 = BurnCycleDriver(runner=fake_runner2, uid=_SELF_UID, clock=clock2,
+                           min_cycle_gap_s=0.0)
+    drv2.run_cycles(deadline=35.0, min_remaining_s=10.0)
+    check("budget: no cycle starts inside the deadline reserve",
+          starts2 == [0.0, 10.0, 20.0])
+
+    ok_ping = {"hb_age": 2,
+               "lines": ["alive hb_age=2s", "[HB] alive t=1ms nfc=ok"],
+               "error": None}
+    fz = ConsoleFuzzer(send=lambda payload: "OK 0 lines",
+                       ping=lambda: ok_ping, clock=FakeClock())
+    stats = fz.run(max_inputs=30)
+    check("fuzzer: 30 inputs, liveness PASS at 25, zero failures",
+          stats["inputs"] == 30 and stats["liveness_checks"] == 1
+          and stats["liveness_failures"] == 0)
+
+    print("SELFTEST PASS" if ok_all else "SELFTEST FAIL")
+    return 0 if ok_all else 1
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Overnight Track A (todo 7): burn cycles + console fuzz "
+                    "+ hourly hw checks")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline generator/parser/pacing checks (no hardware)")
+    ap.add_argument("--count", type=int, default=2000,
+                    help="selftest fuzz sample count")
+    ap.add_argument("--seed", type=int, default=20260828,
+                    help="selftest generator seed")
+    args = ap.parse_args(argv)
+    if args.selftest:
+        return _selftest(args.count, args.seed)
+    ap.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
