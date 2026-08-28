@@ -20,7 +20,6 @@ pub fn dispatch_command<S: BoltyService>(
         | Command::Ndef
         | Command::Auth
         | Command::Ver
-        | Command::KeyVer
         | Command::DummyBurn
         | Command::Reset
         | Command::Picc
@@ -60,7 +59,10 @@ pub fn dispatch_command<S: BoltyService>(
             )
         }
         Command::Wipe => service.wipe(config.pending_issuer.as_ref(), config.pending_keys.as_ref()),
-        Command::Inspect => match service.inspect() {
+        // KeyVer shares Inspect's authenticated path (which reads all key
+        // versions via check_key_versions); previously it was a silent no-op
+        // that reported success without touching the card.
+        Command::KeyVer | Command::Inspect => match service.inspect() {
             Ok(_) => WorkflowResult::Success,
             Err(err) => err,
         },
