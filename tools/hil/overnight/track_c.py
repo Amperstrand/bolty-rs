@@ -423,6 +423,95 @@ def build_lane():
                     cards=(), needs_pcscd=False, pace_s=1.0)
 
 
+# ------------------------------------------------------------ selftest ----
+
+SPEC_CMD_SELFTEST = next(c for c in COMMANDS if c.kind == "spec_quote")
+
+
+def _selftest():  # pragma: no cover — exercised via CLI in tests
+    """Offline self-test: table invariants, row classification, fail
+    isolation, incremental JSONL, spec-quote offline SKIP — no cargo, no
+    network (every exec goes through an injected fake exec_fn)."""
+    import tempfile
+
+    checks = []
+
+    def check(name, cond):
+        checks.append((name, bool(cond)))
+
+    class FakeClock:
+        def __init__(self):
+            self.t = 1000.0
+
+        def monotonic(self):
+            self.t += 1.0
+            return self.t
+
+    class FakeExec:
+        """rc=1 when the marker arg is present; clone -> 128 (offline)."""
+
+        def __init__(self, marker="--fail-me"):
+            self.marker = marker
+            self.calls = []
+
+        def __call__(self, argv, cwd, env, timeout_s):
+            self.calls.append(tuple(argv))
+            if self.marker in argv:
+                return 1, "simulated lint error\n", False
+            if argv[:3] == ("git", "clone", "--depth=1"):
+                return 128, "Could not resolve host\n", False
+            return 0, "ok\n", False
+
+    # table invariants (condensed todo-11 fixture)
+    check("table_size", len(COMMANDS) == 12)
+    check("table_repos", {c.repo for c in COMMANDS}
+          == {"bolty-rs", "ccid-firmware-rs"})
+    check("quick_fmt_only", [c.name for c in select_commands(quick=True)]
+          == ["bolty/fmt", "ccid/fmt"])
+    check("spec_kind", sum(1 for c in COMMANDS if c.kind == "spec_quote") == 1)
+
+    # row classification: rc!=0 -> FAIL, rc=0 -> PASS, timed_out -> FAIL
+    cmd = COMMANDS[0]
+    tc0 = TrackC()
+    r_fail = tc0._row(cmd, cmd.display, cmd.cwd, 1, "x", 1.0, False)
+    r_pass = tc0._row(cmd, cmd.display, cmd.cwd, 0, "x", 1.0, False)
+    r_to = tc0._row(cmd, cmd.display, cmd.cwd, 0, "x", 1.0, True)
+    check("classify", (r_fail["status"], r_pass["status"], r_to["status"])
+          == ("FAIL", "PASS", "FAIL"))
+
+    # audit loop: one FAIL never aborts the rest; summary counts it;
+    # every row lands in track_c.jsonl the moment it finishes
+    with tempfile.TemporaryDirectory() as td:
+        fail_cmd = AuditCommand("bolty-rs", "selftest/fail", BOLTY_REPO,
+                                ("cargo", "fmt", "--check", "--fail-me"))
+        fx = FakeExec()
+        tc = TrackC(commands=(fail_cmd, COMMANDS[5]), exec_fn=fx,
+                    results_dir=Path(td), clock=FakeClock())
+        rows, summary = tc.run_audit()
+        jsonl = [json.loads(line)
+                 for line in (Path(td) / JSONL_NAME).read_text().splitlines()]
+        check("fail_isolation", [r["status"] for r in rows]
+              == ["FAIL", "PASS"] and len(fx.calls) == 2)
+        check("summary_counts", summary["fail_total"] == 1
+              and summary["repos"]["bolty-rs"]["fail"] == 1)
+        check("jsonl_incremental", len(jsonl) == 3
+              and jsonl[-1]["type"] == "summary")
+
+        # spec-quote offline: clone rc!=0 -> SKIP{reason:offline}, not FAIL
+        tc2 = TrackC(exec_fn=FakeExec(), results_dir=Path(td),
+                     clock=FakeClock())
+        spec = tc2.run_one(SPEC_CMD_SELFTEST)
+        check("spec_offline_skip", spec["status"] == "SKIP"
+              and spec["reason"] == "offline")
+
+    ok = all(c for _, c in checks)
+    for name, cond in checks:
+        print(f"  {'PASS' if cond else 'FAIL'}  {name}")
+    print(f"selftest: {sum(c for _, c in checks)}/{len(checks)} checks, "
+          f"{'OK' if ok else 'FAILED'}")
+    return 0 if ok else 1
+
+
 # -------------------------------------------------------------- CLI ----
 
 
@@ -437,6 +526,8 @@ def print_command_list(commands=COMMANDS) -> None:
 def main(argv=None) -> int:  # pragma: no cover — thin CLI over TrackC
     ap = argparse.ArgumentParser(
         description="Track C: CI-parity host-audit runner (both repos)")
+    ap.add_argument("--selftest", action="store_true",
+                    help="offline table/classification/persistence self-test")
     ap.add_argument("--list", action="store_true",
                     help="print the enumerated command list and exit")
     ap.add_argument("--quick", action="store_true",
@@ -448,6 +539,8 @@ def main(argv=None) -> int:  # pragma: no cover — thin CLI over TrackC
                     help="directory for track_c.jsonl "
                          f"(default {_default_results_dir()})")
     args = ap.parse_args(argv)
+    if args.selftest:
+        return _selftest()
     if args.list:
         print_command_list(COMMANDS)
         return 0
