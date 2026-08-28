@@ -32,11 +32,14 @@ What it watches and what it does:
      an independent process the watchdog cannot hold overnight.py's global
      pcscd-maintenance lock, so while the scheduler is ALIVE it writes
      ``PCSCD_RESTART_REQUEST`` (the scheduler restarts pcscd.socket/service
-     UNDER the lock, switch_role.sh:66 pattern, then deletes the marker;
-     watchdog polls removal, 10-min timeout -> degraded row). Only a
+     UNDER the lock, switch_role.sh:66 pattern, then atomically consumes the
+     request: rename to ``.done`` + delete). Oracle r3: only ACKNOWLEDGED
+     requests count — marker consumed OR readers() recovery — and the >= 5min
+     gone-timer re-arms after each cycle (no restart loops); an
+     unacknowledged marker escalates to a degraded row after 10 min. Only a
      CONFIRMED-DEAD scheduler (pid gone or heartbeat stale — its lanes are
-     dead too) permits a direct restart. Cap 3 restarts total across both
-     modes, then degraded rows. WINDOW2 under Mode B keeps the bolty playbook
+     dead too) permits a direct restart. Cap 3 restarts total, then degraded
+     rows. WINDOW2 under Mode B keeps the bolty playbook
      instead (the bolty role persists), so we never issue pointless pcscd
      restarts against a stick that is not a reader (pcscd probing the port is
      the B11 wedge class — issues.md).
@@ -572,11 +575,14 @@ class ReaderMonitor:
     while the scheduler is ALIVE it never restarts pcscd itself (that would
     kill every reader context without pausing lanes). Instead it writes
     PCSCD_RESTART_REQUEST; the scheduler's monitor executes the restart UNDER
-    the lock and deletes the marker. The watchdog polls for the marker's
-    removal (10-min timeout -> degraded row). Only a CONFIRMED-DEAD scheduler
-    (pid gone or heartbeat stale — lanes are dead too) permits a direct
-    `systemctl restart pcscd`. One restart counter, cap 3 across both modes,
-    then degraded rows."""
+    the lock and atomically consumes the request (rename to .done, delete).
+    Oracle r3 ack semantics: the watchdog counts ONLY acknowledged requests —
+    marker consumed OR readers() recovery — and re-arms its >= 5min gone-timer
+    after each cycle, so a never-cleared marker can never loop restarts; an
+    unacknowledged marker times out after 10 min into a degraded row. Only a
+    CONFIRMED-DEAD scheduler (pid gone or heartbeat stale — lanes are dead
+    too) permits a direct `systemctl restart pcscd`. One restart counter,
+    cap 3 across all ack modes + direct, then degraded rows."""
 
     def __init__(self, sysctl, clock, journal, cfg: dict, *, hb_path,
                  scheduler_pid, probe):
@@ -622,17 +628,21 @@ class ReaderMonitor:
             present = False
             self.journal.event("readers_error", error=repr(e))
         if present:
-            if self.gone_since is not None:
+            if self.marker_at is not None:
+                if self.marker_path.exists():
+                    # reader recovered before the scheduler handled it:
+                    # retract so no spurious restart is ever executed — the
+                    # recovery itself is the acknowledgement (oracle r3)
+                    self.marker_path.unlink(missing_ok=True)
+                    self.journal.event("marker_retracted",
+                                       detail="GemPCTwin returned before the "
+                                              "request was handled")
+                    self._ack("restart_request_acked", "reader_recovery")
+                else:
+                    self._ack("pcscd_restart", "scheduler_marker")
+            elif self.gone_since is not None:
                 self.gone_since = None
                 self.journal.event("reader_back")
-            if self.marker_at is not None and self.marker_path.exists():
-                # reader recovered before the scheduler handled the request:
-                # retract it so no spurious restart is ever executed
-                self.marker_path.unlink(missing_ok=True)
-                self.journal.event("marker_retracted",
-                                   detail="GemPCTwin returned before the "
-                                          "request was handled")
-            self.marker_at = None
             return
         if self.gone_since is None:
             self.gone_since = now_mono
@@ -655,17 +665,23 @@ class ReaderMonitor:
             return
         self._request_restart(now_mono)
 
+    def _ack(self, kind: str, via: str) -> None:
+        """One acknowledged request cycle: count it, re-arm the >= 5min
+        gone-timer (a consumed marker can never loop into back-to-back
+        requests), enforce the shared cap."""
+        self.restarts += 1
+        self.marker_at = None
+        self.gone_since = None
+        self.journal.anomaly(kind, via=via, attempt=self.restarts)
+        if self.restarts >= self.cap:
+            self.passive = True
+
     def _poll_marker(self, now_mono: float) -> None:
         if not self.marker_path.exists():
-            # the scheduler restarted pcscd under its lock and deleted the
-            # marker — count it and open a fresh observation window
-            self.restarts += 1
-            self.marker_at = None
-            self.gone_since = None
-            self.journal.anomaly("pcscd_restart", via="scheduler_marker",
-                                 attempt=self.restarts)
-            if self.restarts >= self.cap:
-                self.passive = True
+            # the scheduler atomically consumed the request (rename to .done
+            # then delete) after restarting pcscd under its lock — the
+            # original path disappearing IS the ack point
+            self._ack("pcscd_restart", "scheduler_marker")
         elif (now_mono - self.marker_at) >= self.marker_timeout_s:
             self.journal.anomaly(
                 "recovery_degraded", component="pcscd",
@@ -683,7 +699,8 @@ class ReaderMonitor:
                 "reason": f"GemPCTwin absent from readers() for "
                           f">= {self.gone_s:.0f}s",
                 "action": "restart pcscd under the global maintenance lock, "
-                          "then delete this file"})
+                          "then atomically consume this request (rename to "
+                          "PCSCD_RESTART_REQUEST.done, then delete)"})
             self.marker_at = now_mono
             self.journal.anomaly("pcscd_restart_requested",
                                  marker=self.marker_path.name)

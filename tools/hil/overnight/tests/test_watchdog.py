@@ -583,6 +583,67 @@ def test_pcscd_marker_retracted_when_reader_returns(tmp_path):
     assert "marker_retracted" in [e["kind"] for e in journal]
 
 
+def test_pcscd_rearm_no_double_write_within_5min(tmp_path):
+    # oracle r3: the gone-timer re-arms after each request cycle, so a
+    # consumed marker can never loop into back-to-back requests
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")    # observe
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")  # request #1
+    assert marker.exists()
+    marker.unlink()  # scheduler's atomic consume (rename to .done, delete)
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")    # ack 1/3
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")    # re-observe
+    poll(dog, clock, tmp_path, advance=299, phase="WINDOW2")  # 299 < 300
+    assert not marker.exists()  # no double-write inside the 5-min window
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")  # 301 >= 300
+    assert marker.exists()  # request #2 only now
+
+
+def test_pcscd_reader_recovery_counts_as_ack_toward_cap(tmp_path):
+    # oracle r3: acknowledgement = marker consumed OR readers() recovery —
+    # BOTH increment the one restart counter (cap 3)
+    clock = FakeClock()
+    write_hb(tmp_path, clock, phase="WINDOW2")
+    partial_results(tmp_path)
+    sysctl = FakeSys(readers=["ACS ACR1252 1S ICC Reader 00 00"])
+    dog, sysctl, _ = make_dog(tmp_path, clock, sysctl=sysctl)
+    marker = tmp_path / "PCSCD_RESTART_REQUEST"
+
+    # episode 1: request written, reader recovers on its own -> ack 1/3
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")
+    assert marker.exists()
+    sysctl.readers_list.append("GemPCTwin serial 00 00")
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")  # ack via recovery
+    assert not marker.exists()
+
+    # episodes 2+3: consumed requests -> acks 2/3 and 3/3 -> passive
+    for _ in range(2):
+        sysctl.readers_list.pop()  # GemPCTwin gone again
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+        poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")
+        assert marker.exists()
+        marker.unlink()
+        poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+
+    # cap reached across mixed ack modes: 4th trigger -> degraded row only
+    poll(dog, clock, tmp_path, advance=2, phase="WINDOW2")
+    poll(dog, clock, tmp_path, advance=301, phase="WINDOW2")
+    assert not marker.exists()  # no 4th write
+    assert [c for c in sysctl.calls if c[:2] == ("systemctl", "restart")] == []
+    journal = [json.loads(ln) for ln in
+               (tmp_path / "watchdog.jsonl").read_text().splitlines()]
+    kinds = [e["kind"] for e in journal]
+    assert kinds.count("restart_request_acked") == 1
+    assert kinds.count("pcscd_restart") == 2  # the two consumed requests
+    assert "recovery_degraded" in kinds
+
+
 # ------------------------------------------------------------- ABORT ----
 
 
