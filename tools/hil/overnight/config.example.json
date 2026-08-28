@@ -1,0 +1,32 @@
+{
+  "results_dir": "tools/hil/overnight/results/<UTC-date-of-the-run>",
+  "duration_s": 32400.0,
+  "phases": {
+    "preflight_s": 1800.0,
+    "window1_s": 12600.0,
+    "role_gate_s": 1800.0,
+    "window2_s": 12600.0,
+    "restore_s": 2700.0,
+    "report_s": 900.0
+  },
+  "drain_lead_s": 300.0,
+  "drain_grace_s": 70.0,
+  "pcscd_pause_grace_s": 90.0,
+  "heartbeat_interval_s": 60.0,
+  "lane_join_s": 5.0,
+  "cards": {
+    "stick": {"probe": "console_inspect"},
+    "acr": {"probe": "bolty_cli_inspect"}
+  },
+  "hb": {
+    "enabled": true,
+    "max_age_s": 30.0,
+    "poll_s": 10.0,
+    "console_log": "~/.bolty/console.log",
+    "console_socket": "/run/bolty/console.sock"
+  },
+  "monitor_phases": ["WINDOW1", "RESTORE"],
+  "window1_tracks": ["track_a_cycles"],
+  "window2_ccid_tracks": ["track_d_soak", "track_d_raw", "track_d_atr"],
+  "all_night_tracks": ["track_b_acr", "track_c_host"]
+}
