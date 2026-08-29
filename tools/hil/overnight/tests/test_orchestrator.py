@@ -485,6 +485,56 @@ def test_cli_dry_run_exit_zero_with_mode_b(tmp_path):
     assert "results.json" in proc.stdout
 
 
+def test_script_mode_loads_real_lane_specs():
+    """Regression (2026-08-29 noop night): `python3 overnight.py --config`
+    runs this file as __main__, while track modules' build_lane() does
+    `import overnight` — a SECOND copy of the file. Without the __main__
+    identity alias, every spec failed isinstance(spec, LaneSpec) and was
+    dropped silently, so all lanes SKIPped "not implemented yet"."""
+    code = (
+        "import importlib.util, sys\n"
+        f"sys.path.insert(0, {str(OVERNIGHT_DIR)!r})\n"
+        "spec = importlib.util.spec_from_file_location("
+        f"'__main__', {str(OVERNIGHT_DIR / 'overnight.py')!r})\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "sys.modules['__main__'] = m  # replicate the script runner's setup\n"
+        "try:\n"
+        "    spec.loader.exec_module(m)  # __main__ guard fires; main() exits\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "assert sys.modules['overnight'] is m, 'identity alias missing'\n"
+        "specs = m.load_track_specs({})\n"
+        "names = sorted(s.name for s in specs)\n"
+        "assert names == ['track_a_cycles', 'track_b_acr', 'track_c_host'], names\n"
+        "assert all(isinstance(s, m.LaneSpec) for s in specs)\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT,
+                          capture_output=True, text=True, timeout=180)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_load_track_specs_records_dropped_duck_typed_spec():
+    """A build_lane() result that is not this module's LaneSpec must surface
+    as an ERROR row, not vanish (the silent half of the noop-night bug)."""
+    dropped = []
+    import types
+    fake = types.ModuleType("track_d")
+    fake.build_lane = lambda: types.SimpleNamespace(name="track_d_soak")
+    saved = sys.modules.get("track_d")
+    sys.modules["track_d"] = fake
+    try:
+        specs = overnight.load_track_specs({}, sink=lambda **kw: dropped.append(kw))
+    finally:
+        if saved is not None:
+            sys.modules["track_d"] = saved
+        else:
+            sys.modules.pop("track_d", None)
+    assert sorted(s.name for s in specs) == ["track_a_cycles", "track_b_acr",
+                                             "track_c_host"]
+    assert len(dropped) == 1 and dropped[0]["status"] == "ERROR"
+    assert "LaneSpec" in dropped[0]["error"]
+
+
 # ---------------------------------------------- r3 amendments (g: hb thread) ----
 
 def test_heartbeat_dedicated_writer_thread_and_stop(tmp_path):

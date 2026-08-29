@@ -1366,6 +1366,12 @@ def load_track_specs(cfg: dict, sink: Optional[Callable] = None) -> list:
             spec = mod.build_lane()
             if isinstance(spec, LaneSpec):
                 specs.append(spec)
+            elif sink is not None:
+                # silent drops cost the 2026-08-29 night — keep this loud
+                sink(type="ERROR", status="ERROR", lane=mod_name,
+                     error=f"build_lane returned {type(spec).__module__}."
+                           f"{type(spec).__qualname__}, not this overnight.LaneSpec "
+                           f"(class-identity mismatch — dropped)")
         except Exception as e:  # noqa: BLE001 — module present but broken: record it
             if sink is not None:
                 sink(type="ERROR", status="ERROR", lane=mod_name,
@@ -1545,4 +1551,9 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    # Script-mode identity guard: track modules `import overnight` inside
+    # build_lane(); without this alias they load a SECOND copy of this file,
+    # every lane's isinstance(spec, LaneSpec) fails, and the night no-ops
+    # (the 2026-08-29 run — every lane SKIPped "not implemented yet").
+    sys.modules["overnight"] = sys.modules[__name__]
     sys.exit(main())
