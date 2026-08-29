@@ -8,7 +8,7 @@ members = [
 
 [workspace.dependencies]
 ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", branch = "ai-experiments", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
-mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", branch = "ai-experiments" }
+mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
 iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", branch = "ai-experiments", features = ["alloc"] }
 
 # Temporary fork of esp-idf-svc to fix BLE ble_ping_en struct mismatch.
@@ -31,6 +31,3 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
-[patch."https://github.com/Amperstrand/mfrc522-rs.git"]
-mfrc522 = { path = "vendor/mfrc522-rs" }
