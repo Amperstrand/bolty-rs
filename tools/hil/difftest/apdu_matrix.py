@@ -29,10 +29,11 @@ class ApduTest:
     test_id: str
     category: str
     description: str
-    apdu_hex: str | None  # None = special (e.g., "connect and read ATR")
+    apdu_hex: str | None
     prerequisites: list[str] = field(default_factory=list)
-    repeat: int = 1  # how many times to send (for stress tests)
-    special: str | None = None  # "get_atr", "get_uid", "reconnect"
+    repeat: int = 1
+    special: str | None = None
+    card_dependent: bool = False  # if True, response bytes depend on card content
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,7 @@ APDU_TESTS: list[ApduTest] = [
     # --- Card identification ---
     ApduTest(
         test_id="get_atr",
+        card_dependent=True,
         category="identity",
         description="Get ATR (card answer-to-reset on connect)",
         apdu_hex=None,
@@ -54,9 +56,11 @@ APDU_TESTS: list[ApduTest] = [
         description="Get card UID via pseudo-APDU",
         apdu_hex="FFCA000000",
         special="get_uid",
+        card_dependent=True,
     ),
     ApduTest(
         test_id="reconnect_atr",
+        card_dependent=True,
         category="identity",
         description="Reconnect and get ATR again (stability check)",
         apdu_hex=None,
@@ -110,6 +114,7 @@ APDU_TESTS: list[ApduTest] = [
     # --- NTAG424 file operations (after SELECT) ---
     ApduTest(
         test_id="read_cc_full",
+        card_dependent=True,
         category="ntag424",
         description="Read full Capability Container (15 bytes)",
         apdu_hex="00B000000F",
@@ -117,6 +122,7 @@ APDU_TESTS: list[ApduTest] = [
     ),
     ApduTest(
         test_id="read_cc_partial",
+        card_dependent=True,
         category="ntag424",
         description="Read CC partial (first 4 bytes)",
         apdu_hex="00B0000004",
@@ -124,6 +130,7 @@ APDU_TESTS: list[ApduTest] = [
     ),
     ApduTest(
         test_id="read_cc_invalid_offset",
+        card_dependent=True,
         category="ntag424",
         description="Read CC from invalid offset 0xFF",
         apdu_hex="00B0FF0001",
@@ -131,6 +138,7 @@ APDU_TESTS: list[ApduTest] = [
     ),
     ApduTest(
         test_id="read_ndef_after_select",
+        card_dependent=True,
         category="ntag424",
         description="Read NDEF file after selecting it",
         apdu_hex="00B0990030",
@@ -138,6 +146,7 @@ APDU_TESTS: list[ApduTest] = [
     ),
     ApduTest(
         test_id="read_no_select",
+        card_dependent=True,
         category="ntag424",
         description="Read without prior SELECT (expect error)",
         apdu_hex="00B000000F",
