@@ -910,16 +910,26 @@ def register(ctx, client=None, clock=None):
 
 
 def build_lane():
-    """LaneSpec for the overnight orchestrator (window1, stick card)."""
-    import overnight
+    """LaneSpec for the overnight orchestrator (window1, stick card).
 
-    return overnight.LaneSpec(
-        name="track_a_rest",
-        target=lambda ctx: register(ctx),
-        window="window1",
-        cards=("stick",),
-        pace_s=READ_PACE_S,
-    )
+    Duck-typed fallback for a shadowed import (sibling __init__.py makes
+    `import overnight` resolve to the docstring-only package under pytest)
+    — mirrors track_c.build_lane.
+    """
+    spec_cls = None
+    try:
+        import overnight
+        spec_cls = getattr(overnight, "LaneSpec", None)
+    except ImportError:
+        pass
+    if spec_cls is None:
+        from types import SimpleNamespace
+        return SimpleNamespace(name="track_a_rest",
+                               target=lambda ctx: register(ctx),
+                               window="window1", cards=("stick",),
+                               pace_s=READ_PACE_S)
+    return spec_cls("track_a_rest", lambda ctx: register(ctx),
+                    window="window1", cards=("stick",), pace_s=READ_PACE_S)
 
 
 # --------------------------------------------------------------- selftest ----

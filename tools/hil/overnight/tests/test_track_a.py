@@ -647,6 +647,10 @@ def test_cycles_lane_rows_and_exit(tmp_path, monkeypatch):
 def test_cycles_lane_requires_staged_uid(tmp_path, monkeypatch):
     monkeypatch.delenv("HIL_UID_STICK", raising=False)
     monkeypatch.delenv("HIL_UID", raising=False)
+    # isolate from the REAL overnight.env (HIL_UID_STICK lives there since
+    # the rehearsal) — without this the lane builds a live BurnCycleDriver
+    # and drives real burn_cycle attempts from a unit test
+    monkeypatch.setattr(track_a, "_ENV_FILE_CACHE", {})
     ctx = StubCtx()
     track_a.cycles_lane(ctx)
     assert ctx.rows == []
