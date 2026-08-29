@@ -208,9 +208,22 @@ def _real_run(argv, *, input=None, timeout=None):  # noqa: A002
 
 def list_readers() -> list:
     """pyscard readers() as plain strings (lazy import — unit paths never
-    need pyscard installed)."""
+    need pyscard installed).
+
+    pcscd restarts invalidate pyscard's PROCESS-WIDE PCSC context singleton
+    (smartcard.pcsc.PCSCContext caches one handle): every later readers()
+    in the same process raises ListReaders/EstablishContext even against a
+    healthy daemon. The role gate restarts pcscd several times under one
+    long-lived orchestrator, so on any failure renew the context and retry
+    once before giving up (live-proven 2026-08-29: pcscd had loaded
+    GemPCTwin while the leg process kept failing on its stale context)."""
     from smartcard.System import readers
-    return [str(r) for r in readers()]
+    from smartcard.pcsc.PCSCContext import PCSCContext
+    try:
+        return [str(r) for r in readers()]
+    except Exception:
+        PCSCContext.renewContext()
+        return [str(r) for r in readers()]
 
 
 def ping_console(timeout: float = PING_TIMEOUT_S):
