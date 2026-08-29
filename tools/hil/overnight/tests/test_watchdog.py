@@ -705,3 +705,59 @@ def test_events_append_to_shared_results_and_sidecar(tmp_path):
 
 def test_selftest_runs_clean():
     assert watchdog.run_selftest() is True
+
+
+# ------------------------------------------------ stale pcsc context ----
+
+def _stub_smartcard(monkeypatch, readers_fn, ctx):
+    import types
+
+    sys_mod = types.ModuleType("smartcard.System")
+    sys_mod.readers = staticmethod(readers_fn)
+    ctx_mod = types.ModuleType("smartcard.pcsc.PCSCContext")
+    ctx_mod.PCSCContext = ctx
+    pcsc_mod = types.ModuleType("smartcard.pcsc")
+    pcsc_mod.PCSCContext = ctx
+    monkeypatch.setitem(sys.modules, "smartcard.System", sys_mod)
+    monkeypatch.setitem(sys.modules, "smartcard.pcsc", pcsc_mod)
+    monkeypatch.setitem(sys.modules, "smartcard.pcsc.PCSCContext", ctx_mod)
+
+
+def test_real_sys_readers_renews_stale_pcsc_context(monkeypatch):
+    # scheduler-executed pcscd restart stale's the watchdog's own context;
+    # without renewal it would misread a healthy reader as gone (1d227b5)
+    calls = {"n": 0, "renewed": 0}
+
+    class Ctx:
+        @staticmethod
+        def renewContext():
+            calls["renewed"] += 1
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("ListReadersException: stale context")
+        return ["GemPCTwin serial 00 00"]
+
+    _stub_smartcard(monkeypatch, flaky, Ctx)
+    real = watchdog.RealSys("/nonexistent.sock", "/nonexistent/tty")
+    assert real.readers() == ["GemPCTwin serial 00 00"]
+    assert calls["renewed"] == 1
+
+
+def test_real_sys_readers_gives_up_after_one_renew(monkeypatch):
+    calls = {"renewed": 0}
+
+    class Ctx:
+        @staticmethod
+        def renewContext():
+            calls["renewed"] += 1
+
+    def always_dead():
+        raise RuntimeError("EstablishContextException: pcscd down")
+
+    _stub_smartcard(monkeypatch, always_dead, Ctx)
+    real = watchdog.RealSys("/nonexistent.sock", "/nonexistent/tty")
+    with pytest.raises(RuntimeError, match="EstablishContextException"):
+        real.readers()
+    assert calls["renewed"] == 1

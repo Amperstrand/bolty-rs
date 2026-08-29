@@ -235,9 +235,19 @@ class RealSys:
         return fn(socket_path or self.socket, timeout)
 
     def readers(self) -> list:
+        # pcscd restarts (scheduler-executed PCSCD_RESTART_REQUEST markers)
+        # invalidate pyscard's PROCESS-WIDE PCSC context singleton: a stale
+        # context would read as "reader gone" and loop restart requests.
+        # Renew + retry once (pattern: role_switch.list_readers, 1d227b5).
         from smartcard.System import readers  # pyscard; absent -> disable lane
 
-        return [str(r) for r in readers()]
+        try:
+            return [str(r) for r in readers()]
+        except Exception:
+            from smartcard.pcsc.PCSCContext import PCSCContext
+
+            PCSCContext.renewContext()
+            return [str(r) for r in readers()]
 
     def port_exists(self, port=None) -> bool:
         return os.path.exists(port or self.port)
