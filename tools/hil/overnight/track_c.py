@@ -7,7 +7,9 @@ Runs the exact CI command set of BOTH repos on the host, all night:
     cargo fmt --check
     cargo clippy --workspace --exclude bolty-esp32 -- -D warnings
     cargo test --workspace --exclude bolty-esp32
-    cargo test --package security-tests
+    cargo test --workspace --exclude bolty-esp32 security
+      (security regression suite, issues #36/#41 — lives as in-crate
+      `security_tests` modules; there is NO `security-tests` package)
     greatspectations spec-quote check (bolty-rs/AGENTS.md): a fresh
       depth-1 clone of https://github.com/boltcard/boltcard.git into a
       TEMP dir, then
@@ -145,7 +147,8 @@ COMMANDS: tuple[AuditCommand, ...] = (
     AuditCommand("bolty-rs", "bolty/test-workspace", BOLTY_REPO,
                  ("cargo", "test", "--workspace", "--exclude", "bolty-esp32")),
     AuditCommand("bolty-rs", "bolty/test-security", BOLTY_REPO,
-                 ("cargo", "test", "--package", "security-tests")),
+                 ("cargo", "test", "--workspace", "--exclude", "bolty-esp32",
+                  "security")),
     AuditCommand("bolty-rs", "bolty/spec-quote", BOLTY_REPO,
                  kind="spec_quote", display_override=SPEC_QUOTE_DESC),
     # -- ccid-firmware-rs --
