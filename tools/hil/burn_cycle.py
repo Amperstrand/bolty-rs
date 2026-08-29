@@ -68,7 +68,7 @@ def main() -> int:
 
     print("=== uid (expect our card) ===")
     uid = ctl("uid").lower()
-    if UID_EXPECT not in uid:
+    if UID_EXPECT.lower() not in uid:
         print(f"FAIL: expected {UID_EXPECT}, got: {uid}")
         return 2
 
