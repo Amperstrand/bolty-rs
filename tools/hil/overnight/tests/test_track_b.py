@@ -631,3 +631,57 @@ def test_selftest_cli_offline():
         env={"PATH": "/usr/bin:/bin", "HOME": "/tmp"},
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ------------------------------------------------ stale pcsc context ----
+
+def _stub_smartcard(monkeypatch, readers_fn, ctx):
+    import types
+
+    sys_mod = types.ModuleType("smartcard.System")
+    sys_mod.readers = staticmethod(readers_fn)
+    ctx_mod = types.ModuleType("smartcard.pcsc.PCSCContext")
+    ctx_mod.PCSCContext = ctx
+    pcsc_mod = types.ModuleType("smartcard.pcsc")
+    pcsc_mod.PCSCContext = ctx
+    monkeypatch.setitem(sys.modules, "smartcard.System", sys_mod)
+    monkeypatch.setitem(sys.modules, "smartcard.pcsc", pcsc_mod)
+    monkeypatch.setitem(sys.modules, "smartcard.pcsc.PCSCContext", ctx_mod)
+
+
+def test_default_readers_fn_renews_stale_pcsc_context(monkeypatch):
+    # pcscd restarted under the long-lived orchestrator -> singleton context
+    # stale -> default_readers_fn must renew once and recover (1d227b5)
+    calls = {"n": 0, "renewed": 0}
+
+    class Ctx:
+        @staticmethod
+        def renewContext():
+            calls["renewed"] += 1
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("ListReadersException: stale context")
+        return ["ACS ACR1252 Dual Reader 00 00"]
+
+    _stub_smartcard(monkeypatch, flaky, Ctx)
+    assert track_b.default_readers_fn() == ["ACS ACR1252 Dual Reader 00 00"]
+    assert calls["renewed"] == 1
+
+
+def test_default_readers_fn_gives_up_after_one_renew(monkeypatch):
+    calls = {"renewed": 0}
+
+    class Ctx:
+        @staticmethod
+        def renewContext():
+            calls["renewed"] += 1
+
+    def always_dead():
+        raise RuntimeError("EstablishContextException: pcscd down")
+
+    _stub_smartcard(monkeypatch, always_dead, Ctx)
+    with pytest.raises(RuntimeError, match="EstablishContextException"):
+        track_b.default_readers_fn()
+    assert calls["renewed"] == 1

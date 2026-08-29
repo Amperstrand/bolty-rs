@@ -145,10 +145,22 @@ def assert_reader_set(readers, expect_gempctwin=False):
 
 
 def default_readers_fn():
-    """pcscd readers() (pyscard imported lazily — never at module load)."""
+    """pcscd readers() (pyscard imported lazily — never at module load).
+
+    pcscd restarts invalidate pyscard's PROCESS-WIDE PCSC context singleton
+    (smartcard.pcsc.PCSCContext caches one handle): this lane polls readers()
+    all night in the orchestrator process, across role-gate and maintenance
+    restarts, so on failure renew the context and retry once (pattern:
+    role_switch.list_readers, commit 1d227b5)."""
     from smartcard.System import readers  # noqa: PLC0415
 
-    return [str(r) for r in readers()]
+    try:
+        return [str(r) for r in readers()]
+    except Exception:
+        from smartcard.pcsc.PCSCContext import PCSCContext
+
+        PCSCContext.renewContext()
+        return [str(r) for r in readers()]
 
 
 # --------------------------------------------------------------- parsers ----
