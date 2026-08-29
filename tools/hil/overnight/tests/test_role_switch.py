@@ -111,13 +111,16 @@ class SeqReaders:
 
 
 class Deps:
-    def __init__(self, runner, readers, ping=(True, "alive hb_age=0s OK")):
+    def __init__(self, runner, readers, ping=(True, "alive hb_age=0s OK"),
+                 port_exists=None):
         self.runner = runner
         self.readers = readers
         self.ping_fn = ping
         self.pulse_ports = []
         self.resets = []
         self.bus_paths = []
+        self.port_exists_fn = port_exists or (lambda path: True)
+        self.sleeps = []
 
     # Deps protocol
     def ping(self):
@@ -133,8 +136,11 @@ class Deps:
     def usb_reset(self, bus_path):
         self.resets.append(bus_path)
 
+    def port_exists(self, path):
+        return self.port_exists_fn(path)
+
     def sleep(self, s):
-        pass
+        self.sleeps.append(s)
 
 
 def make_images(tmpdir, *, tamper_ccid=False):
@@ -157,7 +163,7 @@ def make_images(tmpdir, *, tamper_ccid=False):
 
 
 def rig(tmp_path, *, readers, script=None, ping=(True, "alive hb_age=0s OK"),
-        tamper_ccid=False, pre_existing_conf=None):
+        tamper_ccid=False, pre_existing_conf=None, port_exists=None):
     """Build (deps, paths) with everything pointed at tmp dirs."""
     imgdir, staged = make_images(tmp_path, tamper_ccid=tamper_ccid)
     conf_dir = tmp_path / "reader.conf.d"
@@ -167,7 +173,7 @@ def rig(tmp_path, *, readers, script=None, ping=(True, "alive hb_age=0s OK"),
     repo_conf = tmp_path / "repo-reader.conf"
     repo_conf.write_text('FRIENDLYNAME "GemPCTwin serial" (repo)\n')
     runner = SimRunner(script, root=tmp_path)
-    deps = Deps(runner, readers, ping)
+    deps = Deps(runner, readers, ping, port_exists=port_exists)
     paths = {"images_dir": imgdir, "staged_conf": staged, "conf_dir": conf_dir,
              "repo_reader_conf": repo_conf,
              "port": "/dev/serial/by-id/usb-TEST-port0"}
@@ -195,6 +201,8 @@ def test_graph_ccid_exact_sequence():
         ("sleep", ()),
         ("cmd", ("sudo", "tee", "/sys/bus/usb/drivers/usb/bind")),
         ("sleep", ()),
+        ("port_wait", ()),
+        ("sleep", ()),
         ("cmd", ("sudo", "rm", "-f", "/var/run/pcscd/pcscd.comm")),
         ("cmd", ("sudo", "systemctl", "restart", "pcscd.socket", "pcscd.service")),
         ("sleep", ()),
@@ -207,9 +215,14 @@ def test_graph_ccid_exact_sequence():
     unbind, bind = plan[5], plan[7]
     assert unbind["input"] == b"1-1" and bind["input"] == b"1-1"
     assert plan[6]["s"] == 4.0 and plan[8]["s"] == 6.0
-    assert plan[11]["s"] == 10.0
-    # once-retry block (switch_role.sh:60-66 pattern)
-    probe = plan[12]
+    # port-ready wait between usb_rescan bind and any pcscd touch (fix a+b)
+    assert plan[9]["kind"] == "port_wait" and plan[9]["port"] == port
+    assert plan[9]["timeout"] == 10.0 and plan[9]["poll_s"] == 0.25
+    assert plan[10]["s"] == 2.5
+    assert plan[13]["s"] == 10.0
+    # probe retry fires on a MISSING expected reader, not just empty (fix e)
+    probe = plan[14]
+    assert probe["expect_includes"] == ["GemPCTwin serial", "ACR1252"]
     retry = probe["on_probe_failed"]
     assert [(s["kind"], tuple(s.get("argv", ()))) for s in retry] == [
         ("cmd", ("sudo", "rm", "-f", "/var/run/pcscd/pcscd.comm")),
@@ -218,8 +231,8 @@ def test_graph_ccid_exact_sequence():
         ("readers_probe", ()),
     ]
     assert retry[2]["s"] == 8.0
-    assert plan[13]["ladder"] is True
-    assert plan[13]["expect"] == {"includes": ["GemPCTwin serial", "ACR1252"],
+    assert plan[15]["ladder"] is True and plan[15]["ladder_pcscd"] is True
+    assert plan[15]["expect"] == {"includes": ["GemPCTwin serial", "ACR1252"],
                                   "excludes": []}
 
 
@@ -241,6 +254,8 @@ def test_graph_bolty_exact_sequence():
         ("sleep", ()),
         ("cmd", ("sudo", "tee", "/sys/bus/usb/drivers/usb/bind")),
         ("sleep", ()),
+        ("port_wait", ()),
+        ("sleep", ()),
         ("cmd", ("sudo", "rm", "-f", "/var/run/pcscd/pcscd.comm")),
         ("cmd", ("sudo", "systemctl", "restart", "pcscd.socket", "pcscd.service")),
         ("sleep", ()),
@@ -255,9 +270,11 @@ def test_graph_bolty_exact_sequence():
     assert "/staged/esp32-ccid.conf" not in flat  # staged copy NOT installed
     assert plan[0]["tolerant"] is True
     assert plan[1]["tolerant"] is True
-    assert plan[13]["expect"] == {"includes": ["ACR1252"], "excludes": ["GemPC"]}
-    assert plan[13]["ladder"] is True and plan[16]["ladder"] is True
-    assert plan[15]["s"] == 6.0  # console start settle (switch_role.sh:88)
+    assert plan[9]["kind"] == "port_wait"  # console also needs the port back
+    assert plan[15]["expect"] == {"includes": ["ACR1252"], "excludes": ["GemPC"]}
+    assert plan[14]["expect_includes"] == ["ACR1252"]
+    assert plan[15]["ladder"] is True and plan[18]["ladder"] is True
+    assert plan[17]["s"] == 6.0  # console start settle (switch_role.sh:88)
 
 
 def test_graph_is_pure_and_serializable():
@@ -415,6 +432,84 @@ def test_pcscd_once_retry_triggers_only_on_failed_probe(tmp_path):
     res2 = switch_to("ccid", deps=deps2, **paths2)
     assert res2.ok, res2.detail
     assert "sudo systemctl restart pcscd.service" not in runner2.flat()
+
+
+def test_probe_retry_fires_on_missing_expected_reader(tmp_path):
+    # the exact rehearsal shape: ACR present, GemPCTwin missing -> the probe
+    # once-retry must still reload pcscd (old code retried only on empty)
+    seq = [ACR_READERS, CCID_READERS, CCID_READERS]
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders(seq))
+    res = switch_to("ccid", deps=deps, **paths)
+    assert res.ok, res.detail
+    assert "sudo systemctl restart pcscd.service" in runner.flat()
+    warn = [r for r in res.rows if r["kind"] == "readers_probe"
+            and r["status"] == "WARN"]
+    assert warn and "missing=['GemPCTwin serial']" in warn[0]["why"]
+
+
+# ------------------------------------------------------ port-ready wait ----
+
+def test_port_wait_polls_until_port_appears(tmp_path):
+    seen = []
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders([CCID_READERS] * 5))
+
+    def flaky(path):
+        seen.append(path)
+        return len(seen) > 2  # absent for the first two polls
+    deps.port_exists_fn = flaky
+    res = switch_to("ccid", deps=deps, **paths)
+    assert res.ok, res.detail
+    assert deps.sleeps.count(0.25) == 2  # one poll interval per miss
+    row = next(r for r in res.rows if r["kind"] == "port_wait")
+    assert row["waited_s"] == 0.5 and row["port"] == paths["port"]
+
+
+def test_port_wait_never_appearing_fails_before_pcscd_touched(tmp_path):
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders([CCID_READERS] * 5),
+                              port_exists=lambda path: False)
+    res = switch_to("ccid", deps=deps, **paths)
+    assert not res.ok and "serial port absent" in res.detail
+    assert res.hardware_touched
+    assert runner.count("restart pcscd.socket pcscd.service") == 0
+    assert runner.count("esptool.py") == 1  # no ladder re-flash for a gone port
+
+
+# --------------------------------------------- verify ladder + evidence ----
+
+def test_verify_failure_captures_pcscd_journal_tail(tmp_path):
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders([ACR_READERS] * 12))
+    res = switch_to("ccid", deps=deps, **paths)
+    assert not res.ok
+    failed = [r for r in res.rows if r["kind"] == "verify" and r["status"] == "FAIL"]
+    assert len(failed) == 3  # initial + rung1 + rung2 attempts
+    assert all("journal_tail" in r for r in failed)
+    assert runner.count("journalctl -u pcscd -n 40 --no-pager") == len(failed)
+
+
+def test_verify_ladder_restarts_pcscd_between_rungs(tmp_path):
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders([ACR_READERS] * 12))
+    res = switch_to("ccid", deps=deps, **paths)
+    assert not res.ok and "wedge ladder" in res.detail
+    # mainline + one full pcscd restart after EACH ladder rung
+    assert runner.count("restart pcscd.socket pcscd.service") == 3
+    flat = runner.flat()
+    restarts = [i for i, line in enumerate(flat)
+                if "restart pcscd.socket pcscd.service" in line]
+    unbinds = [i for i, line in enumerate(flat) if "unbind" in line]
+    assert unbinds[0] < restarts[0] < unbinds[1] < restarts[1] < restarts[2]
+    port_waits = [r for r in res.rows if r["kind"] == "port_wait"]
+    assert len(port_waits) == 3  # mainline + each rung waited before pcscd
+
+
+def test_verify_ladder_rung1_rescues_missing_serial_reader(tmp_path):
+    # verify FAILs once (GemPC not loaded), the rung's pcscd reload fixes it
+    seq = [ACR_READERS, ACR_READERS, ACR_READERS, CCID_READERS, CCID_READERS]
+    deps, runner, paths = rig(tmp_path, readers=SeqReaders(seq))
+    res = switch_to("ccid", deps=deps, **paths)
+    assert res.ok, res.detail
+    assert deps.resets == []  # rung 2 never needed
+    assert runner.count("restart pcscd.socket pcscd.service") == 2  # mainline+rung1
+    assert runner.count("journalctl -u pcscd -n 40 --no-pager") == 1
 
 
 # ------------------------------------------------------------------ CLI ----

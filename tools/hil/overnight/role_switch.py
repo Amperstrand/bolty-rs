@@ -26,15 +26,17 @@ Mechanism per direction (exact sequences via ``dry_graph()``):
     ccid : stop bolty-console -> sudo cp staged -> /etc/reader.conf.d/
            esp32-ccid -> stop pcscd -> esptool @115200 --after no-reset
            write-flash 0x0 esp32-ccid-merged.bin -> rts_pulse_reset ->
-           usb_rescan (1-1 unbind/bind) -> pcscd restart + once-retry ->
-           STRICT verify: readers() has BOTH "GemPCTwin serial" AND an
-           ACR1252 entry.
+           usb_rescan (1-1 unbind/bind) -> WAIT for the by-id port (<=10s)
+           + 2.5s settle -> pcscd restart; probe once-retries a pcscd
+           restart whenever an EXPECTED reader is missing (not just on an
+           empty list) -> STRICT verify: readers() has BOTH "GemPCTwin
+           serial" AND an ACR1252 entry.
 
     bolty: stop port holders -> rm conf (ABSENT) -> stop pcscd -> flash
-           bolty-merged.bin (same pulse + rescan) -> pcscd restart (conf
-           absent => no stick-port probe) -> start bolty-console ->
-           STRICT verify: readers() has ACR1252 and NO GemPC entry, AND
-           console PING alive.
+           bolty-merged.bin (same pulse + rescan + port-wait) -> pcscd
+           restart (conf absent => no stick-port probe) -> strict verify:
+           readers() has ACR1252 and NO GemPC entry -> start bolty-console
+           -> console PING alive.
 
 bolty-merged.bin embeds the repo partitions.csv (factory @ 0x1E0000 +
 otadata/ota_0; task-4 note) — both images flash as-is at 0x0, never
@@ -48,11 +50,15 @@ Images are resolved from results/images/MANIFEST.json and sha256-verified
 BEFORE any flash; a mismatch aborts with zero hardware steps executed
 (and no restore reflash — the device was never touched).
 
-Wedge ladder (flash/verify failure, per direction): retry usb_rescan once
--> USBDEVFS_RESET ioctl (``usb_reset_ioctl``) on the stick's /dev/bus/usb
-path once -> give up that direction. ``switch_with_fallback()`` makes
-<=2 attempts, then best-effort restores the bolty role and returns the
-Mode B decision; success returns Mode A.
+    Wedge ladder (flash/verify failure, per direction): retry usb_rescan
+    once -> USBDEVFS_RESET ioctl (``usb_reset_ioctl``) on the stick's
+    /dev/bus/usb path once -> give up that direction. VERIFY steps insert a
+    full pcscd restart (with port-wait) after each rung — the serial reader
+    only loads at pcscd start, so USB retries alone can't recover it — and
+    every failed strict-verify attempt captures ``journalctl -u pcscd -n 40``
+    into its timeline row. ``switch_with_fallback()`` makes
+    <=2 attempts, then best-effort restores the bolty role and returns the
+    Mode B decision; success returns Mode A.
 
 Integration: overnight.py's ROLE_GATE calls ``switch_with_fallback(
 "ccid", ctx=...)``. The ctx is the todo-5 duck-typed PhaseContext
@@ -150,6 +156,18 @@ BIND_SLEEP_S = 6.0          # switch_role.sh:30
 PCSCD_SETTLE_S = 10.0       # switch_role.sh:66
 PCSCD_RETRY_SETTLE_S = 8.0  # switch_role.sh:69
 CONSOLE_START_S = 6.0       # switch_role.sh:88
+# 2026-08-28 rehearsal fix: libccidtwin loads the serial reader ONLY at pcscd
+# start (task-1 journal capture: parse conf -> Add reader -> OpenSerialByName
+# -> "Get firmware failed. Maybe the reader is not connected" -> reader
+# dropped, never retried). The single post-rescan restart raced the by-id
+# re-enumeration/firmware boot, and the once-retry fired only on an EMPTY
+# readers() — ACR-present-but-GemPC-missing never reloaded pcscd.
+PORT_WAIT_TIMEOUT_S = 10.0  # post-bind by-id re-enumeration budget (fix a)
+PORT_WAIT_POLL_S = 0.25
+PORT_SETTLE_S = 2.5         # firmware boot settle once the port exists (fix b)
+JOURNAL_TAIL_N = 40         # pcscd journal lines captured on verify FAIL (fix d)
+JOURNAL_TAIL_CHARS = 4000
+JOURNAL_ARGV = ["journalctl", "-u", "pcscd", "-n", "40", "--no-pager"]
 
 
 class RoleSwitchError(Exception):
@@ -261,6 +279,7 @@ class Deps:
     usb_bus_path: Callable = stick_usb_bus_path
     usb_reset: Callable = usb_reset_ioctl
     sleep: Callable = time.sleep
+    port_exists: Callable = os.path.exists
 
 
 # ------------------------------------------------------- verify predicates ----
@@ -320,6 +339,18 @@ def _flash_step(role: str, port: str, images_dir) -> dict:
     return step
 
 
+def _port_wait_step(port: str) -> dict:
+    return {"kind": "port_wait", "port": port, "label":
+            "wait for serial port by-id path (post-bind re-enumeration)",
+            "timeout": PORT_WAIT_TIMEOUT_S, "poll_s": PORT_WAIT_POLL_S}
+
+
+def _post_rescan_port_steps(port: str) -> list:
+    # every usb_rescan bind re-enumerates the by-id symlink asynchronously;
+    # pcscd must not start (nor the console open) against a missing port
+    return [_port_wait_step(port), _sleep(PORT_SETTLE_S, "serial port settle")]
+
+
 def _pcscd_restart_steps() -> list:
     return [
         _cmd(["sudo", "rm", "-f", PCSCD_COMM], label="clear stale pcscd comm socket"),
@@ -329,8 +360,13 @@ def _pcscd_restart_steps() -> list:
     ]
 
 
-def _probe_step() -> dict:
+def _probe_step(role: str) -> dict:
+    # retry condition is a MISSING expected reader, not just an empty list:
+    # ACR-present-but-GemPC-missing was exactly the unretried rehearsal FAIL
+    includes = (["GemPCTwin serial", "ACR1252"] if role == "ccid"
+                else ["ACR1252"])
     return {"kind": "readers_probe", "label": "pcscd readers probe",
+            "expect_includes": includes,
             "on_probe_failed": [
                 _cmd(["sudo", "rm", "-f", PCSCD_COMM],
                      label="clear stale pcscd comm socket (retry)"),
@@ -346,7 +382,7 @@ def _verify_step(role: str) -> dict:
               if role == "ccid" else
               {"includes": ["ACR1252"], "excludes": ["GemPC"]})
     return {"kind": "verify", "label": f"strict verify {role} readers",
-            "expect": expect, "ladder": True}
+            "expect": expect, "ladder": True, "ladder_pcscd": True}
 
 
 def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
@@ -381,8 +417,9 @@ def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
     plan.append({"kind": "rts_pulse", "port": port,
                  "label": "rts_pulse_reset (DTR-first, switch_role.sh:31-37)"})
     plan.extend(_rescan_steps())
+    plan.extend(_post_rescan_port_steps(port))
     plan.extend(_pcscd_restart_steps())
-    plan.append(_probe_step())
+    plan.append(_probe_step(role))
     plan.append(_verify_step(role))
     if role == "bolty":
         plan.append(_cmd(["sudo", "systemctl", "start", "bolty-console"],
@@ -537,6 +574,10 @@ class RoleSwitcher:
         return self.recorder.rows
 
     # -- step execution ----------------------------------------------------
+    def _journal_tail(self) -> str:
+        res = self.deps.runner(JOURNAL_ARGV, timeout=TEE_TIMEOUT_S)
+        return (res.stdout or "").strip()[-JOURNAL_TAIL_CHARS:]
+
     def _run(self, step) -> ProcResult:
         res = self.deps.runner(step["argv"], input=step.get("input"),
                                timeout=step.get("timeout"))
@@ -557,11 +598,13 @@ class RoleSwitcher:
             except Exception as e:  # pcscd down mid-probe is a probe failure
                 self._fail_why = f"readers() error: {e!r}"
                 self.recorder.row(kind="verify", label=step["label"], status="FAIL",
-                                  error=repr(e))
+                                  error=repr(e), journal_tail=self._journal_tail())
                 return False
             ok, self._fail_why = _check_expect(step["expect"], names)
             self.recorder.row(kind="verify", label=step["label"],
-                              status="OK" if ok else "FAIL", why=self._fail_why)
+                              status="OK" if ok else "FAIL", why=self._fail_why,
+                              **({} if ok else
+                                 {"journal_tail": self._journal_tail()}))
             return ok
         if kind == "ping_verify":
             ok, out = self.deps.ping()
@@ -572,12 +615,21 @@ class RoleSwitcher:
         raise ValueError(f"unsupported ladder step kind {kind!r}")
 
     def _with_ladder(self, step) -> bool:
-        """Wedge ladder: usb_rescan once -> USBDEVFS_RESET once -> give up."""
+        """Wedge ladder: usb_rescan once -> USBDEVFS_RESET once -> give up.
+        Verify steps additionally restart pcscd after each rung — the serial
+        reader loads ONLY at pcscd start, so re-enumerating USB without a
+        restart can never bring GemPCTwin back (2026-08-28 rehearsal)."""
+        pcscd_rungs = bool(step.get("ladder_pcscd"))
         if self._try(step):
             return True
         self.recorder.row(kind="wedge_ladder", label="rung 1: usb_rescan retry")
         for s in _rescan_steps():
             self._exec_step(s)
+        if pcscd_rungs:
+            for s in _post_rescan_port_steps(self.port):
+                self._exec_step(s)
+            for s in _pcscd_restart_steps():
+                self._exec_step(s)
         if self._try(step):
             return True
         try:
@@ -596,6 +648,11 @@ class RoleSwitcher:
             return False
         self.recorder.row(kind="wedge_ladder", label="rung 2: USBDEVFS_RESET",
                           bus=bus)
+        if pcscd_rungs:
+            for s in _post_rescan_port_steps(self.port):
+                self._exec_step(s)
+            for s in _pcscd_restart_steps():
+                self._exec_step(s)
         return self._try(step)
 
     def _exec_step(self, step) -> bool:
@@ -618,6 +675,21 @@ class RoleSwitcher:
                 return False
             self.recorder.row(kind="rts_pulse", label=step["label"])
             return True
+        if kind == "port_wait":
+            timeout = float(step.get("timeout", PORT_WAIT_TIMEOUT_S))
+            poll_s = float(step.get("poll_s", PORT_WAIT_POLL_S))
+            waited = 0.0
+            for _ in range(max(1, int(round(timeout / poll_s)))):
+                if self.deps.port_exists(step["port"]):
+                    self.recorder.row(kind="port_wait", label=step["label"],
+                                      port=step["port"], waited_s=waited)
+                    return True
+                self.deps.sleep(poll_s)
+                waited += poll_s
+            self._fail_why = f"serial port absent {timeout:.0f}s post-bind: {step['port']}"
+            self.recorder.row(kind="port_wait", label=step["label"], status="FAIL",
+                              port=step["port"], waited_s=waited)
+            return False
         if kind == "readers_probe":
             try:
                 names = list(self.deps.readers())
@@ -625,13 +697,17 @@ class RoleSwitcher:
                 names = []
                 self.recorder.row(kind="readers_probe", label=step["label"],
                                   status="WARN", error=repr(e))
-            ok = bool(names)
+            includes = step.get("expect_includes", [])
+            j = " | ".join(names).lower()
+            missing = [i for i in includes if i.lower() not in j]
+            ok = (not missing) if includes else bool(names)
             if ok:
                 self.recorder.row(kind="readers_probe", label=step["label"],
                                   n=len(names))
             elif step.get("on_probe_failed"):
+                why = (f"missing={missing}" if includes else "empty") + " — once-retry"
                 self.recorder.row(kind="readers_probe", label=step["label"],
-                                  status="WARN", why="empty — once-retry")
+                                  status="WARN", why=why)
                 for sub in step["on_probe_failed"]:
                     self._exec_step(sub)
             return True  # the strict verify step decides pass/fail
@@ -780,6 +856,9 @@ class _STDeps:
     def usb_reset(self, bus_path):
         self.resets.append(bus_path)
 
+    def port_exists(self, path):
+        return True
+
     def sleep(self, s):
         pass
 
@@ -807,6 +886,17 @@ def selftest() -> tuple:
           any("esptool.py" in a and "--baud 115200" in a
               and "--after no-reset" in a and " write-flash 0x0 " in a + " "
               for a in argvs))
+    pw = next((i for i, s in enumerate(g) if s.get("kind") == "port_wait"), None)
+    check("ccid graph: port-wait + settle land before the pcscd restart",
+          pw is not None and g[pw + 1]["kind"] == "sleep"
+          and g[pw + 1]["s"] == PORT_SETTLE_S
+          and any(s.get("label") == "restart pcscd"
+                  for s in g[pw + 2:]))
+    check("ccid graph: probe retry condition = missing expected reader",
+          next(s for s in g if s["kind"] == "readers_probe")
+          ["expect_includes"] == ["GemPCTwin serial", "ACR1252"])
+    check("ccid graph: verify step carries pcscd-restart ladder rungs",
+          g[-1].get("ladder_pcscd") is True)
     check("ccid graph: once-retry block restarts pcscd.service",
           any(s.get("on_probe_failed") and
               any(" ".join(sub.get("argv", [])) ==
@@ -894,7 +984,8 @@ def _print_graph(role: str) -> None:
             extra = f"(expect {s['expect']})"
         flags = " [wedge-ladder]" if s.get("ladder") else ""
         if s["kind"] == "readers_probe" and s.get("on_probe_failed"):
-            flags += f" (+{len(s['on_probe_failed'])} once-retry steps on empty probe)"
+            flags += (" (+{} once-retry steps on missing/empty probe)"
+                      .format(len(s["on_probe_failed"])))
         print(f"{i:2d}. [{s['kind']}] {s['label']}{flags}"
               + (f": {argv_s}" if argv_s else "")
               + (f"  ({extra})" if extra else ""))
