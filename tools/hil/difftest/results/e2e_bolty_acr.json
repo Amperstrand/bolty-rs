@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-08-29T18:23:03.208589+00:00",
+  "timestamp": "2026-08-29T18:43:55.729345+00:00",
   "bolty_cli": "/home/ubuntu/src/bolty-rs/target/release/bolty-cli",
   "session1": {
     "reader_target": "PICC",
-    "timestamp": "2026-08-29T18:23:03.208528+00:00",
+    "timestamp": "2026-08-29T18:43:55.729322+00:00",
     "commands": [
       {
         "cmd": "uid",
         "rc": 0,
         "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nUID: 04455ffa967380",
         "stderr": "",
-        "duration_ms": 138.7,
+        "duration_ms": 129.1,
         "success": true,
         "test_id": "uid",
         "reader_target": "PICC"
@@ -20,7 +20,7 @@
         "rc": 0,
         "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nUID: 04455ffa967380\nVersion: HW vendor=04 type=04 ver=30.00 | SW vendor=04 type=04 ver=01.02 | Batch=3475920457 CW19 21\nNDEF file settings: FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Free, read_write: Free, change: Key(Key0) }, sdm: Some(Sdm { picc_data: None, file_read: None, tamper_status: None }) }\nNDEF content (256 bytes): 0000d1014b5504626f6c7463617264706f632e707362742e6d652f3f703d303030303030303030303030303030303030303030303030303030303030303026633d3030303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
         "stderr": "",
-        "duration_ms": 121.6,
+        "duration_ms": 118.5,
         "success": true,
         "test_id": "inspect",
         "reader_target": "PICC"
@@ -30,7 +30,7 @@
         "rc": 0,
         "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\n=== DIAGNOSE ===\n\nUID:            04455ffa967380\nVersion:        HW vendor=04 type=04 v=30.00 | SW vendor=04 type=04 v=01.02\nSDM active:     false\nFile settings:  FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Free, read_write: Free, change: Key(Key0) }, sdm: Some(Sdm { picc_data: None, file_read: None, tamper_status: None }) }\nNDEF:           256 bytes, no valid URI\n\nCard appears blank \u2014 trying factory K0...\n  Factory K0:    OK\n\n=== DIAGNOSIS ===\nCard state:     BLANK\nKey provenance:  FactoryDefault\n  Factory keys, no SDM, empty NDEF.\n  Ready to burn: bolty-cli burn --issuer-key <KEY> --url <URL>",
         "stderr": "",
-        "duration_ms": 144.4,
+        "duration_ms": 128.6,
         "success": true,
         "test_id": "diagnose",
         "reader_target": "PICC"
@@ -40,7 +40,7 @@
         "rc": 1,
         "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nCard UID:  04455ffa967380",
         "stderr": "Error: NDEF content is not a valid URI record.\nCard may not be provisioned with SDM, or NDEF is empty/corrupt.",
-        "duration_ms": 123.8,
+        "duration_ms": 105.1,
         "success": false,
         "test_id": "picc",
         "reader_target": "PICC"

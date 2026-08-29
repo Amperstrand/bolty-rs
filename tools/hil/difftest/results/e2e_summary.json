@@ -1,8 +1,62 @@
 [
   {
+    "phase": "unit-tests",
+    "suites": {
+      "difftest tool": "PASS",
+      "golden responses": "PASS"
+    },
+    "status": "PASS"
+  },
+  {
     "phase": "bolty-acr",
     "status": "PASS",
     "ok": 3,
     "total": 4
+  },
+  {
+    "phase": "switch-ccid",
+    "status": "PASS",
+    "output": "ok=True detail=ccid role active and strictly verified"
+  },
+  {
+    "phase": "apdu",
+    "timestamp": "2026-08-29T18:45:23.366097+00:00",
+    "acr_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_acr_capture.json",
+    "gem_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_gem_capture.json",
+    "diff": {
+      "matches": 66,
+      "mismatches": 0,
+      "total": 66,
+      "cards_match": true
+    },
+    "acr_vs_golden": {
+      "matches": 66,
+      "mismatches": 0,
+      "total": 66
+    },
+    "status": "PASS"
+  },
+  {
+    "phase": "bolty-diff",
+    "status": "PASS",
+    "session1_reader": "PICC",
+    "session2_reader": "GemPCTwin",
+    "total_commands": 4,
+    "total_matches": 4,
+    "total_mismatches": 0,
+    "missing_in_session2": [],
+    "extra_in_session2": [],
+    "matches": [
+      "uid",
+      "inspect",
+      "diagnose",
+      "picc"
+    ],
+    "mismatches": []
+  },
+  {
+    "phase": "switch-bolty",
+    "status": "PASS",
+    "output": "ok=True detail=bolty role active and strictly verified"
   }
 ]

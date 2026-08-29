@@ -1,0 +1,121 @@
+{
+  "golden_reader": "ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00",
+  "test_reader": "GemPCTwin serial 00 00",
+  "golden_card": "04C474FA967380",
+  "test_card": "04C474FA967380",
+  "cards_match": true,
+  "comparison_note": "Same card detected \u2014 exact byte comparison for all tests",
+  "total_golden": 66,
+  "total_test": 66,
+  "total_matches": 66,
+  "total_mismatches": 0,
+  "total_structural": 0,
+  "total_missing_in_test": 0,
+  "total_extra_in_test": 0,
+  "match_rate": "66/66",
+  "category_summary": {
+    "identity": {
+      "match": 3,
+      "mismatch": 0
+    },
+    "iso7816": {
+      "match": 5,
+      "mismatch": 0
+    },
+    "ntag424": {
+      "match": 10,
+      "mismatch": 0
+    },
+    "ntag424_keys": {
+      "match": 3,
+      "mismatch": 0
+    },
+    "ntag424_sdm": {
+      "match": 1,
+      "mismatch": 0
+    },
+    "malformed": {
+      "match": 12,
+      "mismatch": 0
+    },
+    "stress": {
+      "match": 12,
+      "mismatch": 0
+    },
+    "fuzz": {
+      "match": 20,
+      "mismatch": 0
+    }
+  },
+  "matches": [
+    "get_atr",
+    "get_uid",
+    "reconnect_atr",
+    "select_mf",
+    "select_invalid_df",
+    "select_by_aid_ntag424",
+    "select_by_aid_invalid",
+    "get_response_no_pending",
+    "select_cc_file",
+    "select_ndef_file",
+    "read_cc_full",
+    "read_cc_partial",
+    "read_cc_invalid_offset",
+    "read_ndef_after_select",
+    "read_no_select",
+    "get_file_settings_cc",
+    "get_file_settings_ndef",
+    "get_file_settings_invalid",
+    "get_key_version_k0_noauth",
+    "get_key_version_k1_noauth",
+    "get_key_version_invalid",
+    "read_sdm_no_select",
+    "malformed_empty",
+    "malformed_cla_only",
+    "malformed_short_header",
+    "malformed_lc_mismatch",
+    "malformed_le_zero",
+    "malformed_le_max",
+    "malformed_invalid_cla",
+    "malformed_invalid_ins",
+    "malformed_reserved_ins",
+    "malformed_oversized_lc",
+    "malformed_single_byte_high",
+    "malformed_single_byte_zero",
+    "stress_double_select",
+    "stress_read_cc_10x",
+    "stress_read_cc_10x_r1",
+    "stress_read_cc_10x_r2",
+    "stress_read_cc_10x_r3",
+    "stress_read_cc_10x_r4",
+    "stress_read_cc_10x_r5",
+    "stress_read_cc_10x_r6",
+    "stress_read_cc_10x_r7",
+    "stress_read_cc_10x_r8",
+    "stress_read_cc_10x_r9",
+    "stress_select_garbage_alternating",
+    "fuzz_00",
+    "fuzz_01",
+    "fuzz_02",
+    "fuzz_03",
+    "fuzz_04",
+    "fuzz_05",
+    "fuzz_06",
+    "fuzz_07",
+    "fuzz_08",
+    "fuzz_09",
+    "fuzz_10",
+    "fuzz_11",
+    "fuzz_12",
+    "fuzz_13",
+    "fuzz_14",
+    "fuzz_15",
+    "fuzz_16",
+    "fuzz_17",
+    "fuzz_18",
+    "fuzz_19"
+  ],
+  "mismatches": [],
+  "missing_in_test": [],
+  "extra_in_test": []
+}
