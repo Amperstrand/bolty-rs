@@ -27,6 +27,8 @@ pub trait BoltyService {
     fn wipe(&mut self, issuer: Option<&AesKey>, keys: Option<&CardKeys>) -> WorkflowResult;
     fn inspect(&mut self) -> Result<CardAssessment, WorkflowResult>;
     fn check_blank(&mut self) -> WorkflowResult;
+    // Console/REST/diagnostics reporting on device; no host caller.
+    #[cfg_attr(not(target_arch = "xtensa"), allow(dead_code))]
     fn get_status(&self) -> ServiceStatus;
 }
 

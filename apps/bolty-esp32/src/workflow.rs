@@ -205,15 +205,16 @@ mod tests {
         let mut service = MockService::default();
         let mut config = BoltyConfig::default();
 
-        assert_eq!(
-            dispatch_command(Command::Burn, &mut service, &mut config),
-            workflow_error("missing keys or issuer")
-        );
-
-        config.pending_keys = Some(CardKeys::zeroed());
+        // The lnurl guard fires first.
         assert_eq!(
             dispatch_command(Command::Burn, &mut service, &mut config),
             workflow_error("missing lnurl")
+        );
+
+        config.lnurl = Some(lnurl_string("https://example.com/pay?c={mac}"));
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            workflow_error("missing keys or issuer")
         );
     }
 
@@ -224,7 +225,7 @@ mod tests {
             ..MockService::default()
         };
         let mut config = BoltyConfig {
-            lnurl: Some(lnurl_string("https://example.com/pay")),
+            lnurl: Some(lnurl_string("https://example.com/pay?c={mac}")),
             pending_issuer: Some(AesKey::new([0xAA; 16])),
             ..BoltyConfig::default()
         };
@@ -239,6 +240,29 @@ mod tests {
     }
 
     #[test]
+    fn burn_refuses_lnurl_without_mac_template() {
+        let mut service = MockService::default();
+        let mut config = BoltyConfig {
+            lnurl: Some(lnurl_string("https://example.com/pay")),
+            pending_keys: Some(CardKeys::zeroed()),
+            ..BoltyConfig::default()
+        };
+
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            workflow_error("lnurl missing {mac} SDM template marker")
+        );
+        assert_eq!(service.burn_calls, 0);
+
+        config.force_unsafe = true;
+        assert_eq!(
+            dispatch_command(Command::Burn, &mut service, &mut config),
+            WorkflowResult::Success
+        );
+        assert_eq!(service.burn_calls, 1);
+    }
+
+    #[test]
     fn burn_and_wipe_delegate_to_service() {
         let mut service = MockService {
             burn_result: WorkflowResult::Success,
@@ -246,12 +270,13 @@ mod tests {
             ..MockService::default()
         };
         let mut config = BoltyConfig {
-            lnurl: Some(lnurl_string("https://example.com/pay")),
+            lnurl: Some(lnurl_string("https://example.com/pay?c={mac}")),
             issuer_name: None,
             pending_keys: Some(CardKeys::zeroed()),
             pending_issuer: None,
             rest_read_token: None,
             rest_write_token: None,
+            force_unsafe: false,
         };
 
         assert_eq!(
@@ -261,7 +286,7 @@ mod tests {
         assert_eq!(service.burn_calls, 1);
         assert_eq!(
             service.last_burn_lnurl,
-            Some(lnurl_string("https://example.com/pay"))
+            Some(lnurl_string("https://example.com/pay?c={mac}"))
         );
 
         assert_eq!(

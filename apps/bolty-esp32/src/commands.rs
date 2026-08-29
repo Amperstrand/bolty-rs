@@ -11,6 +11,8 @@ pub enum ButtonMode {
 }
 
 impl ButtonMode {
+    // Serial/NVS reporting on device; no host caller.
+    #[cfg_attr(not(target_arch = "xtensa"), allow(dead_code))]
     pub fn as_str(self) -> &'static str {
         match self {
             ButtonMode::Simple => "simple",
@@ -433,14 +435,19 @@ mod tests {
 
     #[test]
     fn parses_ota_command() {
-        let command =
-            parse_command("ota http://example.com/fw.bin").expect("ota command should parse");
+        let command = parse_command("ota http://example.com/fw.bin aabbccdd")
+            .expect("ota command should parse");
         assert_eq!(
             command,
             Command::Ota {
                 url: {
                     let mut value = UrlString::new();
                     value.push_str("http://example.com/fw.bin").unwrap();
+                    value
+                },
+                signature: {
+                    let mut value = heapless::String::new();
+                    value.push_str("aabbccdd").unwrap();
                     value
                 }
             }
@@ -460,7 +467,11 @@ mod tests {
         );
         assert_eq!(parse_command("ota"), Err(CommandError::MissingArgs));
         assert_eq!(
-            parse_command("ota http://example.com/fw.bin now"),
+            parse_command("ota http://example.com/fw.bin"),
+            Err(CommandError::MissingArgs)
+        );
+        assert_eq!(
+            parse_command("ota http://example.com/fw.bin aabb extra"),
             Err(CommandError::InvalidArgs)
         );
         assert_eq!(parse_command("burn now"), Err(CommandError::InvalidArgs));

@@ -45,8 +45,10 @@ mod display;
 mod button;
 
 // Boards without physical buttons (M5Atom) get the no-op module so shared
-// code (console, hwtest, main loop) compiles without per-site cfgs.
-#[cfg(not(all(target_arch = "xtensa", feature = "board-m5stick")))]
+// code (console, hwtest, main loop) compiles without per-site cfgs. That
+// shared code is all xtensa-gated, so the stub is too — host test builds
+// (which compile only the pure logic modules below) never need it.
+#[cfg(all(target_arch = "xtensa", not(feature = "board-m5stick")))]
 #[path = "button_stub.rs"]
 mod button;
 
@@ -80,13 +82,13 @@ compile_error!("`led-matrix` is only supported on `board-m5atom`.");
 ))]
 compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 
-#[cfg(target_arch = "xtensa")]
+// Pure logic (parsing, service trait, dispatch) has no esp-idf deps, so it
+// also compiles on host — that makes its #[cfg(test)] tests runnable with
+// `cargo test -p bolty-esp32` (issue #63: they never executed anywhere).
 mod commands;
 #[cfg(target_arch = "xtensa")]
 mod firmware;
-#[cfg(target_arch = "xtensa")]
 mod service;
-#[cfg(target_arch = "xtensa")]
 mod workflow;
 
 #[cfg(target_arch = "xtensa")]
