@@ -411,3 +411,75 @@ bolty's own tree:
    config block, corrected constants, CI placeholder) with the unblock
    conditions written next to it — the next session starts at the blocker,
    not at zero.
+
+## B19 — Forks are rev-pinned or they will drift; unify by union, not by copy
+
+Three vendored/forked dependencies (mfrc522, iso14443, ntag424) were unified
+onto canonical `ai-experiments` revs in one day. The playbook that worked
+twice: (1) diff the divergent copies and UNION the patches (both sides'
+fixes), (2) push the union to the canonical fork, (3) rev-pin EVERY consumer
+(bolty workspace deps AND ccid's direct + transitive specs), (4) delete the
+vendor trees and `[patch]` tables.
+
+**Rules:**
+1. A branch-float spec (`branch = "ai-experiments"`) is drift waiting to
+   happen; a rev pin is the only stable form. Policy: `docs/fork-policy.md`.
+2. A transitively-consumed git dep (e.g. mfrc522-pcd@<bolty-rev> resolving
+   its workspace iso14443 spec) must match the direct consumer's spec
+   URL+rev EXACTLY — two specs resolving the same crate = two packages =
+   type conflicts that only appear at link time.
+3. Align the transitive provider's pin FIRST (bump bolty), then the
+   consumer's direct pin (ccid) in a follow-up commit — never copy a branch
+   spec to "match today".
+4. `cargo update` (full) re-resolves everything and dies on unrelated dead
+   branches (stm32f469i-disc `sdio-support`); use targeted
+   `cargo update -p <pkg>` after manifest edits.
+
+## B20 — Reusable CI workflows: four sharp edges in one adoption
+
+The shared `rust-embedded.yml` (workflow_call, in amp-embedded-common) took
+four fixes to run green on its first external consumer.
+
+**Rules:**
+1. `secrets: inherit` belongs in the CALLER's job — under the callee's
+   `on.workflow_call:` it is a validation error that kills every run at 0s
+   with no CLI-visible message. actionlint finds it instantly.
+2. Clippy lint surface is a convention: this ecosystem lints lib/bins
+   (`cargo clippy -- -D warnings`), NOT `--all-targets` — test code under
+   workspace lints (indexing_slicing, unwrap_used) drowns the consumer.
+3. apt packages must install in every compiling job — clippy links pcsc-sys
+   exactly like tests do.
+4. Pin the callee by full SHA (`uses: Amperstrand/amp-embedded-common/.github/workflows/rust-embedded.yml@<sha>`):
+   run **reruns do not re-resolve `@ref` reusable workflows**, so a callee
+   bugfix is invisible to a rerun and to same-second racing pushes.
+
+## B21 — Reproducible ESP-IDF images: empty the clock, pin the stamp
+
+`CONFIG_APP_REPRODUCIBLE_BUILD=y` (ESP-IDF v5.2.3) empties the app
+descriptor's `__TIME__/__DATE__` and adds debug prefix maps — that alone
+makes two builds of one commit byte-identical. A controlled stamp
+(`BOLTY_BUILD_EPOCH` > `SOURCE_DATE_EPOCH`, default "0") is embedded via
+build.rs `cargo::rustc-env` + `rerun-if-env-changed` so CI can trace images
+without breaking determinism. Acceptance is the three-hash proof: A==B
+(same env, one clean rebuild apart) and C≠A (deliberately different epoch).
+
+## B22 — Tests that run nowhere rot invisibly
+
+The 22 firmware unit tests (#63) had drifted from the API (`Command::Ota`
+grew `signature`, `BoltyConfig` grew `force_unsafe`, the `{mac}` SDM gate)
+precisely because no CI ever executed them. Un-gating the pure-logic
+modules (`mod commands; mod service; mod workflow;` compile on host) plus
+one host-test job in esp32-check revived them — repairs were test-only,
+plus one NEW test locking the `{mac}`-refusal gate the rot hid behind.
+An echo-only CI job is worse than none (B15); a never-run test is a lie
+about coverage.
+
+## B23 — One repo, two agents: record the coexistence risk at first sight
+
+A parallel session was committing to microfips mid-plan (l2cap dialect
+work, author "Sisyphus" vs our workers' "Amperstrand"). The T4 worker saw
+uncommitted foreign WIP (l2cap_host.rs) and left it untouched with a ledger
+note — that note is what let the final audit attribute the later CI-red to
+the concurrent commits, not ours. When you see dirty foreign state in your
+working repo: don't clean it, don't commit it, RECORD it (path + mtime +
+what it looks like) and exclude it from your diffs.
