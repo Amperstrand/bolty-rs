@@ -54,6 +54,11 @@ const BOARD_NAME: &str = "M5Atom";
 #[cfg(feature = "board-m5stick")]
 const BOARD_NAME: &str = "M5StickC Plus";
 
+/// Build stamp pinned at compile time (#62): seconds since Unix epoch via
+/// BOLTY_BUILD_EPOCH / SOURCE_DATE_EPOCH, or "0" when unstamped. Never the
+/// wall clock — identical inputs produce identical image bytes.
+pub(crate) const BUILD_EPOCH: &str = env!("BOLTY_BUILD_EPOCH");
+
 pub(super) fn gen_rnd_a() -> bolty_core::secret::AesKey {
     let mut buf = [0u8; 16];
     unsafe { esp_idf_sys::esp_fill_random(buf.as_mut_ptr().cast(), buf.len()) };
@@ -230,6 +235,7 @@ pub fn main() {
 
     serial.line(&format!("[BOOT] #{boot_count} reason={reset_label}"));
     serial.line("[BOOT] firmware=ota-test-v1");
+    serial.line(&format!("[BOOT] built={BUILD_EPOCH}"));
 
     // Hardware diagnostics on serial console (visible even if boot logs were missed)
     {

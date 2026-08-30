@@ -1,4 +1,10 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Reproducible app images (#62): empties the app-descriptor __TIME__/__DATE__
+# fields (CONFIG_APP_COMPILE_TIME_DATE depends on !APP_REPRODUCIBLE_BUILD)
+# and adds debug-prefix-maps for IDF/PROJECT/BUILD dirs. Two builds of the
+# same commit are byte-identical. The pinned build stamp itself is a Rust-side
+# env knob (BOLTY_BUILD_EPOCH / SOURCE_DATE_EPOCH) — see build.rs.
+CONFIG_APP_REPRODUCIBLE_BUILD=y
 # NOTE: Do NOT set CONFIG_PARTITION_TABLE_CUSTOM here. esp-idf-sys cargo
 # builds resolve a relative partition CSV against the synthesized cmake
 # project dir (out/), where it never exists — the build fails with
