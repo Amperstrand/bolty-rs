@@ -22,10 +22,12 @@
 
 name: Nightly Differential Test
 
+# DORMANT (2026-08-30): manual-testing policy — the operator runs
+# tools/hil/difftest/e2e.py --phase apdu locally (see AGENTS.md).
+# To re-enable unattended runs: restore the schedule trigger below AND
+# register a self-hosted runner with the 'lab' label.
 on:
-  schedule:
-    - cron: '0 0 * * *'  # Daily at 00:00 UTC
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Manual trigger only (dormant template; see header)
 
 permissions:
   contents: read  # Read-only access
