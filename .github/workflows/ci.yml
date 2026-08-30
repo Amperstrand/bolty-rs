@@ -4,38 +4,12 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTUP_TOOLCHAIN: stable
-
 jobs:
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
-      - run: cargo clippy --workspace --exclude bolty-esp32 -- -D warnings
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
-      - run: cargo test --workspace --exclude bolty-esp32
+  ci:
+    name: CI (fmt + clippy + host tests)
+    uses: Amperstrand/amp-embedded-common/.github/workflows/rust-embedded.yml@main
+    with:
+      toolchain: "stable"
+      apt-packages: "libpcsclite-dev"
+      test-flags: "--workspace --exclude bolty-esp32"
+      # clippy-target is empty (default) → host clippy only

@@ -216,7 +216,10 @@ mod tests {
 /// the timestamp leads, the provenance tag trails, and `None` omits the tag.
 #[cfg(test)]
 mod security_tests {
-    use super::{AUDIT_TEST_MUTEX, log_event, log_event_with_provenance, reset_audit_log_path_for_test, set_audit_log_path};
+    use super::{
+        AUDIT_TEST_MUTEX, log_event, log_event_with_provenance, reset_audit_log_path_for_test,
+        set_audit_log_path,
+    };
     use bolty_core::provenance::KeyProvenance;
     use std::io::Read;
 
