@@ -140,6 +140,16 @@ BOLTY_CTL = OVERNIGHT_DIR.parent / "bolty-ctl.py"
 STICK_USB_ID = "0403:6001"  # FT232 UART bridge on the M5Stick (task-1 lsusb)
 USBDEVFS_RESET = 21780  # _IOR('U', 20, int) — the classic usbreset ioctl
 
+# FT232 RX batching budget in ms (perf sprint 2026-08-30, ccid #51 follow-up):
+# ftdi_sio holds device->host bytes until this timer expires OR a full USB
+# packet forms, so every CCID echo/response eats up to latency_timer of pure
+# USB delivery latency. 4 -> 1 measured -1.3ms mean on SELECT-MF RTT
+# (17.1 -> 15.8ms; evidence perf-sprint step1). Applied only in the ccid
+# graph AFTER the port re-enumerates (every usb_rescan resets it to the
+# driver default), BEFORE pcscd opens the port. The bolty restore's own
+# rescan resets it — no explicit undo step needed.
+FTDI_LATENCY_TUNES = {"ccid": 1}
+
 MANIFEST_NAME = "MANIFEST.json"
 IMAGE_FOR_ROLE = {  # role -> (merged bin name, MANIFEST sha256 key)
     "ccid": ("esp32-ccid-merged.bin", "ccid_merged_sha256"),
@@ -268,6 +278,23 @@ def stick_usb_bus_path() -> str:
     return "/dev/bus/usb/{:03d}/{:03d}".format(int(m.group(1)), int(m.group(2)))
 
 
+def set_stick_latency(port: str, ms: int) -> tuple:
+    """Write the FT232 latency_timer sysfs attribute for `port`'s tty.
+
+    The tty NUMBER is unstable across usb_rescan re-enumerations (ttyUSB0 ->
+    ttyUSB4 observed live), so resolve it from the stable by-id symlink.
+    Returns (ok, detail) — callers treat failure as a WARN, never a
+    switch-fatal step (a default latency_timer costs ~1ms, not health)."""
+    try:
+        tty = Path(port).resolve().name
+        attr = f"/sys/bus/usb-serial/devices/{tty}/latency_timer"
+        cp = subprocess.run(["sudo", "tee", attr], input=str(ms).encode(),
+                            capture_output=True, timeout=TEE_TIMEOUT_S)
+        return cp.returncode == 0, f"{attr}={ms} rc={cp.returncode}"
+    except Exception as e:  # noqa: BLE001 — best-effort perf tune
+        return False, repr(e)
+
+
 def usb_reset_ioctl(bus_path: str) -> None:
     """USBDEVFS_RESET on the stick's /dev/bus/usb node — the usbreset ioctl
     implemented as a tiny in-process helper (no compiled usbreset binary
@@ -291,6 +318,7 @@ class Deps:
     pulse: Callable = rts_pulse_reset
     usb_bus_path: Callable = stick_usb_bus_path
     usb_reset: Callable = usb_reset_ioctl
+    set_latency: Callable = set_stick_latency
     sleep: Callable = time.sleep
     port_exists: Callable = os.path.exists
 
@@ -364,6 +392,12 @@ def _post_rescan_port_steps(port: str) -> list:
     return [_port_wait_step(port), _sleep(PORT_SETTLE_S, "serial port settle")]
 
 
+def _latency_tune_step(role: str, port: str) -> list:
+    ms = FTDI_LATENCY_TUNES.get(role)
+    return [] if ms is None else [{"kind": "latency_tune", "port": port, "ms": ms,
+                                   "label": f"ftdi latency_timer -> {ms}ms ({role} perf tune)"}]
+
+
 def _pcscd_restart_steps() -> list:
     return [
         _cmd(["sudo", "rm", "-f", PCSCD_COMM], label="clear stale pcscd comm socket"),
@@ -431,6 +465,7 @@ def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
                  "label": "rts_pulse_reset (DTR-first, switch_role.sh:31-37)"})
     plan.extend(_rescan_steps())
     plan.extend(_post_rescan_port_steps(port))
+    plan.extend(_latency_tune_step(role, port))
     plan.extend(_pcscd_restart_steps())
     plan.append(_probe_step(role))
     plan.append(_verify_step(role))
@@ -703,6 +738,11 @@ class RoleSwitcher:
             self.recorder.row(kind="port_wait", label=step["label"], status="FAIL",
                               port=step["port"], waited_s=waited)
             return False
+        if kind == "latency_tune":
+            ok, detail = self.deps.set_latency(step["port"], step["ms"])
+            self.recorder.row(kind="latency_tune", label=step["label"],
+                              status="OK" if ok else "WARN", detail=detail)
+            return True  # perf tune is never switch-fatal
         if kind == "readers_probe":
             try:
                 names = list(self.deps.readers())
@@ -853,6 +893,7 @@ class _STDeps:
         self.runner, self.readers_fn, self.ping_ok = runner, readers, ping_ok
         self.pulses: list[str] = []
         self.resets: list[str] = []
+        self.latency_calls: list[tuple] = []
 
     def readers(self):
         return list(self.readers_fn())
@@ -868,6 +909,10 @@ class _STDeps:
 
     def usb_reset(self, bus_path):
         self.resets.append(bus_path)
+
+    def set_latency(self, port, ms):
+        self.latency_calls.append((port, ms))
+        return True, "ok"
 
     def port_exists(self, path):
         return True
@@ -908,6 +953,10 @@ def selftest() -> tuple:
     check("ccid graph: probe retry condition = missing expected reader",
           next(s for s in g if s["kind"] == "readers_probe")
           ["expect_includes"] == ["GemPCTwin serial", "ACR1252"])
+    lt = next((i for i, s in enumerate(g) if s.get("kind") == "latency_tune"), None)
+    check("ccid graph: ftdi latency tune after port-wait, before pcscd restart",
+          lt is not None and g[lt]["ms"] == FTDI_LATENCY_TUNES["ccid"]
+          and any(s.get("label") == "restart pcscd" for s in g[lt + 1:]))
     check("ccid graph: verify step carries pcscd-restart ladder rungs",
           g[-1].get("ladder_pcscd") is True)
     check("ccid graph: once-retry block restarts pcscd.service",
@@ -920,6 +969,8 @@ def selftest() -> tuple:
                               "excludes": []})
     b = dry_graph("bolty")
     bargvs = [" ".join(s.get("argv", [])) for s in b]
+    check("bolty graph has no latency tune", not any(
+        s.get("kind") == "latency_tune" for s in b))
     check("bolty graph: conf removed (ABSENT incl. legacy .disabled)",
           any(a.startswith("sudo rm -f ") and "esp32-ccid.disabled" in a
               for a in bargvs))
