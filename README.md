@@ -172,6 +172,7 @@ are guarded by byte-exact fixture vectors instead.
 ## Repository hygiene and dependency policy
 
 - Direct dependency versions are pinned with `=x.y.z` syntax.
+- The NFC fork crates (mfrc522, iso14443, ntag424) come from Amperstrand forks, always pinned by rev — see [`docs/fork-policy.md`](docs/fork-policy.md).
 - The workspace `Cargo.lock` should be committed to freeze transitive versions for reproducible firmware builds.
 - Local files such as `.env`, `.env.*`, `.direnv/`, `.envrc`, `.embuild/`, and editor caches are ignored.
 - WiFi credentials must never be committed. Use runtime serial commands or local ignored files only.
