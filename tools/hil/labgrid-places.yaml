@@ -1,0 +1,24 @@
+# Labgrid places configuration for bolty-rig
+#
+# Defines the "bolty-rig" place that matches resources exported by
+# labgrid-exporter (see labgrid-exporter.yaml).
+#
+# The place acquires:
+# - m5stick-serial: NetworkSerialPort (FTDI FT232, M5StickC Plus console)
+# - acr1252: USBDevice (ACS ACR1252 Dual Reader for PCSC)
+#
+# Usage with pytest:
+#   pytest --lg-env=tools/hil/labgrid-places.yaml tests/...
+#
+# The place name "bolty-rig" is used by labgrid to match resources
+# from the coordinator.
+
+places:
+  bolty-rig:
+    # Matches resources exported by labgrid-exporter:
+    # - m5stick-serial: NetworkSerialPort for M5StickC Plus
+    # - acr1252: USBDevice for ACR1252 PCSC reader
+    comment: "M5StickC Plus rig with ACR1252 reader"
+    matches:
+      - name: "m5stick-serial"
+      - name: "acr1252"
