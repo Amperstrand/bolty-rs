@@ -1,0 +1,5 @@
+# Actionlint configuration for bolty-rs
+#
+# Custom runner labels for self-hosted runners
+runner-labels:
+  - lab

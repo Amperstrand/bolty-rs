@@ -418,6 +418,38 @@ espflash flash --port /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-po
   `CONFIG_PARTITION_TABLE_CUSTOM` in sdkconfig.defaults breaks esp-idf-sys
   cargo builds (esp-rs/esp-idf-sys#395).
 
+## Self-Hosted GitHub Actions Runner (Lab)
+
+The nightly differential test workflow (`.github/workflows/nightly-difftest.yml`)
+requires a self-hosted GitHub Actions runner with the `lab` label. The runner
+must run on the lab host (`ai-legion-small`) where the M5StickC Plus rig and
+ACR1252 reader are physically connected.
+
+### Runner Registration
+
+To register a self-hosted runner (the operator runs these commands):
+
+```bash
+# Get a registration token from GitHub
+gh api repos/Amperstrand/bolty-rs/actions/runners/registration-token \
+  | jq -r .token
+
+# Follow the prompts from the GitHub UI:
+# Settings > Actions > Runners > New self-hosted runner > Linux
+# Download and run the config script with the token above.
+#
+# Example (after downloading the config script):
+# ./config.sh --url https://github.com/Amperstrand/bolty-rs --token <token>
+```
+
+The runner service installation itself is deliberately left to the operator —
+see the [GitHub Actions self-hosted runner documentation](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).
+
+### Runner Labels
+
+The runner must have the `lab` label to be matched by the workflow:
+`runs-on: [self-hosted, lab]`. Additional labels may be added as needed.
+
 ## Lessons Learned
 
 See docs/lessons-learned.md — append-only engineering log: rig facts (M5Stick pins, MFRC522 at 0x28), ESP-IDF sdkconfig traps, NTAG424 card-safety refinements (911E vs 91AE), and the byte-exact crypto port method.

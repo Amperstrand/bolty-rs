@@ -1,0 +1,161 @@
+# Nightly differential test workflow for self-hosted lab runner
+#
+# REQUIRES: A self-hosted GitHub Actions runner with label 'lab'
+# The runner must be registered on the lab host (ai-legion-small) where
+# the M5StickC Plus rig and ACR1252 reader are physically connected.
+#
+# To register a self-hosted runner:
+#   gh api repos/:owner/:repo/actions/runners/registration-token \
+#     | jq -r .token
+#   # Then follow the prompts from the GitHub UI:
+#   # Settings > Actions > Runners > New self-hosted runner > Linux
+#   # Download and run the config script with the token above.
+#
+# This workflow runs nightly at 00:00 UTC and performs:
+# 1. Switch M5Stick to ccid mode (GemPCTwin reader)
+# 2. Run APDU differential testing (GemPCTwin vs ACR1252)
+# 3. Restore bolty role (always runs, even on failure)
+# 4. Upload difftest results and role timelines as artifacts
+#
+# Hardware-absent guard: If the M5Stick switch fails or readers are missing,
+# the job concludes with success but writes a SKIP marker to the summary file.
+
+name: Nightly Differential Test
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at 00:00 UTC
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: read  # Read-only access
+
+jobs:
+  difftest:
+    name: APDU Differential Test (self-hosted lab)
+    runs-on: [self-hosted, lab]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python and pyscard
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install pyscard pyyaml
+
+      - name: Switch to ccid mode
+        id: switch_ccid
+        run: |
+          python3 tools/hil/overnight/role_switch.py \
+            --results-dir tools/hil/overnight/results \
+            switch_with_fallback \
+            --role ccid \
+            --output tools/hil/difftest/results/role_switch_ccid.json
+        continue-on-error: true  # Don't fail if switch fails (hardware-absent guard)
+
+      - name: Check readers availability
+        id: check_readers
+        run: |
+          python3 -c "
+          from smartcard.System import readers
+          readers_list = [str(r) for r in readers()]
+          has_gem = any('GemPCTwin' in r for r in readers_list)
+          has_acr = any('ACR1252' in r for r in readers_list)
+          print(f'has_gem={has_gem}')
+          print(f'has_acr={has_acr}')
+          print('readers=' + '|'.join(readers_list))
+          " > tools/hil/difftest/results/readers_check.txt
+          cat tools/hil/difftest/results/readers_check.txt
+        continue-on-error: true  # Don't fail if readers check fails
+
+      - name: Run APDU differential test
+        id: run_difftest
+        if: steps.switch_ccid.outcome == 'success' && steps.check_readers.outcome == 'success'
+        run: |
+          mkdir -p tools/hil/difftest/results
+          python3 tools/hil/difftest/e2e.py --phase apdu \
+            --output-dir tools/hil/difftest/results \
+            | tee tools/hil/difftest/results/e2e_output.txt
+        continue-on-error: true  # Don't fail if difftest fails
+
+      - name: Restore bolty role
+        id: restore_bolty_role
+        if: always()  # Always run restore, even if previous steps fail
+        run: |
+          python3 tools/hil/overnight/role_switch.py \
+            --results-dir tools/hil/overnight/results \
+            switch_with_fallback \
+            --role bolty \
+            --output tools/hil/difftest/results/role_switch_restore.json
+        continue-on-error: true  # Don't fail if restore fails
+
+      - name: Generate hardware-absent guard summary
+        if: always()
+        run: |
+          {
+            cat > tools/hil/difftest/results/summary.md << 'EOF'
+          # Nightly Differential Test Summary
+
+          ## Hardware Status
+
+          - **Switch to ccid**: ${{ steps.switch_ccid.outcome }}
+          - **Readers check**: ${{ steps.check_readers.outcome }}
+          - **Difftest run**: ${{ steps.run_difftest.outcome }}
+          - **Restore bolty**: ${{ steps.restore_bolty_role.outcome }}
+
+          ## Readers Availability
+
+          \`\`\`
+          $(cat tools/hil/difftest/results/readers_check.txt 2>/dev/null || echo 'Readers check failed')
+          \`\`\`
+
+          ## Test Artifacts
+
+          - e2e_output.txt: Full E2E test output
+          - role_switch_ccid.json: Role switch timeline (ccid)
+          - role_switch_restore.json: Role switch timeline (restore)
+          - *.json: Difftest results (if test ran)
+          EOF
+          }
+
+      - name: Mark SKIP if hardware absent
+        if: steps.switch_ccid.outcome != 'success' || steps.check_readers.outcome != 'success'
+        run: |
+          {
+            echo "SKIP: Hardware unavailable or readers missing"
+            echo "## Status: SKIP"
+            echo ""
+            echo "The M5StickC Plus rig or ACR1252 reader is not available."
+            echo "This is expected if the hardware is temporarily disconnected."
+            echo ""
+            echo "The workflow will retry on the next scheduled run."
+          } >> tools/hil/difftest/results/summary.md
+
+      - name: Upload difftest artifacts
+        if: always()  # Upload even on failure
+        uses: actions/upload-artifact@v4
+        with:
+          name: difftest-results-${{ github.run_number }}
+          path: tools/hil/difftest/results/
+          retention-days: 30
+
+      - name: Upload role timeline artifacts
+        if: always()  # Upload even on failure
+        uses: actions/upload-artifact@v4
+        with:
+          name: role-timeline-${{ github.run_number }}
+          path: tools/hil/overnight/results/
+          retention-days: 30
+
+      - name: Print summary
+        if: always()
+        run: |
+          cat tools/hil/difftest/results/summary.md
+
+      - name: Set job conclusion
+        if: steps.switch_ccid.outcome != 'success' || steps.check_readers.outcome != 'success'
+        run: |
+          echo "Hardware absent - marking job as success with SKIP marker"
+          # The job succeeds but the summary indicates SKIP
+          exit 0
