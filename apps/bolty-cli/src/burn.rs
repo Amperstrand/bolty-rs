@@ -455,6 +455,7 @@ mod tests {
             "factory-path burn audit must contain [provenance=FactoryDefault], got: {content:?}"
         );
         let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
     }
 
     #[tokio::test]
@@ -513,6 +514,7 @@ mod tests {
             "derived-path burn audit must contain [provenance=DerivedIssuer(1)], got: {content:?}"
         );
         let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
     }
 }
 
@@ -586,6 +588,7 @@ mod security_tests {
             &keys_before,
             "no keys may change when the URL guard rejects the burn"
         );
+        crate::audit::reset_audit_log_path_for_test();
     }
 
     // SECURITY invariant: a URL lacking the {mac} placeholder must be rejected.
@@ -616,6 +619,7 @@ mod security_tests {
             "error must explain the {{mac}} requirement, got: {msg}"
         );
         assert_eq!(transport.keys(), &keys_before);
+        crate::audit::reset_audit_log_path_for_test();
     }
 
     // SECURITY invariant: a URL with neither placeholder is rejected too (the
@@ -643,6 +647,7 @@ mod security_tests {
             format!("{err}").contains("must contain"),
             "error must mention the placeholder requirement"
         );
+        crate::audit::reset_audit_log_path_for_test();
     }
 
     // SECURITY invariant: the guard must be bypassable with --force. This is

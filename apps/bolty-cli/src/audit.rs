@@ -39,6 +39,15 @@ fn audit_log_path() -> PathBuf {
 #[cfg(test)]
 pub static AUDIT_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Reset the audit log path to None. Call this in test cleanup to prevent
+/// test-to-test path leakage when tests run in parallel.
+#[cfg(test)]
+pub fn reset_audit_log_path_for_test() {
+    if let Ok(mut guard) = AUDIT_LOG_PATH.write() {
+        *guard = None;
+    }
+}
+
 fn log_entry(entry: &str) {
     let path = audit_log_path();
     if let Ok(mut f) = OpenOptions::new()
@@ -195,6 +204,7 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&tmp_path);
+        reset_audit_log_path_for_test();
     }
 }
 
@@ -206,7 +216,7 @@ mod tests {
 /// the timestamp leads, the provenance tag trails, and `None` omits the tag.
 #[cfg(test)]
 mod security_tests {
-    use super::{AUDIT_TEST_MUTEX, log_event, log_event_with_provenance, set_audit_log_path};
+    use super::{AUDIT_TEST_MUTEX, log_event, log_event_with_provenance, reset_audit_log_path_for_test, set_audit_log_path};
     use bolty_core::provenance::KeyProvenance;
     use std::io::Read;
 
@@ -264,6 +274,7 @@ mod security_tests {
         assert!(ts > 0, "timestamp must be non-zero epoch millis");
 
         let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
     }
 
     #[test]
@@ -289,6 +300,7 @@ mod security_tests {
         );
 
         let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
     }
 
     #[test]
@@ -309,6 +321,7 @@ mod security_tests {
         );
 
         let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
     }
 
     #[test]
@@ -326,6 +339,7 @@ mod security_tests {
         assert!(line.contains("[provenance=FactoryDefault]"));
 
         let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
     }
 
     #[test]
@@ -352,5 +366,6 @@ mod security_tests {
         );
 
         let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
     }
 }

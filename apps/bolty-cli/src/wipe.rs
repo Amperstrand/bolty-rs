@@ -259,5 +259,6 @@ mod tests {
             "wipe audit must contain [provenance=DerivedIssuer(1)], got: {content:?}"
         );
         let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
     }
 }
