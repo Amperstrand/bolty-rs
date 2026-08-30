@@ -9,6 +9,8 @@ jobs:
     name: CI (fmt + clippy + host tests)
     uses: Amperstrand/amp-embedded-common/.github/workflows/rust-embedded.yml@main
     with:
+      # Host clippy must exclude the firmware crate (dead-code by design on host)
+      clippy-flags: "--workspace --exclude bolty-esp32"
       toolchain: "stable"
       apt-packages: "libpcsclite-dev"
       test-flags: "--workspace --exclude bolty-esp32"
