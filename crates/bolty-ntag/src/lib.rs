@@ -26,9 +26,11 @@ pub use ntag424::{
     sdm::{SdmUrlOptions, Verifier, sdm_url_config},
     types::{
         ResponseStatus,
-        file_settings::{CryptoMode, PiccData, Sdm},
+        file_settings::{CryptoMode, FileSettingsUpdate, PiccData, Sdm},
     },
 };
+
+use ntag424::types::file_settings::{Access, AccessRights};
 
 pub use bolty_core::constants::{FACTORY_KEY, KEY_VERSION_BLANK as FACTORY_KEY_VERSION};
 pub use bolty_core::secret::{AesKey, CardKeys};
@@ -264,6 +266,36 @@ pub async fn safe_inspect<T: Transport>(
     })
 }
 
+/// Access rights a burned card must be left with: read `Free`,
+/// write/read-write/change `K0` (wire bytes `00 E0`).
+///
+/// NT4H2421Gx Rev 3.0 Table 8 footnote [1] recommends changing the Write and
+/// ReadWrite access rights of the NDEF file after personalization to prevent
+/// unauthorized changes; the reference programmer enforces exactly this
+/// (`00E0` in bolt-card-programmer `NTag424.tsx` `setBoltCardFileSettings`).
+/// Audited 2026-08-31 against bolt-card-programmer (cross-implementation
+/// audit finding F1).
+fn burned_ndef_access_rights() -> AccessRights {
+    AccessRights {
+        read: Access::Free,
+        write: Access::Key(KeyNumber::Key0),
+        read_write: Access::Key(KeyNumber::Key0),
+        change: Access::Key(KeyNumber::Key0),
+    }
+}
+
+/// Factory NDEF access rights restored by wipe: read/write/read-write
+/// `Free`, change `K0` (wire bytes `E0 EE`). Audited 2026-08-31 against
+/// bolt-card-programmer `resetFileSettings` (audit finding F3).
+fn factory_ndef_access_rights() -> AccessRights {
+    AccessRights {
+        read: Access::Free,
+        write: Access::Free,
+        read_write: Access::Free,
+        change: Access::Key(KeyNumber::Key0),
+    }
+}
+
 pub async fn burn<T: Transport>(
     transport: &mut T,
     params: &BurnParams<'_>,
@@ -327,7 +359,8 @@ pub async fn burn<T: Transport>(
         .change_file_settings(
             transport,
             File::Ndef,
-            &settings.into_update().with_sdm(plan.sdm_settings),
+            &FileSettingsUpdate::new(settings.comm_mode, burned_ndef_access_rights())
+                .with_sdm(plan.sdm_settings),
         )
         .await?;
 
@@ -422,7 +455,8 @@ pub async fn wipe<T: Transport>(
     // BOLT_DET: 12. Restore the NDEF file settings to default values with `ChangeFileSettings`.
 
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
-    let update = settings.into_update().with_sdm(Sdm::disabled());
+    let update = FileSettingsUpdate::new(settings.comm_mode, factory_ndef_access_rights())
+        .with_sdm(Sdm::disabled());
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await?;

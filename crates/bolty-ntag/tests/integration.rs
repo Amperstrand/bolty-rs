@@ -12,6 +12,27 @@ use ntag424::{
     types::{KeyNumber, file_settings::CryptoMode},
 };
 
+/// Read Free, write/read-write/change K0 — wire bytes `00 E0` (TSX
+/// setBoltCardFileSettings / NT4H2421Gx Rev 3.0 Table 8 fn[1]).
+fn locked_access_rights() -> ntag424::types::file_settings::AccessRights {
+    ntag424::types::file_settings::AccessRights {
+        read: ntag424::types::file_settings::Access::Free,
+        write: ntag424::types::file_settings::Access::Key(KeyNumber::Key0),
+        read_write: ntag424::types::file_settings::Access::Key(KeyNumber::Key0),
+        change: ntag424::types::file_settings::Access::Key(KeyNumber::Key0),
+    }
+}
+
+/// Factory NDEF access rights — wire bytes `E0 EE`.
+fn factory_access_rights() -> ntag424::types::file_settings::AccessRights {
+    ntag424::types::file_settings::AccessRights {
+        read: ntag424::types::file_settings::Access::Free,
+        write: ntag424::types::file_settings::Access::Free,
+        read_write: ntag424::types::file_settings::Access::Free,
+        change: ntag424::types::file_settings::Access::Key(KeyNumber::Key0),
+    }
+}
+
 type RawKeySet = [[u8; 16]; 5];
 
 const RND_A: [u8; 16] = [
@@ -160,6 +181,71 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
         "NDEF should be empty (NLEN=0)"
     );
     assert_eq!(transport.keys()[0], FACTORY_KEY);
+}
+
+#[test]
+fn burn_locks_ndef_write_access_per_datasheet_table8() {
+    let keys = test_keys();
+    let params = burn_params(burn_lnurl(), keys);
+    let mut transport = MockTransport::new();
+
+    block_on(burn(&mut transport, &params, AesKey::new(RND_A))).unwrap();
+
+    let settings = ntag424::types::FileSettingsView::decode(transport.file_settings()).unwrap();
+    // NT4H2421Gx Rev 3.0 Table 8 fn[1]: burn must lock NDEF write access
+    // (audit A4 finding F1).
+    assert_eq!(settings.access_rights, locked_access_rights());
+}
+
+#[test]
+fn burn_then_reburn_still_locks_access_rights() {
+    let keys = test_keys();
+    let mut transport = MockTransport::new();
+
+    block_on(burn(
+        &mut transport,
+        &burn_params(burn_lnurl(), keys),
+        AesKey::new(RND_A),
+    ))
+    .unwrap();
+
+    let reburn_keys: RawKeySet = [[0xAA; 16], [0xBB; 16], [0xCC; 16], [0xDD; 16], [0xEE; 16]];
+    let reburn_params = BurnParams {
+        lnurl: burn_lnurl(),
+        keys: to_cardkeys(reburn_keys),
+        key_version: 0x99,
+        current_key: AesKey::new(keys[0]),
+        previous_keys: to_cardkeys(keys),
+    };
+
+    block_on(burn(
+        &mut transport,
+        &reburn_params,
+        AesKey::new([0x27; 16]),
+    ))
+    .unwrap();
+
+    let settings = ntag424::types::FileSettingsView::decode(transport.file_settings()).unwrap();
+    assert_eq!(settings.access_rights, locked_access_rights());
+}
+
+#[test]
+fn wipe_restores_factory_access_rights() {
+    let keys = test_keys();
+    // Externally burned card shape: TSX forces AR = 00 E0 on setup.
+    let mut transport = MockTransport::provisioned(
+        keys,
+        [0x42; 5],
+        Vec::new(),
+        vec![0x00, 0x00, 0x00, 0xE0, 0x00, 0x01, 0x00],
+    );
+
+    block_on(wipe(&mut transport, &to_cardkeys(keys), AesKey::new(RND_A))).unwrap();
+
+    let settings = ntag424::types::FileSettingsView::decode(transport.file_settings()).unwrap();
+    // DET:68 "Restore the NDEF file settings to default values" includes the
+    // access rights (audit A4 finding F3).
+    assert_eq!(settings.access_rights, factory_access_rights());
 }
 
 #[test]
