@@ -70,7 +70,7 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
         .decrypt_padded::<NoPadding>(&mut buf)
         .ok()?;
 
-    // BOLT_DET: 3. Check `PICCData[0] == 0xc7`. 
+    // BOLT_DET: 3. Check `PICCData[0] == 0xc7`.
 
     if buf[0] != PICC_FORMAT_BOLTCARD {
         return None;
