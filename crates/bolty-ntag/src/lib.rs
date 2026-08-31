@@ -46,6 +46,8 @@ pub type KeySet = CardKeys;
 
 // (The typo "specfying" is verbatim from the spec — greatspectations pins it.)
 
+// BOLT_SPEC: lnurlw://card.yourdomain.com?p=A2EF40F6D46F1BB36E6EBF0114D4A464&c=F509EEA788E37E32
+
 /// Ensures the URL template produces standard Bolt Card-compatible SDM configuration.
 ///
 /// The ntag424 crate defaults `SDM_MAC_Input_Offset` to the start of the URI body
@@ -57,8 +59,7 @@ pub type KeySet = CardKeys;
 /// Without `[[`, the card computes MAC over URL data (58+ bytes), which won't match
 /// the server's empty-input computation. This function inserts `[[` before `{mac}`
 /// if not already present, ensuring standard compatibility.
-// BOLT_SPEC: lnurlw://card.yourdomain.com?p=A2EF40F6D46F1BB36E6EBF0114D4A464&c=F509EEA788E37E32
-
+///
 /// Hardware-audited 2026-06-15 on ACS ACR1252 + NTAG424: full burn → read cycle
 /// produced `mac=true` against the psbt.me proxy with the `[[{mac}` template
 /// (AGENTS.md "PCSC ACS ACR1252 — FULLY WORKING").
