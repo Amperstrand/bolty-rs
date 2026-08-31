@@ -140,14 +140,16 @@ BOLTY_CTL = OVERNIGHT_DIR.parent / "bolty-ctl.py"
 STICK_USB_ID = "0403:6001"  # FT232 UART bridge on the M5Stick (task-1 lsusb)
 USBDEVFS_RESET = 21780  # _IOR('U', 20, int) — the classic usbreset ioctl
 
-# FT232 RX batching budget in ms (perf sprint 2026-08-30, ccid #51 follow-up):
+# FT232 RX batching budget in ms (perf sprint 2026-08-30, ccid #59):
 # ftdi_sio holds device->host bytes until this timer expires OR a full USB
 # packet forms, so every CCID echo/response eats up to latency_timer of pure
 # USB delivery latency. 4 -> 1 measured -1.3ms mean on SELECT-MF RTT
 # (17.1 -> 15.8ms; evidence perf-sprint step1). Applied only in the ccid
-# graph AFTER the port re-enumerates (every usb_rescan resets it to the
-# driver default), BEFORE pcscd opens the port. The bolty restore's own
-# rescan resets it — no explicit undo step needed.
+# graph AFTER the port re-enumerates and BEFORE pcscd opens the port; the
+# step is idempotent, so it is correct whether or not the value survives a
+# rescan (observed both ways: reset across the 2026-08-30 ccid switch,
+# retained across the 2026-08-31 bolty restore). Never applied to the bolty
+# role; a leftover 1ms there is a harmless console-link tradeoff.
 FTDI_LATENCY_TUNES = {"ccid": 1}
 
 MANIFEST_NAME = "MANIFEST.json"
