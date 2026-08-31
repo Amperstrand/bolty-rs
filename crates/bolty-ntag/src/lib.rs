@@ -70,6 +70,9 @@ pub type KeySet = CardKeys;
 /// // [[ is now before {mac}, producing empty MAC input range
 /// assert!(standardized.contains("[[{mac}"));
 /// ```
+
+// BOLT_SPEC: lnurlw://card.yourdomain.com?p=A2EF40F6D46F1BB36E6EBF0114D4A464&c=F509EEA788E37E32
+
 pub fn standardize_url_template(url: &str) -> String {
     if url.contains("[[{mac}") {
         return String::from(url);
@@ -280,6 +283,10 @@ pub async fn burn<T: Transport>(
     let uid = session.get_selected_uid(transport).await?;
     let uid_fixed = uid_to_fixed(&uid);
 
+    // BOLT_DET: 2. Execute `AuthenticateEV2First` with the application key `00000000000000000000000000000000`
+
+    // On a factory-blank card params.current_key is exactly this all-zero
+    // application key; on a re-burn the caller supplies the card's live K0.
     let session = session
         .authenticate_aes(
             transport,
@@ -413,11 +420,15 @@ pub async fn wipe<T: Transport>(
         )
         .await?;
 
+    // BOLT_DET: 12. Restore the NDEF file settings to default values with `ChangeFileSettings`.
+
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
     let update = settings.into_update().with_sdm(Sdm::disabled());
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await?;
+
+    // BOLT_DET: 11. Erase the NDEF data file using `WriteData` or `ISOUpdateBinary`
 
     // NDEF Type 4 Tag spec: first 2 bytes = NLEN (big-endian length of NDEF
     // message). NLEN=0 means empty NDEF — no records (NFC Forum NDEF Type 4
@@ -426,6 +437,8 @@ pub async fn wipe<T: Transport>(
     session
         .write_file_plain(transport, File::Ndef, 0, &empty_ndef)
         .await?;
+
+    // BOLT_DET: 13. Use `ChangeKey` with the recovered application keys to reset `K4` through `K0` to `00000000000000000000000000000000`.
 
     let key_updates: [(NonMasterKeyNumber, KeyNumber, &[u8; 16]); 4] = [
         (

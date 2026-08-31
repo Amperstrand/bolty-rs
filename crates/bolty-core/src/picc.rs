@@ -70,6 +70,8 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
         .decrypt_padded::<NoPadding>(&mut buf)
         .ok()?;
 
+    // BOLT_DET: 3. Check `PICCData[0] == 0xc7`. 
+
     if buf[0] != PICC_FORMAT_BOLTCARD {
         return None;
     }
@@ -88,6 +90,9 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     };
 
     picc.uid.copy_from_slice(&buf[1..1 + PICC_UID_BYTE_LEN]);
+
+    // BOLT_DET: 10. Confirm that the last-seen counter for `ID` is lower than what is stored in `counter=PICCData[8..11]`. (Little Endian)
+
     // BOLT_SPEC: the bolt card service must only accept an increasing counter value
 
     // Bolty surfaces the counter here; the monotonicity check itself is the
@@ -110,6 +115,8 @@ pub fn sdm_build_sv2(uid: &[u8; 7], counter: u32) -> [u8; 16] {
 }
 
 // BOLT_SPEC: for the `c` value and the `SDM File Read Access Key` value, check with AES-CMAC
+
+// BOLT_DET: 9. Verify that the SUN MAC in `c=` matches the one calculated using `Authentication Key (K2)`.
 
 // Audited 2026-08-25 against boltcard (Go) lnurlw/lnurlw_request.go
 // `check_cmac`: SV2 layout (3cc3 0001 0080 || uid || ctr_lsb3), double-CMAC

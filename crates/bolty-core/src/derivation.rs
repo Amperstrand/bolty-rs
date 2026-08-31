@@ -111,6 +111,9 @@ pub fn aes128_cmac(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
 pub struct BoltcardDeterministicDeriver;
 
 impl BoltcardDeterministicDeriver {
+    // BOLT_DET: * `UID`: This is the 7-byte ID of the card. You can retrieve it from the NTag424 using the `GetCardUID` function after identification with K1, or by decrypting the `p=` parameter, also known as `PICCData`.
+    // BOLT_DET: * `Version`: A 4-bytes little endian version number. This must be incremented every time the user re-programs (reset/setup) the same BoltCard on the same `LNUrl Withdraw Service`.
+
     pub fn derive_card_key(issuer_key: &[u8; 16], uid: CardUid, version: u32) -> [u8; 16] {
         let mut message = [0u8; 15];
         message[..4].copy_from_slice(&TAG_CARD_KEY);
