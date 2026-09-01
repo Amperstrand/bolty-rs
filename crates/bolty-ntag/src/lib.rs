@@ -579,7 +579,47 @@ pub struct NdefUri {
     pub mac_hex: Option<String>,
 }
 
-const URI_PREFIXES: &[&str] = &["", "http://www.", "https://www.", "http://", "https://"];
+/// NDEF RTD-URI prefix table, codes 0x00-0x23, shared byte-for-byte by ntag424
+/// (`sdm_url.rs` `NDEF_URI_PREFIXES`) and react-native-nfc-manager ndef-lib
+/// (`RTD_URI_PROTOCOLS`). Audited 2026-08-31 against both implementations.
+const URI_PREFIXES: &[&str] = &[
+    "",
+    "http://www.",
+    "https://www.",
+    "http://",
+    "https://",
+    "tel:",
+    "mailto:",
+    "ftp://anonymous:anonymous@",
+    "ftp://ftp.",
+    "ftps://",
+    "sftp://",
+    "smb://",
+    "nfs://",
+    "ftp://",
+    "dav://",
+    "news:",
+    "telnet://",
+    "imap:",
+    "rtsp://",
+    "urn:",
+    "pop:",
+    "sip:",
+    "sips:",
+    "tftp:",
+    "btspp://",
+    "btl2cap://",
+    "btgoep://",
+    "tcpobex://",
+    "irdaobex://",
+    "file://",
+    "urn:epc:id:",
+    "urn:epc:tag:",
+    "urn:epc:pat:",
+    "urn:epc:raw:",
+    "urn:epc:",
+    "urn:nfc:",
+];
 
 pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
     if data.len() < 4 {
@@ -621,7 +661,7 @@ pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
     }
 
     let prefix_code = usize::from(*payload.first()?);
-    let prefix = URI_PREFIXES.get(prefix_code).copied().unwrap_or("");
+    let prefix = URI_PREFIXES.get(prefix_code).copied()?;
     let uri = payload.get(1..)?;
     let uri_str = core::str::from_utf8(uri).ok()?.trim_end_matches('\0');
     let url = alloc::format!("{prefix}{uri_str}");
@@ -641,7 +681,7 @@ pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
 #[cfg(test)]
 mod ndef_tests {
     use super::*;
-    use alloc::vec;
+    use alloc::{format, vec};
 
     const MINIMAL_NDEF: &[u8] = &[
         0x00, 0x09, 0xD1, 0x01, 0x05, 0x55, 0x04, 0x61, 0x62, 0x63, 0x64,
@@ -696,8 +736,32 @@ mod ndef_tests {
     #[test]
     fn parse_wrong_prefix_code() {
         let data = &[0x00, 0x07, 0xD1, 0x01, 0x03, 0x55, 0xFF, b'x', b'y'];
-        let parsed = parse_ndef_uri(data).unwrap();
-        assert_eq!(parsed.url, "xy");
+        assert!(parse_ndef_uri(data).is_none());
+    }
+
+    #[test]
+    fn parse_uri_prefix_codes_beyond_five() {
+        // NDEF RTD-URI prefix table 0x00-0x23, shared byte-for-byte by
+        // ntag424 (sdm_url.rs NDEF_URI_PREFIXES) and react-native-nfc-manager
+        // ndef-lib (RTD_URI_PROTOCOLS). Audited 2026-08-31 against both.
+        let cases: &[(u8, &str, &str)] = &[
+            (0x05, "tel:", "+1234"),
+            (0x13, "urn:", "nfc:card.yourdomain.com"),
+            (0x23, "urn:nfc:", "card.yourdomain.com"),
+        ];
+        for (code, prefix, rest) in cases {
+            let mut data = vec![0x00, 0x00, 0xD1, 0x01];
+            let payload_len = 1 + rest.len();
+            data.push(payload_len as u8);
+            data.push(0x55);
+            data.push(*code);
+            data.extend_from_slice(rest.as_bytes());
+            let nlen = (data.len() - 2) as u16;
+            data[0..2].copy_from_slice(&nlen.to_be_bytes());
+            let parsed = parse_ndef_uri(&data)
+                .unwrap_or_else(|| panic!("code {code:#04x} should be recognized"));
+            assert_eq!(parsed.url, format!("{prefix}{rest}"), "code {code:#04x}");
+        }
     }
 
     #[test]
