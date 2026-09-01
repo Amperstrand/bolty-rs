@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # difftest/, where apdu_matrix lives
 from apdu_matrix import (
     APDU_TESTS,
     ApduTest,

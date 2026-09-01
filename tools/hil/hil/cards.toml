@@ -1,0 +1,26 @@
+# Expected-card registry — the HIL safety contract.
+# Any card NOT listed here (or listed without the required op) is REFUSED
+# for that operation. UID is lowercase (console/pcsc normalization).
+#
+# ops: read        = read-only commands (uid/url/inspect/picc/diagnose)
+#      burn        = may be burned (deterministic issuers only)
+#      wipe        = may be wiped
+# state: expected state before a burn-cycle run (asserted in preflight)
+
+[cards.04c474fa967380]
+alias        = "stick-antenna"
+reader_hint  = "GemPCTwin"           # only reachable through the stick MFRC522
+ops          = ["read", "burn", "wipe"]
+state        = "any"                  # provisioned|blank|any (overnight end-states vary)
+
+[cards.04455ffa967380]
+alias        = "acr-lab-blank"
+reader_hint  = "ACR1252"
+ops          = ["read", "burn", "wipe"]
+state        = "any"
+
+# Cards seen in lab history that must NEVER be mutated:
+[cards.043365fa967380]
+alias        = "recovery-case-do-not-burn"   # unknown-key state, AGENTS recovery plan
+reader_hint  = "any"
+ops          = ["read"]                       # read-only: auth attempts cost budget
