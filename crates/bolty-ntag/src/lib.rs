@@ -764,6 +764,134 @@ mod ndef_tests {
         }
     }
 
+    fn uri_record(code: u8, rest: &str) -> Vec<u8> {
+        let mut data = vec![0x00, 0x00, 0xD1, 0x01];
+        let payload_len = 1 + rest.len();
+        data.push(payload_len as u8);
+        data.push(0x55);
+        data.push(code);
+        data.extend_from_slice(rest.as_bytes());
+        let nlen = (data.len() - 2) as u16;
+        data[0..2].copy_from_slice(&nlen.to_be_bytes());
+        data
+    }
+
+    /// Independent transcription of the NFC Forum RTD-URI well-known prefix
+    /// table (codes 0x00-0x23) — kept literal so any drift in `URI_PREFIXES`
+    /// itself fails this test instead of comparing the table against itself.
+    /// Source order per NFCForum-TS-RTD_URI_1.0, as shared byte-for-byte by
+    /// ntag424 `NDEF_URI_PREFIXES` and ndef-lib `RTD_URI_PROTOCOLS`
+    /// (audit A5-5 fix 0043986, adjudication D5).
+    const EXPECTED_URI_PREFIXES: &[&str] = &[
+        "",
+        "http://www.",
+        "https://www.",
+        "http://",
+        "https://",
+        "tel:",
+        "mailto:",
+        "ftp://anonymous:anonymous@",
+        "ftp://ftp.",
+        "ftps://",
+        "sftp://",
+        "smb://",
+        "nfs://",
+        "ftp://",
+        "dav://",
+        "news:",
+        "telnet://",
+        "imap:",
+        "rtsp://",
+        "urn:",
+        "pop:",
+        "sip:",
+        "sips:",
+        "tftp:",
+        "btspp://",
+        "btl2cap://",
+        "btgoep://",
+        "tcpobex://",
+        "irdaobex://",
+        "file://",
+        "urn:epc:id:",
+        "urn:epc:tag:",
+        "urn:epc:pat:",
+        "urn:epc:raw:",
+        "urn:epc:",
+        "urn:nfc:",
+    ];
+
+    #[test]
+    fn parse_uri_prefix_table_full_range() {
+        // Every code 0x00-0x23 decodes with its exact prefix (0043986).
+        for (code, prefix) in EXPECTED_URI_PREFIXES.iter().enumerate() {
+            let data = uri_record(code as u8, "card.example");
+            let parsed = parse_ndef_uri(&data)
+                .unwrap_or_else(|| panic!("code {code:#04x} should be recognized"));
+            assert_eq!(
+                parsed.url,
+                format!("{prefix}card.example"),
+                "code {code:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_uri_prefix_codes_above_table_are_rejected() {
+        // Everything above the table (0x24-0xFF) fails loudly instead of
+        // silently dropping the prefix (0043986; 0xFF was already rejected,
+        // the rest of the range is pinned here too).
+        for code in 0x24u16..=0xFF {
+            let data = uri_record(code as u8, "card.example");
+            assert!(
+                parse_ndef_uri(&data).is_none(),
+                "code {code:#04x} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::indexing_slicing)]
+    fn sdm_url_config_encodes_each_table_prefix() {
+        // Encoder side of the table: for a URL starting with each known
+        // prefix, sdm_url_config must emit that prefix's code in the NDEF
+        // URI identifier byte. bolty/ntag424 pick the FIRST table match, so
+        // the urn:epc:* and urn:nfc: prefixes (0x1E-0x23) shadow to "urn:"
+        // 0x13 — the A5-6/D5 first-vs-last divergence from ndef-lib, pinned
+        // here as intended behavior (decode-compatible both directions).
+        let shadowed_by_urn = 0x13;
+        let expected_code: Vec<(usize, u8)> = EXPECTED_URI_PREFIXES
+            .iter()
+            .enumerate()
+            .map(|(code, prefix)| {
+                let expected = if prefix.starts_with("urn:") && code != 0x13 {
+                    shadowed_by_urn
+                } else {
+                    code as u8
+                };
+                (code, expected)
+            })
+            .collect();
+        for (code, expected) in expected_code {
+            let prefix = EXPECTED_URI_PREFIXES[code];
+            let url = format!("{prefix}card.bolt.local/lnurl?p={{picc:uid+ctr}}&c={{mac}}");
+            let standardized = standardize_url_template(&url);
+            let plan = sdm_url_config(&standardized, CryptoMode::Aes, SdmUrlOptions::new())
+                .unwrap_or_else(|e| panic!("code {code:#04x} should configure: {e}"));
+            assert_eq!(plan.prefix_code, expected, "code {code:#04x}");
+            // SR URI record: NLEN(2) | flags D1 | type len 01 | payload len | 'U' | code
+            assert_eq!(plan.ndef_bytes[6], expected, "code {code:#04x}");
+            let parsed = parse_ndef_uri(&plan.ndef_bytes).expect("round-trip parse must succeed");
+            assert_eq!(
+                parsed.url,
+                format!(
+                    "{prefix}card.bolt.local/lnurl?p=00000000000000000000000000000000&c=0000000000000000"
+                ),
+                "code {code:#04x} round-trip"
+            );
+        }
+    }
+
     #[test]
     fn parse_long_record_non_sr() {
         let mut data = vec![0x00, 0x00];

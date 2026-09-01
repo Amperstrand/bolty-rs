@@ -195,6 +195,15 @@ fn burn_locks_ndef_write_access_per_datasheet_table8() {
     // NT4H2421Gx Rev 3.0 Table 8 fn[1]: burn must lock NDEF write access
     // (audit A4 finding F1).
     assert_eq!(settings.access_rights, locked_access_rights());
+
+    // Byte-exact wire pin (audit adjudication D1): the burn ChangeFileSettings
+    // carries access-rights wire bytes 00 E0 — the little-endian Table-7
+    // encode of Read=Free, Write/RW/Change=K0, identical to AN12196 Table 12
+    // (post-personalization example) and Table 19 CmdData. The mock splices
+    // the decrypted patch bytes raw, so this asserts the actual wire bytes.
+    #[allow(clippy::indexing_slicing)]
+    let ar_wire = &transport.file_settings()[2..4];
+    assert_eq!(ar_wire, &[0x00, 0xE0]);
 }
 
 #[test]
@@ -227,6 +236,9 @@ fn burn_then_reburn_still_locks_access_rights() {
 
     let settings = ntag424::types::FileSettingsView::decode(transport.file_settings()).unwrap();
     assert_eq!(settings.access_rights, locked_access_rights());
+    #[allow(clippy::indexing_slicing)]
+    let ar_wire = &transport.file_settings()[2..4];
+    assert_eq!(ar_wire, &[0x00, 0xE0]);
 }
 
 #[test]
@@ -246,6 +258,18 @@ fn wipe_restores_factory_access_rights() {
     // DET:68 "Restore the NDEF file settings to default values" includes the
     // access rights (audit A4 finding F3).
     assert_eq!(settings.access_rights, factory_access_rights());
+
+    // Byte-exact wire pin (audit adjudication D1): the resulting file
+    // settings carry AR wire bytes E0 EE, and the wipe ChangeFileSettings
+    // payload (file_option 40 | AR E0 EE | SDMOptions 01 | SDMAR FFFF) is
+    // byte-identical to TSX resetFileSettings cmdData "40 E0EE 01 FFFF"
+    // (NTag424.tsx L365-385) — SDM flagged off with all mirror rights
+    // NoAccess. The two leading bytes are the immutable file_type/size
+    // header the patch cannot change.
+    assert_eq!(
+        transport.file_settings(),
+        &[0x00, 0x40, 0xE0, 0xEE, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF]
+    );
 }
 
 #[test]
