@@ -1,0 +1,45 @@
+# Host-tier push CI (hackathon-tooling ci-templates/host-tier-push-ci.yml adopter).
+# Runs everything that needs NO hardware on every push — the bench (HIL
+# cards/readers) only sees host-green commits.
+name: Host CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Rust host tests
+        run: cargo nextest run --workspace --exclude bolty-esp32
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python HIL collection + non-hardware tests
+        run: |
+          cd tools/hil
+          python3 -m pip install pytest pytest-timeout
+          python3 -m pytest --collect-only -q   # collection gate: zero errors
+          python3 -m pytest -q -m "not hardware and not card_mutation" \
+            --timeout=120 --timeout-method=thread || {
+              # Pre-existing hardware-env failures (burn_cycle uid-gate,
+              # role_switch reader mocks) are tracked in #73 — do not let
+              # them block the collection gate; drop this || block once fixed.
+              exit 1
+            }
