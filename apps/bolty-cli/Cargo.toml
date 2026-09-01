@@ -24,6 +24,7 @@ getrandom = "=0.3.4"
 
 [dev-dependencies]
 aes = "=0.9.1"
+cbc = { version = "=0.2.0", features = ["block-padding"] }
 cmac = "=0.8.0"
 bolty-core = { path = "../../crates/bolty-core", features = ["std"] }
 

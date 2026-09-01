@@ -141,6 +141,11 @@ impl MockTransport {
         &self.ndef
     }
 
+    /// Replace the NDEF file contents (fixture control for SDM-mirrored p/c tests).
+    pub fn replace_ndef(&mut self, ndef: Vec<u8>) {
+        self.ndef = ndef;
+    }
+
     pub fn file_settings(&self) -> &[u8] {
         &self.file_settings
     }

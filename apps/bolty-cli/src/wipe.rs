@@ -123,12 +123,14 @@ where
 
     // BOLT_DET: Rational: Attempting to call `AuthenticateEV2First` without validating the `p=` and `c=` parameters could render the NTag inoperable after a few attempts.
 
-    // Deviation from the quotes above (shared gap — audit A4-F2, adjudication
-    // D3, tracked in bolty-rs#72): the prescribed pre-verification is
-    // implemented by nobody; this wipe authenticates directly with the
-    // derived K0 below, and TSX ResetBoltcard / the Go wipe endpoints skip it
-    // too. Mitigations for the brick risk DET:72 warns about: AuthRetry
-    // bound, circuit breaker, factory-probe bail above, --confirm-uid.
+    // DET:57-59 pre-verification (bolty-rs#72, first conformant implementation
+    // in the ecosystem per the cross-implementation audit): validate the p/c
+    // the card is actually mirroring BEFORE the first AuthenticateEV2First.
+    // Non-hex p/c values (template placeholders — SDM not mirroring on this
+    // interface) skip the gate; hex values that fail decryption or the SUN
+    // MAC refuse the wipe (wrong issuer key / version — the DET:72 brick guard).
+    println!("Pre-verifying p/c (DET:57-59)...");
+    pre_verify_pc(transport, &keys, &uid_fixed).await?;
 
     // Derived K0 auth with AuthRetry (handles auth delay backoff).
     // The library re-authenticates internally, but we probe first to get
@@ -192,9 +194,200 @@ where
     Ok(())
 }
 
+/// DET:57-59 pre-wipe gate: read the NDEF URL unauthenticated (read=Free on
+/// provisioned cards), extract p=/c=, decrypt `p` with the derived K1 and
+/// verify the SUN MAC in `c` with the derived K2 — all before the first
+/// AuthenticateEV2First. Refusal protects against wiping with a wrong issuer
+/// key/version (the DET:72 inoperable-tag risk).
+async fn pre_verify_pc<T: Transport>(
+    transport: &mut T,
+    keys: &bolty_core::derivation::CardKeySet,
+    uid_fixed: &[u8; 7],
+) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    use bolty_core::picc::{extract_p_and_c, picc_decrypt_p, picc_verify_c};
+
+    let mut buf = [0u8; 256];
+    let len = Session::default()
+        .read_file_unauthenticated(transport, File::Ndef, 0, &mut buf)
+        .await
+        .context("pre-verification: failed to read NDEF")?;
+    let data = buf.get(..len.min(buf.len())).unwrap_or(&[]);
+    let parsed = crate::common::parse_ndef_uri(data)
+        .context("pre-verification: NDEF unreadable — refusing blind wipe")?;
+
+    let Some((p_hex, c_hex)) = extract_p_and_c(&parsed.url) else {
+        println!("  no p/c in NDEF — skipping pre-verification (non-SDM URL)");
+        return Ok(());
+    };
+
+    let is_hex = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let is_zero_hex = |s: &str| s.bytes().all(|b| b == b'0');
+    if !is_hex(p_hex) || !is_hex(c_hex) {
+        println!("  p/c are template placeholders — skipping pre-verification");
+        return Ok(());
+    }
+    if is_zero_hex(p_hex) || is_zero_hex(c_hex) {
+        println!("  p/c are static zeros (SDM not mirroring on this read) — skipping");
+        return Ok(());
+    }
+
+    let picc = picc_decrypt_p(keys.k1.as_bytes(), p_hex)
+        .context("pre-verification: p= decryption failed — wrong issuer key or version")?;
+    anyhow::ensure!(
+        picc.uid == *uid_fixed,
+        "pre-verification: p= UID {} does not match card UID {} — refusing",
+        crate::to_hex(picc.uid),
+        crate::to_hex(uid_fixed),
+    );
+    anyhow::ensure!(
+        picc_verify_c(keys.k2.as_bytes(), &picc, c_hex),
+        "pre-verification: SUN MAC mismatch — wrong issuer key or version, refusing to wipe",
+    );
+    println!("  ✓ p/c verified (UID + counter + SUN MAC valid)");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bolty_core::crypto::aes_cmac;
+    use bolty_core::picc::{PiccData, sdm_build_sv2};
+
+    fn encrypt_p_hex(key: &[u8; 16], picc: &PiccData) -> String {
+        use cbc::cipher::{BlockModeEncrypt, KeyIvInit, block_padding::NoPadding};
+        type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
+        let mut plaintext = [0u8; 16];
+        plaintext[0] = 0xC7;
+        plaintext[1..8].copy_from_slice(&picc.uid);
+        plaintext[8] = picc.counter as u8;
+        plaintext[9] = (picc.counter >> 8) as u8;
+        plaintext[10] = (picc.counter >> 16) as u8;
+        let pt_len = plaintext.len();
+        let ct = Aes128CbcEnc::new(key.into(), (&[0u8; 16]).into())
+            .encrypt_padded::<NoPadding>(&mut plaintext, pt_len)
+            .expect("in-length block");
+        crate::to_hex(ct).to_lowercase()
+    }
+
+    fn sun_mac_hex(k2: &[u8; 16], uid: &[u8; 7], counter: u32) -> String {
+        let sv2 = sdm_build_sv2(uid, counter);
+        let ks = aes_cmac(k2, &sv2);
+        let full = aes_cmac(&ks, &[]);
+        let odd: Vec<u8> = (0..8).map(|i| full[i * 2 + 1]).collect();
+        crate::to_hex(odd).to_lowercase()
+    }
+
+    fn ndef_file_with_url(url: &str) -> Vec<u8> {
+        let payload_len = url.len() + 1;
+        let record_len = 4 + payload_len;
+        let mut file = Vec::with_capacity(2 + record_len);
+        file.push((record_len >> 8) as u8);
+        file.push(record_len as u8);
+        file.push(0xD1);
+        file.push(0x01);
+        file.push(payload_len as u8);
+        file.push(b'U');
+        file.push(0x00);
+        file.extend_from_slice(url.as_bytes());
+        file
+    }
+
+    async fn provisioned_with_sdm_p_c(
+        issuer_key: &[u8; 16],
+        c_hex: &str,
+    ) -> crate::mock_transport::MockTransport {
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+        crate::burn::cmd_burn(
+            &mut transport,
+            issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("burn to provision card");
+
+        let keys = BoltcardDeterministicDeriver::derive_keys(
+            issuer_key,
+            CardUid::new(crate::mock_transport::UID),
+            1,
+        );
+
+        let picc = PiccData {
+            valid: false,
+            uid: crate::mock_transport::UID,
+            counter: 42,
+            has_uid: true,
+            has_counter: true,
+        };
+        let p_hex = encrypt_p_hex(keys.k1.as_bytes(), &picc);
+        let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c={c_hex}");
+        transport.replace_ndef(ndef_file_with_url(&url_with_hex));
+        transport
+    }
+
+    #[tokio::test]
+    async fn wipe_refuses_when_sdm_mac_mismatches() {
+        let issuer_key = [0x42u8; 16];
+        let mut transport = provisioned_with_sdm_p_c(&issuer_key, "deadbeefdeadbeef").await;
+
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let err = result.expect_err("wipe must refuse on SUN MAC mismatch");
+        assert!(
+            err.to_string().contains("SUN MAC"),
+            "error must name the SUN MAC failure, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wipe_proceeds_when_sdm_pc_valid() {
+        let issuer_key = [0x42u8; 16];
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+        crate::burn::cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("burn to provision card");
+
+        let keys = BoltcardDeterministicDeriver::derive_keys(
+            &issuer_key,
+            CardUid::new(crate::mock_transport::UID),
+            1,
+        );
+        let picc = PiccData {
+            valid: false,
+            uid: crate::mock_transport::UID,
+            counter: 42,
+            has_uid: true,
+            has_counter: true,
+        };
+        let p_hex = encrypt_p_hex(keys.k1.as_bytes(), &picc);
+        let c_hex = sun_mac_hex(keys.k2.as_bytes(), &crate::mock_transport::UID, 42);
+        let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c={c_hex}");
+        transport.replace_ndef(ndef_file_with_url(&url_with_hex));
+
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        assert!(
+            result.is_ok(),
+            "wipe with valid p/c must succeed: {:?}",
+            result.err()
+        );
+    }
 
     #[tokio::test]
     async fn dry_run_preserves_provisioned_card_state() {
