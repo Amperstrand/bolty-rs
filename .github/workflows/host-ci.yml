@@ -25,6 +25,9 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Install host build deps (pcsc for the wallet crate)
+        run: sudo apt-get update -qq && sudo apt-get install -yqq libpcsclite-dev
+
       - name: Rust host tests
         run: cargo nextest run --workspace --exclude bolty-esp32
 
