@@ -156,6 +156,15 @@ where
     } else {
         println!("[0/7] Safety checks bypassed (--force)");
     }
+
+    // BOLT_DET: 1. Execute `ReadData` or `ISOReaDBinary` on the BoltCard to ensure the card is blank.
+
+    // Deviation from the quote above (shared, audit A4-F7, adjudication D2):
+    // no implementation in the reference stack runs DET:41's literal ReadData
+    // blank probe — TSX substitutes GetKeyVersion(K1) != "00"; the probe
+    // below substitutes a factory-K0 authentication attempt. Equivalent
+    // intent; the letter-deviation is shared with the reference, not
+    // bolty-specific.
     if !force {
         let factory_like = {
             let mut retry = AuthRetry::new();

@@ -115,6 +115,21 @@ where
         );
     }
 
+    // BOLT_DET: 1. Read the NDEF lnurlw URL, extract `p=` and `c=`.
+    // 2. Derive `Encryption Key (K1)`, decrypt `p=` to obtain the `PICCData`.
+    // 3. Check `PICCData[0] == 0xc7`.
+
+    // BOLT_DET: 9. Verify that the SUN MAC in `c=` matches the one calculated using `Authentication Key (K2)`.
+
+    // BOLT_DET: Rational: Attempting to call `AuthenticateEV2First` without validating the `p=` and `c=` parameters could render the NTag inoperable after a few attempts.
+
+    // Deviation from the quotes above (shared gap — audit A4-F2, adjudication
+    // D3, tracked in bolty-rs#72): the prescribed pre-verification is
+    // implemented by nobody; this wipe authenticates directly with the
+    // derived K0 below, and TSX ResetBoltcard / the Go wipe endpoints skip it
+    // too. Mitigations for the brick risk DET:72 warns about: AuthRetry
+    // bound, circuit breaker, factory-probe bail above, --confirm-uid.
+
     // Derived K0 auth with AuthRetry (handles auth delay backoff).
     // The library re-authenticates internally, but we probe first to get
     // past any auth delay and give a clear error message on failure.

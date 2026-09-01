@@ -11,7 +11,7 @@
 #   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
 #   python -m greatspectations check --config specquotes.toml \
 #     --comment-start '// ' --comment-continue '//' -k \
-#     crates/bolty-core/src crates/bolty-ntag/src
+#     crates/bolty-core/src crates/bolty-ntag/src apps/bolty-cli/src
 #
 # NXP-layer facts (NTAG424 datasheet, AN12196) are intentionally not covered:
 # proprietary PDFs have no canonical text source; that layer is guarded by
@@ -43,7 +43,7 @@ jobs:
           python -m greatspectations check --config specquotes.toml \
             --comment-start '// ' --comment-continue '//' -k -v \
             --coverage .coverage \
-            $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs')
+            $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs' 'apps/bolty-cli/src/*.rs')
       - name: Spec-quote coverage report
         run: |
           python -m greatspectations coverage --config specquotes.toml \

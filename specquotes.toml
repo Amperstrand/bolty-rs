@@ -16,7 +16,7 @@
 # Run (from repo root):
 #   .gs-env/bin/python -m greatspectations check --config specquotes.toml \
 #       --comment-start '// ' --comment-continue '//' -k -v \
-#       crates/bolty-core/src crates/bolty-ntag/src
+#       crates/bolty-core/src crates/bolty-ntag/src apps/bolty-cli/src
 #
 # NXP-layer facts (NTAG424 datasheet, AN12196) are NOT covered here: they are
 # proprietary PDFs with no canonical text source. Coverage for that layer

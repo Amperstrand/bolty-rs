@@ -12,7 +12,7 @@ push/PR + weekly cron. Run locally:
 git clone --depth=1 https://github.com/boltcard/boltcard.git spec
 python -m greatspectations check --config specquotes.toml \
   --comment-start '// ' --comment-continue '//' -k \
-  $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs')
+  $(git ls-files 'crates/bolty-core/src/*.rs' 'crates/bolty-ntag/src/*.rs' 'apps/bolty-cli/src/*.rs')
 ```
 
 Rules learned the hard way (2026-08-25):
