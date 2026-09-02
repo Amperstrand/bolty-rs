@@ -79,3 +79,19 @@ The same stick can also run the esp32-ccid reader firmware (pcscd role).
 (daemon vs pcscd, rebuild, flash, verification) — see
 ccid-firmware-rs docs/role-switch.md. Lesson B13 in this repo covers the
 control-line/tty-name traps that made switching flaky before.
+
+## HIL Test Framework (2026-09-02)
+
+Quick regression testing without LLM involvement — see root `Makefile`:
+
+```bash
+make test       # host unit tests (CI parity, no hardware)
+make test-hil   # preflight + burn→lock→tap→gated-wipe→blank (3s, ACR only)
+make difftest   # 66/66 APDU differential (10-20 min, role switch + both readers)
+make test-all   # everything
+```
+
+Framework: `tools/hil/hil/` (cards.toml registry, preflight checks, role_guard
+context manager). Tests: `tools/hil/tests/`. The card registry is the safety
+contract — only listed UIDs with matching ops are touched. `test_burn_cycle.py`
+at this level is superseded by `tests/test_burn_lock_wipe.py`.

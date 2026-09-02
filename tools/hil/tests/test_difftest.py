@@ -21,7 +21,7 @@ def test_apdu_difftest_66_of_66():
         assert degraded_ok(ctx["switch"], "GemPCTwin"), ctx["switch"]["detail"]
         out = subprocess.run(
             ["python3", "e2e.py", "--phase", "apdu"],
-            cwd=DIFFTEST_DIR, capture_output=True, text=True, timeout=1200,
+            cwd=DIFFTEST_DIR, capture_output=True, text=True, timeout=1800,
         )
         combined = out.stdout + out.stderr
         assert out.returncode == 0, f"difftest failed:\n{combined[-2000:]}"

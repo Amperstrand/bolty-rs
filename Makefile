@@ -22,8 +22,9 @@ test:
 test-hil:
 	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v
 
+# Takes 10-20 min (role switch + full APDU matrix + capture from both readers + restore).
 difftest:
-	python3 -m pytest $(HIL_TESTS)/test_difftest.py -v
+	python3 -m pytest $(HIL_TESTS)/test_difftest.py -v --timeout=1800
 
 test-all: test test-hil difftest
 	@echo "=== ALL SUITES PASSED ==="
