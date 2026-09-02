@@ -1,0 +1,16 @@
+# Labgrid environment for the HIL rig (#79). Use with the official plugin:
+#   pytest --lg-env tools/hil/labgrid-env.yaml --lg-coordinator 192.168.13.221:20408
+# or: make test-hil-lg
+# The place (bolty-rig) matches the exporter resources: m5stick-serial
+# (NetworkSerialPort via ser2net) + acr1252 (acquisition token, #78).
+# The coordinator binds ONLY 192.168.13.221:20408 (not 127.0.0.1) and this
+# host has no mDNS resolver — use the explicit address; on DHCP drift it
+# moves together with the coordinator service bind (AGENTS.md).
+imports:
+  - labgrid_resources.py
+targets:
+  main:
+    role: bolty-rig
+    resources:
+      RemotePlace:
+        name: bolty-rig

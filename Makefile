@@ -19,7 +19,7 @@
 # ensure_blank() for rerun-safety.
 # History: every run appends to results/history.jsonl.
 
-.PHONY: test test-hil difftest difftest-quick test-all status report
+.PHONY: test test-hil test-hil-lg difftest difftest-quick test-all status report labgrid-place
 
 HIL_TESTS := tools/hil/tests
 ALLURE_RESULTS := tools/hil/results/allure
@@ -38,6 +38,22 @@ test-hil:
 # Allure dashboard: history-preserving HTML from the latest test-hil results.
 report:
 	bash tools/hil/report.sh
+
+# Full labgrid plugin path: place acquisition + env/target fixtures (#79).
+# Auto-skips the labgrid test without coordinator reachability issues only
+# via rig_lock's flock fallback — this target requires the coordinator up.
+test-hil-lg:
+	mkdir -p tools/hil/results
+	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v \
+	  --reruns 2 --reruns-delay 3 \
+	  --json-report --json-report-file=tools/hil/results/hil-test-report.json \
+	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S) \
+	  --lg-env=tools/hil/labgrid-env.yaml \
+	  --lg-coordinator=192.168.13.221:20408
+
+# Idempotent bolty-rig place (re)creation — run after coordinator restarts.
+labgrid-place:
+	bash tools/hil/labgrid-place.sh
 
 # Takes 3-4 min (role switch + full APDU matrix + restore).
 difftest:

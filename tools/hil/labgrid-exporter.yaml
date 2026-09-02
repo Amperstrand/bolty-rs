@@ -5,7 +5,11 @@
 ## presence detection is HIL preflight's job (pcscd). id_path pins the stable
 ## physical port; busnum/devnum change on replug.
 m5stick-serial:
-  NetworkSerialPort:
+  ## USBSerialPort is the exporter-side class (must be in labgrid's exports[]
+  ## map); SerialPortExport publishes the client-visible NetworkSerialPort
+  ## (host + ser2net TCP port) on acquire. Writing NetworkSerialPort here
+  ## silently rides the ResourceEntry fallback — no ser2net, no host param.
+  USBSerialPort:
     port: /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
     speed: 115200
 

@@ -18,6 +18,7 @@ Run ledger: every session appends to results/history.jsonl (OpenHTF pattern).
 import fcntl
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -30,6 +31,12 @@ RESULTS_DIR = Path(__file__).parent / "results"
 LEDGER_PATH = RESULTS_DIR / "history.jsonl"
 RIG_LOCK_PATH = RESULTS_DIR / ".rig-lock"
 REPO_ROOT = Path(__file__).parent.parent.parent
+
+# Coordinator binds only this address (see labgrid-env.yaml); mDNS does not
+# resolve on this host.
+LABGRID_COORDINATOR = "192.168.13.221:20408"
+LABGRID_PLACE = "bolty-rig"
+LG_ACQUIRED_KEY = pytest.StashKey[bool]()
 
 # ── Marker registration ─────────────────────────────────────────────────
 
@@ -45,14 +52,64 @@ def pytest_configure(config):
         config.addinivalue_line("markers", marker)
 
 
-# ── Rig exclusivity (flock) ────────────────────────────────────────────
-# Prevents parallel agents from stomping the rig. Labgrid place acquisition
-# supersedes this when the coordinator is running (see labgrid-places.yaml).
+# ── Rig exclusivity (#79) ──────────────────────────────────────────────
+# Coordinator place acquisition when labgrid is up (visible to every client
+# on the network, supersedes the local flock); flock fallback when it is not.
+# With --lg-env the place is acquired in pytest_sessionstart — BEFORE the
+# labgrid plugin's env/target fixtures expand resources (the plugin requires
+# the place acquired, and fixture-store order does not guarantee rig_lock
+# runs first).
+
+
+def _lg_client(*args: str, timeout_s: float = 15):
+    return subprocess.run(
+        ["labgrid-client", "-x", LABGRID_COORDINATOR, "-p", LABGRID_PLACE, *args],
+        capture_output=True, text=True, timeout=timeout_s,
+    )
+
+
+def _lg_coordinator_up() -> bool:
+    try:
+        return _lg_client("who", timeout_s=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _lg_acquire_or_exit():
+    acquired = _lg_client("acquire")
+    if acquired.returncode != 0:
+        pytest.exit(
+            f"rig place {LABGRID_PLACE} is acquired by another session "
+            f"({acquired.stderr.strip() or 'see labgrid-client who'})",
+            returncode=3,
+        )
+
+
+def pytest_sessionstart(session):
+    lg_env = session.config.getoption("lg_env", None)
+    if lg_env and _lg_coordinator_up():
+        _lg_acquire_or_exit()
+        session.stash[LG_ACQUIRED_KEY] = True
+
+
+LG_ACQUIRED_KEY = pytest.StashKey[bool]()
 
 
 @pytest.fixture(scope="session")
-def rig_lock():
-    """Exclusive rig lock for the test session (flock, released on exit)."""
+def rig_lock(request):
+    """Exclusive rig ownership for the whole session. With --lg-env the
+    place is already held (pytest_sessionstart) — defer to it. Otherwise:
+    acquire the coordinator place when labgrid is up (loud refusal when
+    another session holds it), local flock when it is down."""
+    if request.session.stash.get(LG_ACQUIRED_KEY, False):
+        yield "labgrid-place"
+        return
+    if _lg_coordinator_up():
+        _lg_acquire_or_exit()
+        yield "labgrid-place"
+        _lg_client("release")
+        return
+
     RESULTS_DIR.mkdir(exist_ok=True)
     lock_fd = open(RIG_LOCK_PATH, "w")
     try:
@@ -127,6 +184,8 @@ def _stamp_allure_environment(session) -> None:
 
 def pytest_sessionfinish(session, exitstatus):
     """Append a run record to history.jsonl after every session."""
+    if session.stash.get(LG_ACQUIRED_KEY, False):
+        _lg_client("release")
     RESULTS_DIR.mkdir(exist_ok=True)
     results = getattr(session, "hil_results", {})
     record = {
