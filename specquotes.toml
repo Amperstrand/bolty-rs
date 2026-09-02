@@ -42,4 +42,4 @@ format = "markdown"
 file = "spec/docs/CARD_PRIVACY.md"
 comment_marker = "BOLT_PRIV"
 
-normative = ["9", "10", "11", "12", "26", "27", "28"]  # three-part URI + table rows
+normative = ["9", "10", "11", "12", "26", "27", "28", "33", "41", "42", "43"]  # three-part URI + table rows + max-privacy statement + privacy-level table

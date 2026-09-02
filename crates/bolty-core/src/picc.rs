@@ -58,6 +58,7 @@ pub fn extract_p_and_c(url: &str) -> Option<(&str, &str)> {
 }
 
 // BOLT_SPEC: for the `p` value and the `SDM Meta Read Access Key` value, decrypt the UID and counter with AES
+// BOLT_PRIV: For maximum privacy, it should not be possible for the point-of-sale to identify the card any further than this.
 pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     if p_hex.len() != 32 {
         return None;
@@ -72,6 +73,7 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
 
     // BOLT_DET: 3. Check `PICCData[0] == 0xc7`.
 
+    // BOLT_PRIV: | good          | no        | yes          |
     if buf[0] != PICC_FORMAT_BOLTCARD {
         return None;
     }

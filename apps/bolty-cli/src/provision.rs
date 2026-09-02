@@ -116,10 +116,13 @@ where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
     if provisioned.uid_privacy {
+        // BOLT_PRIV: | minimal       | yes       | yes          |
+        // BOLT_PRIV: | good          | no        | yes          |
         // BOLT_PRIV: | best          | no        | no           |
 
         // uid_privacy=true requests "best" privacy (no static id, no UID
-        // plaintext) — not yet applied by this burner, hence the warning.
+        // plaintext) — not yet applied by this burner (bolty-rs#59), hence
+        // the warning; burns land at "good".
         println!(
             "  ⚠ uid_privacy=true requested by proxy — this burner does not yet apply UID-privacy mode"
         );
