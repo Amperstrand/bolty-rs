@@ -37,7 +37,7 @@ jobs:
       - name: Python HIL collection + non-hardware tests
         run: |
           cd tools/hil
-          python3 -m pip install pytest pytest-timeout
+          python3 -m pip install pytest pytest-timeout cryptography
           python3 -m pytest --collect-only -q   # collection gate: zero errors
           python3 -m pytest -q \
             -m "not hardware and not card_mutation and not env_dependent" \
