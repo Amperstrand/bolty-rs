@@ -58,7 +58,8 @@ labgrid-place:
 # Takes 3-4 min (role switch + full APDU matrix + restore).
 difftest:
 	python3 -m pytest $(HIL_TESTS)/test_difftest.py -v --timeout=1800 \
-	  --reruns 1 --reruns-delay 5
+	  --reruns 1 --reruns-delay 5 \
+	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S)
 
 # Quick differential: gem capture + diff only (skip fuzz category, skip
 # ACR golden re-capture — the golden is committed; ACR re-capture is a
