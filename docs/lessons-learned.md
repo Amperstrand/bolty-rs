@@ -545,3 +545,19 @@ Fix: acquire in `pytest_sessionstart` (conftest hooks DO run before fixture
 instantiation) and have rig_lock defer to it when the --lg-env path is active.
 General rule: when a conftest fixture must ordered-before a plugin fixture,
 don't fight the fixture store — move the setup into a session hook.
+
+## B27 — esp_rom_crc32_le is neither zlib nor zlib^FF: read the ROM host source
+
+The otadata entry CRC (bootloader validates CRC32 of the 4-byte ota_seq
+field) took three hardware iterations: zlib.crc32(seq) rejected,
+zlib.crc32(seq)^0xFFFFFFFF rejected, both written to real flash and both
+met with `ota data partition invalid → factory fallback`. The
+authoritative algorithm lives in IDF's own host implementation
+(components/esp_rom/linux/esp_rom_crc.c): `crc = ~crc; table-loop;
+return ~crc` — invert-in AND invert-out. With init 0xFFFFFFFF that nets
+out to a third value none of the standard libraries produce directly.
+Rule: when a ROM function's exact semantics matter, replicate the ROM's
+own host twin verbatim (it exists precisely so linux-target builds
+match), and pin the bytes with a golden test before touching hardware.
+The boot log over UART (pyserial + RTS pulse) is the fastest
+bootloader-verdict oracle — one reset, six seconds, no flashing.
