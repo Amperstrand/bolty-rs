@@ -22,6 +22,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Import burn_cycle module
 import burn_cycle  # noqa: E402
 
+# NOTE: the mock_ctl fixture does NOT intercept bolty-cli's subprocess —
+# these tests run the real CLI against whatever card is coupled, so they
+# are environment-dependent (pass only with the expected card coupled).
+# Marked accordingly; the proper fix is mocking the seam bolty-cli uses.
+pytestmark = pytest.mark.env_dependent
+
 
 # ---------------------------------------------------------------- UID gate tests
 

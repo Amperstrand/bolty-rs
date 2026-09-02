@@ -37,8 +37,27 @@ from track_a_ota import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parents[4]
-FW_IMAGE = Path.home() / "fw-backup" / "bolty-esp32-ota-image-20260827.bin"
-VALID_SIG_HEX = (Path.home() / "fw-backup" / "ota_sig.hex").read_text().strip()
+FW_BACKUP = Path.home() / "fw-backup"
+FW_IMAGE = FW_BACKUP / "bolty-esp32-ota-image-20260827.bin"
+
+
+def _load_valid_sig_hex() -> str:
+    """Bench-workstation fixture (fw-backup/ota_sig.hex). Empty string when
+    absent — the module must import everywhere (CI has no fw-backup/);
+    tests that need the real signature skip via _require_valid_sig()."""
+    try:
+        return (FW_BACKUP / "ota_sig.hex").read_text().strip()
+    except OSError:
+        return ""
+
+
+VALID_SIG_HEX = _load_valid_sig_hex()
+
+
+def _require_valid_sig() -> str:
+    if not VALID_SIG_HEX:
+        pytest.skip("bench fixture missing: ~/fw-backup/ota_sig.hex")
+    return VALID_SIG_HEX
 
 
 # ---------------------------------------------------------------- helpers ----
@@ -217,6 +236,7 @@ class TestLocalOtaServer:
 
 class TestSignatureFactory:
     def test_throwaway_signature_is_valid_128_hex_and_not_the_valid_sig(self, tmp_path):
+        valid_sig = _require_valid_sig()
         fw = tmp_path / "fw.bin"
         fw.write_bytes(b"\x00" * 2048)
         factory = SignatureFactory(repo_root=REPO, workdir=tmp_path / "ota_tmp")
@@ -224,7 +244,7 @@ class TestSignatureFactory:
         assert len(sig) == 128
         int(sig, 16)  # must be hex
         assert sig.lower() == sig
-        assert sig != VALID_SIG_HEX  # NEVER reuse the VALID signature
+        assert sig != valid_sig  # NEVER reuse the VALID signature
         factory.wipe()
         assert not (tmp_path / "ota_tmp").exists()
 

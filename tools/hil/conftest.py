@@ -22,6 +22,8 @@ def pytest_configure(config):
         "hardware: requires a PC/SC reader with a registered card",
         "card_mutation: mutates card state (burn/wipe) — opt-in only",
         "role_switch: switches the M5Stick role (auto-restores)",
+        "env_dependent: drives real reader/card state — pass only on the "
+        "coupled bench (mock seam not intercepted)",
     ):
         config.addinivalue_line("markers", marker)
 
