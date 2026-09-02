@@ -48,12 +48,18 @@ def console_ctl() -> str:
 
 
 @pytest.fixture(scope="session")
-def acr_card_uid(registry: CardRegistry) -> str:
-    """The ACR-side registered card UID (readable without a role switch —
-    bolty-cli auto-picks the first reader with a card; preflight asserted
-    the ACR card is the coupled one)."""
-    uids = registry.uids_allowing("burn")
-    uids = [u for u in uids if registry.lookup(u).reader_hint == "ACR1252"]
-    if not uids:
-        pytest.skip("no ACR-registered card in registry")
-    return uids[0]
+def coupled_card_uid(cli, registry: CardRegistry) -> str:
+    """The UID of whichever registered burn-allowed card is actually coupled
+    (bolty-cli auto-picks the first reader with a card). Cards move between
+    readers in the lab; the registry is the safety contract, not placement."""
+    try:
+        actual = cli.uid()
+    except Exception as e:  # noqa: BLE001 — skip, not fail, when no card
+        pytest.skip(f"no card coupled: {e}")
+    card = registry.lookup(actual)
+    if card is None or "burn" not in card.ops:
+        pytest.skip(
+            f"coupled card {actual} is not burn-allowed "
+            f"(registry: {card.alias if card else 'unregistered'})"
+        )
+    return actual

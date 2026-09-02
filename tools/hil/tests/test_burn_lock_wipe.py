@@ -40,8 +40,8 @@ def _require_card(cli: BoltyCli, registry: CardRegistry, uid: str, op: str):
     )
 
 
-def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry, acr_card_uid):
-    uid = acr_card_uid
+def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry, coupled_card_uid):
+    uid = coupled_card_uid
     _require_card(cli, registry, uid, "burn")
 
     # ── 1. burn: the 00E0 lock must land on silicon ─────────────────────
@@ -88,10 +88,10 @@ def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry, acr_card_ui
     assert rights.get("change") == "key0", rights
 
 
-def test_wipe_wrong_issuer_refused(cli, registry: CardRegistry, acr_card_uid):
+def test_wipe_wrong_issuer_refused(cli, registry: CardRegistry, coupled_card_uid):
     """Wrong-key wipe must fail cleanly (bounded auth attempts) and leave
     the card untouched — the wrong-issuer safety story."""
-    uid = acr_card_uid
+    uid = coupled_card_uid
     _require_card(cli, registry, uid, "wipe")
 
     # Burn a known state first so the refusal is measurable.
