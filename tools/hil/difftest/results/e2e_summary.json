@@ -1,8 +1,22 @@
 [
   {
-    "phase": "bolty-acr",
-    "status": "PASS",
-    "ok": 3,
-    "total": 4
+    "phase": "apdu",
+    "timestamp": "2026-09-02T19:57:21.145799+00:00",
+    "quick": false,
+    "acr_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_acr_capture.json",
+    "gem_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_gem_capture.json",
+    "diff": {
+      "matches": 66,
+      "mismatches": 0,
+      "total": 66,
+      "cards_match": false
+    },
+    "acr_vs_golden": {
+      "matches": 63,
+      "mismatches": 3,
+      "total": 66
+    },
+    "elapsed_s": 4.6,
+    "status": "PASS"
   }
 ]
