@@ -75,7 +75,7 @@ def pytest_runtest_makereport(item, call):
     """Collect per-test outcomes for the ledger."""
     outcome = yield
     report = outcome.get_result()
-    if report.when == "call":
+    if report.when == "call" or report.outcome == "skipped":
         if not hasattr(item.session, "hil_results"):
             item.session.hil_results = {}
         item.session.hil_results[item.nodeid] = {
@@ -106,6 +106,17 @@ def pytest_sessionfinish(session, exitstatus):
 # ── Fixtures ─────────────────────────────────────────────────────────────
 
 
+def pytest_generate_tests(metafunc):
+    """Parametrize card-consuming tests over every registry burn-allowed card
+    (#77): each card gets a stable nodeid (…[04c474fa967380]); cards not
+    physically coupled at run time auto-skip via the coupled_card_uid check.
+    The registry stays the safety contract — parametrization only enumerates
+    what it already permits."""
+    if "coupled_card_uid" in metafunc.fixturenames:
+        uids = CardRegistry().uids_allowing("burn")
+        metafunc.parametrize("coupled_card_uid", uids, indirect=True)
+
+
 @pytest.fixture(scope="session")
 def registry() -> CardRegistry:
     return CardRegistry()
@@ -122,21 +133,24 @@ def console_ctl() -> str:
     return str(DEFAULT_CONSOLE_CTL)
 
 
-@pytest.fixture(scope="session")
-def coupled_card_uid(cli, registry: CardRegistry) -> str:
-    """The UID of whichever registered burn-allowed card is actually coupled.
-    Cards move between readers in the lab; the registry is the safety
-    contract, not placement. Uses retry-aware uid()."""
+@pytest.fixture
+def coupled_card_uid(request, cli, registry: CardRegistry) -> str:
+    """The parametrized registered card UID, verified to be the one actually
+    coupled (cli reads the ACR bench). Cards move between readers in the lab;
+    the registry is the safety contract, not placement. Uses retry-aware
+    uid(); params whose card is elsewhere auto-skip."""
+    expected = request.param
     actual = cli.uid_or_none()
     if actual is None:
         pytest.skip("no card coupled (intermittent coupling — check antenna)")
-    card = registry.lookup(actual)
-    if card is None or "burn" not in card.ops:
+    if actual != expected:
+        card = registry.lookup(expected)
         pytest.skip(
-            f"coupled card {actual} is not burn-allowed "
-            f"(registry: {card.alias if card else 'unregistered'})"
+            f"{card.alias if card else expected} ({expected}) not coupled — "
+            f"on reader: {actual}"
         )
-    return actual
+    registry.require(expected, "burn")
+    return expected
 
 
 @pytest.fixture
