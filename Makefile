@@ -89,7 +89,7 @@ status:
 	@./target/debug/bolty-cli uid 2>&1 | head -2 || echo "  card: not coupled"
 	@echo "  labgrid: $(shell systemctl is-active labgrid-exporter 2>/dev/null || echo 'not-running')"
 	@echo "  console: $(shell systemctl is-active bolty-console 2>/dev/null || echo 'not-running')"
-	@echo "  lock: $(shell test -f tools/hil/results/.rig-lock && echo 'file exists' || echo 'none')"
+	@echo "  lock: $$(python3 tools/hil/lock-status.py)"
 	@if test -f tools/hil/results/history.jsonl; then \
 	  echo "  last run: $$(tail -1 tools/hil/results/history.jsonl | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f\"{d[\"ts\"]} exit={d[\"exit\"]} {d[\"passed\"]}p/{d[\"failed\"]}f/{d[\"skipped\"]}s\")' 2>/dev/null)"; \
 	fi
