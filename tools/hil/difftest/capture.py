@@ -103,8 +103,13 @@ def send_apdu(conn, apdu_bytes: bytes) -> dict:
         }
 
 
-def run_capture(reader_pattern: str, output_path: str, include_fuzz: bool = True) -> dict:
-    """Run a full capture session against a reader."""
+def run_capture(reader_pattern: str, output_path: str, include_fuzz: bool = True,
+                repeat_sleep: float = 0.1) -> dict:
+    """Run a full capture session against a reader.
+
+    repeat_sleep: pause between repeats of a repeated test (quick mode trims
+    this to 0.02s — safe, the GemPCTwin answers in ~11ms).
+    """
     reader = find_reader(reader_pattern)
     reader_name = str(reader)
 
@@ -223,7 +228,7 @@ def run_capture(reader_pattern: str, output_path: str, include_fuzz: bool = True
 
             # Small pause between repeats
             if rep < test.repeat - 1:
-                time.sleep(0.1)
+                time.sleep(repeat_sleep)
 
         completed_ids.add(test.test_id)
 
@@ -265,9 +270,12 @@ def main(argv=None):
     parser.add_argument("--reader", required=True, help="Reader name pattern (e.g., 'ACR1252', 'GemPCTwin')")
     parser.add_argument("--output", required=True, help="Output JSON path")
     parser.add_argument("--no-fuzz", action="store_true", help="Skip fuzz cases")
+    parser.add_argument("--repeat-sleep", type=float, default=0.1,
+                        help="Seconds between repeats of a repeated test (default 0.1)")
     args = parser.parse_args(argv)
 
-    run_capture(args.reader, args.output, include_fuzz=not args.no_fuzz)
+    run_capture(args.reader, args.output, include_fuzz=not args.no_fuzz,
+                repeat_sleep=args.repeat_sleep)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 [
   {
     "phase": "apdu",
-    "timestamp": "2026-09-02T14:30:00.552550+00:00",
+    "timestamp": "2026-09-02T15:23:55.545142+00:00",
+    "quick": false,
     "acr_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_acr_capture.json",
     "gem_capture": "/home/ubuntu/src/bolty-rs/tools/hil/difftest/results/e2e_gem_capture.json",
     "diff": {
@@ -15,6 +16,7 @@
       "mismatches": 3,
       "total": 66
     },
+    "elapsed_s": 4.7,
     "status": "PASS"
   }
 ]

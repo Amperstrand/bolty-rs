@@ -2,6 +2,7 @@
 
 Usage:
     python3 e2e.py --phase apdu          # APDU differential (ccid vs ACR1252)
+    python3 e2e.py --phase apdu --quick  # Quick: gem capture + diff only
     python3 e2e.py --phase bolty-acr     # bolty-cli against ACR1252 only
     python3 e2e.py --phase bolty-diff    # bolty-cli against both readers
     python3 e2e.py --phase all           # Everything (requires ccid mode switch)
@@ -37,11 +38,17 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[in
         return -2, f"{type(e).__name__}: {e}"
 
 
-def phase_apdu(golden_path: Path | None = None) -> dict:
-    """Phase 1: APDU differential testing against ACR1252 golden reference."""
+def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
+    """Phase 1: APDU differential testing against ACR1252 golden reference.
+
+    quick=True skips the ACR golden re-capture (the committed golden is the
+    reference) and the fuzz category, and trims repeat sleeps — gem capture +
+    diff only (#74).
+    """
     print("=" * 60)
-    print("PHASE: APDU Differential Testing")
+    print("PHASE: APDU Differential Testing" + (" [QUICK]" if quick else ""))
     print("=" * 60)
+    t0 = time.perf_counter()
 
     if golden_path is None:
         golden_path = RESULTS / "golden_acr1252.json"
@@ -60,10 +67,11 @@ def phase_apdu(golden_path: Path | None = None) -> dict:
 
     print(f"Readers: GemPCTwin={'yes' if has_gem else 'no'}, ACR1252={'yes' if has_acr else 'no'}")
 
-    results = {"phase": "apdu", "timestamp": datetime.now(timezone.utc).isoformat()}
+    results = {"phase": "apdu", "timestamp": datetime.now(timezone.utc).isoformat(),
+               "quick": quick}
 
-    # Capture from ACR1252 (always available)
-    if has_acr:
+    # Capture from ACR1252 (always available; sanity check vs committed golden)
+    if has_acr and not quick:
         acr_out = RESULTS / "e2e_acr_capture.json"
         print(f"\n--- Capturing from ACR1252 ---")
         rc, out = run(["python3", str(HERE / "capture.py"), "--reader", "PICC", "--output", str(acr_out)])
@@ -73,12 +81,18 @@ def phase_apdu(golden_path: Path | None = None) -> dict:
         else:
             print(f"  FAILED: {out[:200]}")
             results["acr_capture_error"] = out[:200]
+    elif quick:
+        print("\n--- Quick mode: skipping ACR re-capture (committed golden is the reference) ---")
 
     # Capture from GemPCTwin (requires ccid mode)
     if has_gem:
         gem_out = RESULTS / "e2e_gem_capture.json"
-        print(f"\n--- Capturing from GemPCTwin ---")
-        rc, out = run(["python3", str(HERE / "capture.py"), "--reader", "GemPCTwin", "--output", str(gem_out)])
+        gem_cmd = ["python3", str(HERE / "capture.py"), "--reader", "GemPCTwin",
+                   "--output", str(gem_out)]
+        if quick:
+            gem_cmd += ["--no-fuzz", "--repeat-sleep", "0.02"]
+        print(f"\n--- Capturing from GemPCTwin{' (no fuzz, 0.02s repeat sleep)' if quick else ''} ---")
+        rc, out = run(gem_cmd)
         if rc == 0:
             print(f"  Saved: {gem_out}")
             results["gem_capture"] = str(gem_out)
@@ -86,12 +100,15 @@ def phase_apdu(golden_path: Path | None = None) -> dict:
             # Diff against golden
             print(f"\n--- Diffing GemPCTwin vs golden ---")
             diff_out = RESULTS / "e2e_diff.json"
-            rc, out = run([
+            diff_cmd = [
                 "python3", str(HERE / "diff.py"),
                 "--golden", str(golden_path),
                 "--test", str(gem_out),
                 "--output", str(diff_out),
-            ])
+            ]
+            if quick:
+                diff_cmd.append("--skip-fuzz")
+            rc, out = run(diff_cmd)
             print(out)
 
             if diff_out.exists():
@@ -107,7 +124,7 @@ def phase_apdu(golden_path: Path | None = None) -> dict:
         print("Run: python3 e2e.py --phase switch-ccid first")
 
     # Diff ACR capture vs golden too (sanity check)
-    if has_acr and "acr_capture" in results:
+    if has_acr and not quick and "acr_capture" in results:
         acr_diff_out = RESULTS / "e2e_acr_vs_golden.json"
         rc, out = run([
             "python3", str(HERE / "diff.py"),
@@ -123,7 +140,10 @@ def phase_apdu(golden_path: Path | None = None) -> dict:
                 "total": d["total_golden"],
             }
 
+    elapsed = time.perf_counter() - t0
+    results["elapsed_s"] = round(elapsed, 1)
     results["status"] = "PASS" if results.get("diff", {}).get("mismatches", 99) == 0 else "FINDINGS"
+    print(f"\nElapsed: {elapsed:.1f}s ({'quick' if quick else 'full'} mode)")
     return results
 
 
@@ -253,6 +273,9 @@ def main(argv=None):
                                  "switch-ccid", "switch-bolty", "all"],
                         help="Which phase to run")
     parser.add_argument("--golden", default=None, help="Path to golden reference JSON")
+    parser.add_argument("--quick", action="store_true",
+                        help="APDU phase: gem capture + diff only (skip ACR re-capture, "
+                             "skip fuzz, 0.02s repeat sleeps)")
     args = parser.parse_args(argv)
 
     golden = Path(args.golden) if args.golden else None
@@ -271,7 +294,7 @@ def main(argv=None):
         all_results.append(phase_switch(target))
     else:
         func = {
-            "apdu": lambda: phase_apdu(golden),
+            "apdu": lambda: phase_apdu(golden, quick=args.quick),
             "bolty-acr": phase_bolty_acr,
             "bolty-diff": phase_bolty_diff,
             "unit-tests": phase_unit_tests,

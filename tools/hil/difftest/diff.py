@@ -85,9 +85,15 @@ def _diff_structural(g: dict, t: dict, diff: dict) -> bool:
     return diff["response_len_match"] and diff["sw_match"]
 
 
-def diff_sessions(golden: dict, test: dict) -> dict:
+def diff_sessions(golden: dict, test: dict, skip_fuzz: bool = False) -> dict:
     golden_results = {r["test_id"]: r for r in golden.get("results", [])}
     test_results = {r["test_id"]: r for r in test.get("results", [])}
+    if skip_fuzz:
+        # fuzz was not captured — drop it from both sides so match_rate counts only compared tests (#74)
+        golden_results = {tid: r for tid, r in golden_results.items()
+                          if r.get("category") != "fuzz"}
+        test_results = {tid: r for tid, r in test_results.items()
+                        if r.get("category") != "fuzz"}
     same_card = golden.get("card_uid") == test.get("card_uid")
 
     matches = []
@@ -247,12 +253,14 @@ def main(argv=None):
     parser.add_argument("--golden", required=True, help="Golden reference JSON path")
     parser.add_argument("--test", required=True, help="Test session JSON path")
     parser.add_argument("--output", help="Optional output JSON for the diff report")
+    parser.add_argument("--skip-fuzz", action="store_true",
+                        help="Exclude the fuzz category from both sides (quick mode)")
     args = parser.parse_args(argv)
 
     golden = load_session(args.golden)
     test = load_session(args.test)
 
-    diff = diff_sessions(golden, test)
+    diff = diff_sessions(golden, test, skip_fuzz=args.skip_fuzz)
     report = format_report(diff)
     print(report)
 
