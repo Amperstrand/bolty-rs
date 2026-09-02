@@ -483,3 +483,22 @@ note — that note is what let the final audit attribute the later CI-red to
 the concurrent commits, not ours. When you see dirty foreign state in your
 working repo: don't clean it, don't commit it, RECORD it (path + mtime +
 what it looks like) and exclude it from your diffs.
+
+## B24 — LLM-driven HIL verification is a one-time cost; encode it into a make-driven framework
+
+The 2026-09-01 hardware verification (burn→lock→tap→gated-wipe→blank) cost
+~40 tool calls driving individual commands. Encoded as
+`tools/hil/tests/test_burn_lock_wipe.py` + the `hil/` framework, the same
+cycle runs via `make test-hil` in ~3 seconds. The framework's safety design
+(cards.toml registry, placement-flexible discovery, role_guard context
+manager) captures every hard-won lesson from the manual sessions.
+
+**Rules:**
+1. The card registry (UID + ops), not physical reader placement, is the
+   safety contract — cards move in real labs.
+2. Role switches live in a context manager; the finally block restores
+   even under interruption (proven in the field).
+3. Preflight is composable and severity-aware: absent secondary reader =
+   warning (degraded run OK); absent target card = hard fail.
+4. The difftest needs its own make target and 30-min budget — don't try to
+   squeeze it into a quick suite.
