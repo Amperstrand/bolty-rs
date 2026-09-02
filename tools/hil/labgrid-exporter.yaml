@@ -1,40 +1,4 @@
-# Labgrid exporter configuration for bolty-rig
-#
-# Exports the M5StickC Plus serial port and optionally the ACR1252 USB reader
-# to the labgrid coordinator at localhost:20408.
-#
-# The M5Stick serial port is exported as a NetworkSerialPort resource, which
-# proxies the port without taking exclusive access. This allows the
-# bolty-console daemon to continue using the port (read-only coexistence).
-#
-# The ACR1252 USB reader is exported as a USBDevice resource for PCSC access
-# during ccid-mode differential testing.
-#
-# Usage:
-#   labgrid-exporter -c /home/ubuntu/src/bolty-rs/tools/hil/labgrid-exporter.yaml
-
-coordinator: "localhost:20408"
-hostname: ai-legion-small
-resources:
-  # M5StickC Plus serial console (FTDI FT232)
-  # Port: /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
-  # Vendor: 0403 (Future Technology Devices International)
-  # Product: 6001 (FT232 USB-Serial)
-  m5stick-serial:
-    NetworkSerialPort:
-      port: /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
-      speed: 115200
-      match:
-        ID_VENDOR_ID: "0403"
-        ID_MODEL_ID: "6001"
-        ID_SERIAL: "Hades2001_M5stack_49D6163EBE"
-
-  # ACR1252 Dual Reader (PCSC)
-  # Vendor: 072f (Advanced Card Systems)
-  # Product: 223b (ACR1252 Dual Reader)
-  # Used during ccid-mode differential testing via PCSC
-  acr1252:
-    USBDevice:
-      match:
-        ID_VENDOR_ID: "072f"
-        ID_MODEL_ID: "223b"
+m5stick-serial:
+  NetworkSerialPort:
+    port: /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
+    speed: 115200

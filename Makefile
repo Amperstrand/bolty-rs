@@ -20,7 +20,9 @@ test:
 	cargo fmt --check
 
 test-hil:
-	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v
+	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v \
+	  --json-report --json-report-file=tools/hil/results/hil-test-report.json || \
+	  (mkdir -p tools/hil/results && python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v --json-report --json-report-file=tools/hil/results/hil-test-report.json)
 
 # Takes 10-20 min (role switch + full APDU matrix + capture from both readers + restore).
 difftest:

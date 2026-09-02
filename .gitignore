@@ -39,3 +39,4 @@ spec/
 # HIL overnight tests
 tools/hil/overnight/overnight.env
 tools/hil/overnight/results/
+tools/hil/results/
