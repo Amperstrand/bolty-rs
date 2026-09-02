@@ -27,6 +27,43 @@ from pathlib import Path
 PT_OFFSET = 0x8000
 PT_MAX_ENTRIES = 32
 ESP_IMAGE_MAGIC = 0xE9
+OTADATA_OFFSET = 0x10000
+
+
+def _esp_rom_crc32_le(crc: int, buf: bytes) -> int:
+    """Exact esp_rom_crc32_le per IDF components/esp_rom/linux/esp_rom_crc.c:
+    invert-in, reflected table loop, invert-out — NOT plain zlib.crc32 and
+    NOT zlib^0xFFFFFFFF (both empirically rejected by the bootloader)."""
+    crc ^= 0xFFFFFFFF
+    for b in buf:
+        crc = _CRC32_LE_TABLE[(crc ^ b) & 0xFF] ^ (crc >> 8)
+        crc &= 0xFFFFFFFF
+    return crc ^ 0xFFFFFFFF
+
+
+_CRC32_LE_TABLE = []
+for _n in range(256):
+    _c = _n
+    for _ in range(8):
+        _c = (0xEDB88320 ^ (_c >> 1)) if (_c & 1) else (_c >> 1)
+    _CRC32_LE_TABLE.append(_c)
+
+
+def build_otadata_entry_ota0() -> bytes:
+    """A minimal valid esp_ota_select_entry_t selecting ota_0 (32 bytes).
+
+    Layout (ESP-IDF esp_flash_partitions.h): ota_seq u32 | seq_label[20] |
+    ota_state u32 | crc u32. The bootloader validates crc == CRC32 of the
+    ota_seq field ONLY (bootloader_common_ota_select_crc: ROM LE CRC-32 of
+    the 4 seq bytes), and picks slot (ota_seq - 1) % ota_app_count — seq 1
+    with our single ota_0 slot selects it. ota_state 0 = ESP_OTA_IMG_VALID.
+    With both otadata sectors erased the bootloader falls back to factory —
+    that is the bolty direction of the flip."""
+    seq = struct.pack("<I", 1)
+    label = b"bolty-rig-flip".ljust(20, b"\x00")
+    state = struct.pack("<I", 0)
+    crc = struct.pack("<I", _esp_rom_crc32_le(0xFFFFFFFF, seq))
+    return seq + label + state + crc
 
 
 def sha256_file(path: Path) -> str:
@@ -131,6 +168,14 @@ def main(argv: list[str]) -> int:
         print(f"{role}: " + ", ".join(
             f"{name}→{a['file']}" for name, a in arts.items()
         ))
+
+    otadata = images_dir / "otadata-ota0.bin"
+    otadata.write_bytes(build_otadata_entry_ota0())
+    split_manifest["otadata_ota0"] = {
+        "file": otadata.name, "offset": OTADATA_OFFSET,
+        "sha256": sha256_file(otadata),
+    }
+    print(f"otadata: {otadata.name} (entry selecting ota_0, seq=1 VALID)")
 
     out_path = images_dir / "SPLIT_MANIFEST.json"
     out_path.write_text(json.dumps(split_manifest, indent=2) + "\n")

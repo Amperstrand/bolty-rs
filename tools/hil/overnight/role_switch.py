@@ -40,11 +40,18 @@ Mechanism per direction (exact sequences via ``dry_graph()``):
 
 bolty-merged.bin embeds the repo partitions.csv (factory @ 0x1E0000 +
 otadata/ota_0; task-4 note) — both images flash as-is at 0x0, never
-repartitioned. NVS EXPECTATION (Metis): a merged image at 0x0 spans the
-NVS region (table @0x8000, NVS @0x9000), so EVERY reflash factory-resets
-NVS — WiFi, cert, REST token, otakey, crashlog/bootcnt. switch-to-ccid
-needs no WiFi; crashlog monitoring treats each switch as a NEW EPOCH;
-task 18 provisions strictly AFTER the final flash of the evening.
+repartitioned. NVS EXPECTATION (updated for #76): the DEFAULT switch is
+now the otadata flip (dual-slot provisioned once via provision_dualslot:
+bolty in factory, ccid app in ota_0) which does NOT touch NVS — WiFi,
+cert, REST token, otakey, crashlog/bootcnt SURVIVE switches (#68). The
+merged-reflash path (fallback, provisioning, image updates) still spans
+the NVS region (table @0x8000, NVS @0x9000) and factory-resets it; it
+ALSO blanks ota_0 (the merged image ships it empty) — re-provision after
+any reflash. Crashlog epochs: bootcnt now persists across otadata
+switches — monitoring must diff on timestamp/sequence, not assume a
+per-switch reset. switch-to-ccid needs no WiFi; task 18 provisions
+strictly AFTER the final reflash of the evening (otadata switches after
+that are safe).
 
 Images are resolved from results/images/MANIFEST.json and sha256-verified
 BEFORE any flash; a mismatch aborts with zero hardware steps executed
@@ -93,6 +100,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
+
+from split_images import build_otadata_entry_ota0
 
 __all__ = [
     "ROLES",
@@ -153,11 +162,23 @@ USBDEVFS_RESET = 21780  # _IOR('U', 20, int) — the classic usbreset ioctl
 FTDI_LATENCY_TUNES = {"ccid": 1}
 
 MANIFEST_NAME = "MANIFEST.json"
+SPLIT_MANIFEST_NAME = "SPLIT_MANIFEST.json"
+OTADATA_ARTIFACT = "otadata-ota0.bin"
 IMAGE_FOR_ROLE = {  # role -> (merged bin name, MANIFEST sha256 key)
     "ccid": ("esp32-ccid-merged.bin", "ccid_merged_sha256"),
     "bolty": ("bolty-merged.bin", "bolty_merged_sha256"),
 }
 ROLES = ("ccid", "bolty")
+
+# OTA-slot fast path (#76): the stick is provisioned once with the bolty
+# dual-slot table (bolty app in factory @0x20000, ccid app in ota_0
+# @0x200000 — from split_images.py artifacts); a role switch is then an
+# otadata flip + reboot (~15s) instead of a 4MB reflash (~100s). Erasing
+# BOTH otadata sectors makes the bootloader fall back to factory (bolty);
+# writing the otadata-ota0.bin entry selects ota_0 (ccid).
+OTADATA_OFFSET = 0x10000
+OTADATA_SIZE = 0x2000      # both esp_ota_select sectors
+OTA0_OFFSET = 0x200000
 
 ESPTOOL_TIMEOUT_S = 900.0   # 4 MB merged image @115200
 SYSTEMCTL_TIMEOUT_S = 90.0
@@ -382,6 +403,40 @@ def _flash_step(role: str, port: str, images_dir) -> dict:
     return step
 
 
+def _otadata_erase_step(port: str) -> dict:
+    step = _cmd(["sudo", "esptool.py", "--chip", "esp32", "--port", port,
+                 "--baud", "115200", "--after", "no-reset", "erase_region",
+                 str(OTADATA_OFFSET), str(OTADATA_SIZE)],
+                label=f"erase otadata @ {OTADATA_OFFSET:#x} "
+                      "(invalid otadata -> bootloader picks factory)",
+                timeout=ESPTOOL_TIMEOUT_S)
+    step["ladder"] = True
+    return step
+
+
+def _otadata_write_step(port: str, images_dir) -> dict:
+    binp = Path(images_dir) / OTADATA_ARTIFACT
+    step = _cmd(["sudo", "esptool.py", "--chip", "esp32", "--port", port,
+                 "--baud", "115200", "--after", "no-reset", "write-flash",
+                 hex(OTADATA_OFFSET), binp],
+                label=f"write otadata entry selecting ota_0 ({OTADATA_ARTIFACT})",
+                timeout=ESPTOOL_TIMEOUT_S)
+    step["ladder"] = True
+    return step
+
+
+def _ota_slot_write_step(port: str, images_dir) -> dict:
+    binp = Path(images_dir) / "ccid-factory.bin"
+    step = _cmd(["sudo", "esptool.py", "--chip", "esp32", "--port", port,
+                 "--baud", "115200", "--after", "no-reset", "write-flash",
+                 hex(OTA0_OFFSET), binp],
+                label=f"write ccid app into ota_0 @ {OTA0_OFFSET:#x} "
+                      "(split artifact, partition-relative image)",
+                timeout=ESPTOOL_TIMEOUT_S)
+    step["ladder"] = True
+    return step
+
+
 def _port_wait_step(port: str) -> dict:
     return {"kind": "port_wait", "port": port, "label":
             "wait for serial port by-id path (post-bind re-enumeration)",
@@ -435,12 +490,21 @@ def _verify_step(role: str) -> dict:
 
 
 def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
-              images_dir=IMAGES_DIR, conf_dir=CONF_DIR) -> list:
+              images_dir=IMAGES_DIR, conf_dir=CONF_DIR,
+              via: str = "otadata") -> list:
     """Pure command-sequence for a role — no IO, no hardware. This is the
     SINGLE source of truth switch_to() executes (the executor walks this
-    exact plan), so graph and runtime can never drift."""
+    exact plan), so graph and runtime can never drift.
+
+    via='otadata' (default): flip otadata instead of reflashing — requires
+    the one-time dual-slot provisioning (provision_dualslot) and the
+    split-image artifacts. via='reflash': the historical merged-image
+    write at 0x0 (wipes NVS AND destroys the ota_0 provisioning — the
+    bolty merged image ships a blank ota_0)."""
     if role not in ROLES:
         raise ValueError(f"role must be one of {ROLES}, got {role!r}")
+    if via not in ("otadata", "reflash"):
+        raise ValueError(f"via must be 'otadata' or 'reflash', got {via!r}")
     conf_dir = Path(conf_dir)
     if role == "ccid":
         plan = [
@@ -462,7 +526,12 @@ def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
             _cmd(["sudo", "systemctl", "stop", "pcscd.socket", "pcscd.service"],
                  label="stop pcscd before flash"),
         ]
-    plan.append(_flash_step(role, port, images_dir))
+    if via == "otadata":
+        plan.append(_otadata_erase_step(port))
+        if role == "ccid":
+            plan.append(_otadata_write_step(port, images_dir))
+    else:
+        plan.append(_flash_step(role, port, images_dir))
     plan.append({"kind": "rts_pulse", "port": port,
                  "label": "rts_pulse_reset (DTR-first, switch_role.sh:31-37)"})
     plan.extend(_rescan_steps())
@@ -588,6 +657,43 @@ class RoleSwitcher:
             raise ImageVerificationError("; ".join(problems))
         self.recorder.row(kind="image_verify", label="prebuilt image sha256 verified",
                           **digests)
+        return digests
+
+    def verify_otadata_artifacts(self) -> dict:
+        """The otadata flip path needs the split-image artifacts, sha-verified
+        against SPLIT_MANIFEST.json (regeneration mistakes abort BEFORE any
+        hardware step). Does NOT prove the device is provisioned — only the
+        strict post-switch verify can; switch_with_fallback covers that."""
+        split_path = self.images_dir / SPLIT_MANIFEST_NAME
+        if not split_path.exists():
+            raise ImageVerificationError(
+                f"{SPLIT_MANIFEST_NAME} missing — run split_images.py "
+                f"(required for via='otadata')")
+        try:
+            split = json.loads(split_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise ImageVerificationError(f"{SPLIT_MANIFEST_NAME} unreadable: {e}") from e
+        problems, digests = [], {}
+        wanted = {
+            OTADATA_ARTIFACT: (split.get("otadata_ota0") or {}).get("sha256"),
+            "ccid-factory.bin": ((split.get("roles", {}).get("ccid")
+                                  .get("artifacts", {}).get("factory")) or {}).get("sha256"),
+        }
+        for fname, expected in wanted.items():
+            p = self.images_dir / fname
+            if not p.exists():
+                problems.append(f"{fname} missing")
+                continue
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            digests[fname] = h
+            if expected is None:
+                problems.append(f"{fname} not recorded in {SPLIT_MANIFEST_NAME}")
+            elif expected != h:
+                problems.append(f"{fname} sha256 {h} != split-manifest {expected}")
+        if problems:
+            raise ImageVerificationError("; ".join(problems))
+        self.recorder.row(kind="image_verify",
+                          label="otadata/split artifacts sha256 verified", **digests)
         return digests
 
     # -- staging -----------------------------------------------------------
@@ -771,10 +877,11 @@ class RoleSwitcher:
         raise ValueError(f"unknown step kind {kind!r}")
 
     # -- the switch ----------------------------------------------------------
-    def switch_to(self, role: str) -> SwitchResult:
+    def switch_to(self, role: str, via: str = "otadata") -> SwitchResult:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}, got {role!r}")
-        self.recorder.row(kind="switch_begin", label=f"switch_to({role})", role=role)
+        self.recorder.row(kind="switch_begin", label=f"switch_to({role})", role=role,
+                          via=via)
         try:
             self.verify_images()
         except ImageVerificationError as e:
@@ -783,6 +890,15 @@ class RoleSwitcher:
             return SwitchResult(ok=False, role=role, hardware_touched=False,
                                 detail=f"image sha256 verification aborted: {e}",
                                 rows=self.recorder.rows)
+        if via == "otadata":
+            try:
+                self.verify_otadata_artifacts()
+            except ImageVerificationError as e:
+                self.recorder.row(kind="image_verify", status="FAIL",
+                                  label="otadata/split artifacts verified", error=str(e))
+                return SwitchResult(ok=False, role=role, hardware_touched=False,
+                                    detail=f"otadata artifact verification aborted: {e}",
+                                    rows=self.recorder.rows)
         try:
             self.ensure_staged()
         except StagingError as e:
@@ -790,7 +906,8 @@ class RoleSwitcher:
                                 detail=f"staging failed: {e}",
                                 rows=self.recorder.rows)
         plan = dry_graph(role, port=self.port, staged_conf=self.staged_conf,
-                         images_dir=self.images_dir, conf_dir=self.conf_dir)
+                         images_dir=self.images_dir, conf_dir=self.conf_dir,
+                         via=via)
         hardware_touched = False
         for step in plan:
             if step["kind"] == "cmd" and "esptool.py" in step["argv"]:
@@ -816,31 +933,94 @@ def ensure_staged(deps: Optional[Deps] = None, ctx=None, **kw) -> list:
     return RoleSwitcher(deps=deps, ctx=ctx, **kw).ensure_staged()
 
 
-def switch_to(role: str, ctx=None, deps: Optional[Deps] = None, **kw) -> SwitchResult:
-    return RoleSwitcher(deps=deps, ctx=ctx, **kw).switch_to(role)
+def switch_to(role: str, ctx=None, deps: Optional[Deps] = None,
+              via: str = "otadata", **kw) -> SwitchResult:
+    return RoleSwitcher(deps=deps, ctx=ctx, **kw).switch_to(role, via=via)
+
+
+def provision_dualslot(ctx=None, deps: Optional[Deps] = None, **kw) -> SwitchResult:
+    """One-time dual-slot provisioning (#76): bolty merged at 0x0 (installs
+    the dual-slot table + bolty in factory — LAST NVS wipe), ccid app into
+    ota_0 from the split artifact, otadata erased so the device boots
+    factory (bolty). Leaves the rig fully verified in bolty role; every
+    subsequent switch_to() is an otadata flip. Needs verify_images() AND
+    verify_otadata_artifacts() to pass first."""
+    rs = RoleSwitcher(deps=deps, ctx=ctx, **kw)
+    rs.recorder.row(kind="switch_begin", label="provision_dualslot()", role="bolty")
+    try:
+        rs.verify_images()
+        rs.verify_otadata_artifacts()
+    except ImageVerificationError as e:
+        rs.recorder.row(kind="image_verify", status="FAIL",
+                        label="provision artifact verification", error=str(e))
+        return SwitchResult(ok=False, role="bolty", hardware_touched=False,
+                            detail=f"provisioning aborted: {e}",
+                            rows=rs.recorder.rows)
+    try:
+        rs.ensure_staged()
+    except StagingError as e:
+        return SwitchResult(ok=False, role="bolty", hardware_touched=False,
+                            detail=f"staging failed: {e}", rows=rs.recorder.rows)
+
+    plan = dry_graph("bolty", port=rs.port, staged_conf=rs.staged_conf,
+                     images_dir=rs.images_dir, conf_dir=rs.conf_dir,
+                     via="reflash")
+    flash_idx = next(i for i, s in enumerate(plan)
+                     if s.get("kind") == "cmd" and "write-flash" in " ".join(s.get("argv", []))
+                     and s["argv"][-1].endswith("bolty-merged.bin"))
+    plan[flash_idx:flash_idx + 1] = [
+        plan[flash_idx],
+        _ota_slot_write_step(rs.port, rs.images_dir),
+        _otadata_erase_step(rs.port),
+    ]
+    hardware_touched = False
+    for step in plan:
+        if step["kind"] == "cmd" and "esptool.py" in step["argv"]:
+            hardware_touched = True
+        if not rs._exec_step(step):
+            detail = (f"provisioning step {step['label']!r} failed after "
+                      f"wedge ladder ({rs._fail_why})")
+            rs.recorder.row(kind="switch_fail", label="provision_dualslot()",
+                            status="FAIL", detail=detail)
+            return SwitchResult(ok=False, role="bolty",
+                                hardware_touched=hardware_touched,
+                                detail=detail, rows=rs.recorder.rows)
+    detail = "dual-slot provisioned; bolty (factory) active and verified"
+    rs.recorder.row(kind="switch_ok", label="provision_dualslot()",
+                    status="PASS", detail=detail)
+    return SwitchResult(ok=True, role="bolty", hardware_touched=hardware_touched,
+                        detail=detail, rows=rs.recorder.rows)
 
 
 def switch_with_fallback(role: str = "ccid", ctx=None,
                          deps: Optional[Deps] = None, **kw) -> dict:
     """The orchestrator's ROLE_GATE entrypoint.
 
-    <=2 attempts at `role`; on failure a best-effort restore-to-bolty runs
-    (only if a hardware step actually executed — an image-verification
-    abort leaves the device untouched and must not trigger a reflash).
-    Success -> {"mode": "Mode A"}; failure -> {"mode": "Mode B", ...}.
-    Every step is a timeline row (incremental persistence per todo 5).
+    <=2 attempts at `role` via the otadata fast path (default; falls back
+    to one merged-reflash attempt when the fast path fails — NOTE: a
+    merged reflash destroys the ota_0 provisioning because the bolty
+    merged image ships a blank ota_0; re-provision with
+    provision_dualslot after any reflash fallback). On failure a
+    best-effort restore-to-bolty runs (only if a hardware step actually
+    executed — an image-verification abort leaves the device untouched
+    and must not trigger a reflash). Success -> {"mode": "Mode A"};
+    failure -> {"mode": "Mode B", ...}. Every step is a timeline row
+    (incremental persistence per todo 5).
     """
     rs = RoleSwitcher(deps=deps, ctx=ctx, **kw)
-    attempts, last = 0, None
-    for _ in range(2):
+    attempts, last, used_reflash = 0, None, False
+    for via in ("otadata", "otadata", "reflash"):
         attempts += 1
-        last = rs.switch_to(role)
+        used_reflash = via == "reflash"
+        last = rs.switch_to(role, via=via)
         if last.ok:
             return {"mode": "Mode A", "ok": True, "attempts": attempts,
-                    "reason": "", "detail": last.detail,
+                    "reason": "", "detail": last.detail, "via": via,
                     "timeline": rs.recorder.rows}
-        if not last.hardware_touched and "image sha256" in last.detail:
-            break  # deterministic abort — retrying cannot help
+        if not last.hardware_touched and "image sha256 verification aborted" in last.detail:
+            break  # deterministic abort — merged images are bad, no path works
+        if not last.hardware_touched and "otadata artifact verification aborted" in last.detail:
+            continue  # artifacts bad — the reflash attempt may still work
     restore_ok = None
     if last.hardware_touched:
         rres = rs.switch_to("bolty")
@@ -849,7 +1029,9 @@ def switch_with_fallback(role: str = "ccid", ctx=None,
     else:
         restore_note = "restore skipped — no hardware step executed"
     reason = (f"{role} switch failed after {attempts} attempt(s) "
-              f"({last.detail}); {restore_note}")
+              f"({last.detail}); {restore_note}"
+              + ("; reflash fallback used — dual-slot provisioning LOST, "
+                 "re-run provision_dualslot" if used_reflash else ""))
     rs.recorder.anomaly("role_gate_failed", role=role, attempts=attempts,
                         reason=reason, restore_ok=restore_ok)
     return {"mode": "Mode B", "ok": False, "attempts": attempts, "reason": reason,
@@ -942,10 +1124,19 @@ def selftest() -> tuple:
           argvs[0].startswith("sudo systemctl stop bolty-console")
           and argvs[1].startswith("sudo cp ") and argvs[1].endswith("/esp32-ccid")
           and argvs[2] == "sudo systemctl stop pcscd.socket pcscd.service")
-    check("ccid graph: prebuilt merged image @115200 --after no-reset at 0x0",
+    check("ccid graph (default): otadata flip @115200 --after no-reset, no 0x0 write",
+          any("esptool.py" in a and "--baud 115200" in a
+              and "--after no-reset" in a and " erase_region 65536 8192" in a + " "
+              for a in argvs)
+          and any(" write-flash 0x10000 " in a + " " and OTADATA_ARTIFACT in a
+                  for a in argvs)
+          and not any(" write-flash 0x0 " in a + " " for a in argvs))
+    rg = dry_graph("ccid", via="reflash")
+    rargvs = [" ".join(s.get("argv", [])) for s in rg]
+    check("ccid graph (reflash): prebuilt merged image @115200 --after no-reset at 0x0",
           any("esptool.py" in a and "--baud 115200" in a
               and "--after no-reset" in a and " write-flash 0x0 " in a + " "
-              for a in argvs))
+              for a in rargvs))
     pw = next((i for i, s in enumerate(g) if s.get("kind") == "port_wait"), None)
     check("ccid graph: port-wait + settle land before the pcscd restart",
           pw is not None and g[pw + 1]["kind"] == "sleep"
@@ -994,9 +1185,20 @@ def selftest() -> tuple:
         blob = b"selftest-image-bytes"
         (imgdir / "esp32-ccid-merged.bin").write_bytes(blob)
         (imgdir / "bolty-merged.bin").write_bytes(blob)
+        otadata = build_otadata_entry_ota0()
+        (imgdir / OTADATA_ARTIFACT).write_bytes(otadata)
+        ccid_app = b"selftest-ccid-app"
+        (imgdir / "ccid-factory.bin").write_bytes(ccid_app)
         man = {"ccid_merged_sha256": hashlib.sha256(blob).hexdigest(),
                "bolty_merged_sha256": hashlib.sha256(blob).hexdigest()}
         (imgdir / MANIFEST_NAME).write_text(json.dumps(man))
+        (imgdir / SPLIT_MANIFEST_NAME).write_text(json.dumps({
+            "otadata_ota0": {"file": OTADATA_ARTIFACT,
+                             "sha256": hashlib.sha256(otadata).hexdigest()},
+            "roles": {"ccid": {"artifacts": {"factory": {
+                "file": "ccid-factory.bin",
+                "sha256": hashlib.sha256(ccid_app).hexdigest()}}}},
+        }))
         staged = imgdir / "esp32-ccid.conf"
         staged.write_text('FRIENDLYNAME "GemPCTwin serial"\n')
         conf_dir = td / "reader.conf.d"
@@ -1026,19 +1228,22 @@ def selftest() -> tuple:
         deps = _STDeps(_STRunner(), lambda: acr)  # GemPCTwin never appears
         out = switch_with_fallback("ccid", deps=deps, **paths)
         n_ccid_flash = sum("esp32-ccid-merged.bin" in a for a in deps.runner.log)
+        n_otadata = sum(OTADATA_ARTIFACT in a for a in deps.runner.log)
         n_bolty_flash = sum("bolty-merged.bin" in a for a in deps.runner.log)
-        check("fallback: Mode B after 2 attempts + best-effort restore",
-              out["mode"] == "Mode B" and out["attempts"] == 2
-              and out["restore_ok"] is True and n_ccid_flash == 2
-              and n_bolty_flash == 1)
+        # escalation: otadata flip x2 (each = erase + artifact write), then
+        # one merged reflash; the restore is an erase-only otadata flip
+        check("fallback: Mode B after otadata x2 + reflash + otadata restore",
+              out["mode"] == "Mode B" and out["attempts"] == 3
+              and out["restore_ok"] is True and n_ccid_flash == 1
+              and n_otadata == 2 and n_bolty_flash == 0)
 
     return state["ok"], lines
 
 
 # ------------------------------------------------------------------ CLI ----
 
-def _print_graph(role: str) -> None:
-    plan = dry_graph(role)
+def _print_graph(role: str, via: str = "otadata") -> None:
+    plan = dry_graph(role, via=via)
     for i, s in enumerate(plan, 1):
         argv_s = " ".join(shlex.quote(a) for a in s.get("argv", []))
         extra = ""
@@ -1063,11 +1268,14 @@ def main(argv=None) -> int:
                     "Never flashes on its own — live round-trip is todo 18.")
     ap.add_argument("--graph", choices=ROLES,
                     help="print the exact command sequence for a role")
+    ap.add_argument("--via", choices=("otadata", "reflash"), default="otadata",
+                    help="switch mechanism: otadata flip (default, #76) or "
+                         "legacy merged reflash at 0x0")
     ap.add_argument("--selftest", action="store_true",
                     help="run offline unit paths (no hardware, no /etc)")
     args = ap.parse_args(argv)
     if args.graph:
-        _print_graph(args.graph)
+        _print_graph(args.graph, via=args.via)
         return 0
     if args.selftest:
         ok, lines = selftest()

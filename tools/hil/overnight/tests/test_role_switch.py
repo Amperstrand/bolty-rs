@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 pytestmark = pytest.mark.env_dependent
 
 import role_switch  # noqa: E402
+from split_images import build_otadata_entry_ota0  # noqa: E402
 from role_switch import (  # noqa: E402
     bolty_readers_ok,
     ccid_readers_ok,
@@ -150,18 +151,34 @@ class Deps:
 
 
 def make_images(tmpdir, *, tamper_ccid=False):
-    """Tiny fake image set with a REAL sha256 MANIFEST (hash path is real)."""
+    """Fake image set with REAL sha256 manifests: MANIFEST.json for the
+    merged bins and SPLIT_MANIFEST.json for the otadata-path artifacts
+    (both hash paths are exercised for real)."""
     imgdir = tmpdir / "images"
     imgdir.mkdir(parents=True)
-    blobs = {"bolty": b"bolty-merged-fake", "ccid": b"esp32-ccid-merged-fake"}
+    blobs = {"bolty": b"bolty-merged-fake", "ccid": b"esp32-ccid-merged-fake",
+             "otadata": build_otadata_entry_ota0(),
+             "ccid_factory": b"ccid-app-fake"}
     if tamper_ccid:
         (imgdir / "esp32-ccid-merged.bin").write_bytes(b"TAMPERED")
     else:
         (imgdir / "esp32-ccid-merged.bin").write_bytes(blobs["ccid"])
     (imgdir / "bolty-merged.bin").write_bytes(blobs["bolty"])
+    (imgdir / "otadata-ota0.bin").write_bytes(blobs["otadata"])
+    (imgdir / "ccid-factory.bin").write_bytes(blobs["ccid_factory"])
     (imgdir / "MANIFEST.json").write_text(json.dumps({
         "bolty_merged_sha256": hashlib.sha256(blobs["bolty"]).hexdigest(),
         "ccid_merged_sha256": hashlib.sha256(blobs["ccid"]).hexdigest(),
+    }))
+    (imgdir / "SPLIT_MANIFEST.json").write_text(json.dumps({
+        "otadata_ota0": {
+            "file": "otadata-ota0.bin",
+            "sha256": hashlib.sha256(blobs["otadata"]).hexdigest(),
+        },
+        "roles": {"ccid": {"artifacts": {"factory": {
+            "file": "ccid-factory.bin",
+            "sha256": hashlib.sha256(blobs["ccid_factory"]).hexdigest(),
+        }}}},
     }))
     staged = imgdir / "esp32-ccid.conf"
     staged.write_text('FRIENDLYNAME "GemPCTwin serial"\nDEVICENAME /dev/x\n')
@@ -193,7 +210,8 @@ def test_graph_ccid_exact_sequence():
     staged = "/staged/esp32-ccid.conf"
     img = "/img/esp32-ccid-merged.bin"
     plan = dry_graph("ccid", port=port, staged_conf=staged,
-                     images_dir="/img", conf_dir="/etc/reader.conf.d")
+                     images_dir="/img", conf_dir="/etc/reader.conf.d",
+                     via="reflash")
     seq = [(s["kind"], tuple(s.get("argv", ()))) for s in plan]
     assert seq == [
         ("cmd", ("sudo", "systemctl", "stop", "bolty-console")),
@@ -245,7 +263,8 @@ def test_graph_ccid_exact_sequence():
 def test_graph_bolty_exact_sequence():
     port = "/dev/serial/by-id/usb-X-port0"
     plan = dry_graph("bolty", port=port, staged_conf="/staged/esp32-ccid.conf",
-                     images_dir="/img", conf_dir="/etc/reader.conf.d")
+                     images_dir="/img", conf_dir="/etc/reader.conf.d",
+                     via="reflash")
     seq = [(s["kind"], tuple(s.get("argv", ()))) for s in plan]
     assert seq == [
         ("cmd", ("sudo", "systemctl", "stop", "bolty-console")),
@@ -281,6 +300,71 @@ def test_graph_bolty_exact_sequence():
     assert plan[14]["expect_includes"] == ["ACR1252"]
     assert plan[15]["ladder"] is True and plan[18]["ladder"] is True
     assert plan[17]["s"] == 6.0  # console start settle (switch_role.sh:88)
+
+
+def test_graph_otadata_default_replaces_reflash():
+    """#76: the default switch flips otadata — no merged write at 0x0, no
+    NVS touch. ccid = erase + write-entry; bolty = erase only (factory)."""
+    port = "/dev/serial/by-id/usb-X-port0"
+    ccid = dry_graph("ccid", port=port, staged_conf="/staged/esp32-ccid.conf",
+                     images_dir="/img", conf_dir="/etc/reader.conf.d")
+    esptool = [tuple(s.get("argv", ())) for s in ccid
+               if s["kind"] == "cmd" and "esptool.py" in s.get("argv", [])]
+    assert esptool == [
+        ("sudo", "esptool.py", "--chip", "esp32", "--port", port,
+         "--baud", "115200", "--after", "no-reset", "erase_region",
+         str(0x10000), str(0x2000)),
+        ("sudo", "esptool.py", "--chip", "esp32", "--port", port,
+         "--baud", "115200", "--after", "no-reset", "write-flash",
+         "0x10000", "/img/otadata-ota0.bin"),
+    ]
+    assert all(s.get("ladder") for s in ccid if "esptool.py" in s.get("argv", []))
+    assert not any("0x0" == a[-1] or "merged" in " ".join(a)
+                   for s in ccid if s["kind"] == "cmd"
+                   for a in [s.get("argv", [])])
+
+    bolty = dry_graph("bolty", port=port, staged_conf="/staged/esp32-ccid.conf",
+                      images_dir="/img", conf_dir="/etc/reader.conf.d")
+    esptool_b = [tuple(s.get("argv", ())) for s in bolty
+                 if s["kind"] == "cmd" and "esptool.py" in s.get("argv", [])]
+    assert esptool_b == [
+        ("sudo", "esptool.py", "--chip", "esp32", "--port", port,
+         "--baud", "115200", "--after", "no-reset", "erase_region",
+         str(0x10000), str(0x2000)),
+    ]
+    # everything after the esptool block is the proven post-flash ladder
+    assert any(s["kind"] == "rts_pulse" for s in bolty)
+    assert any(s["kind"] == "ping_verify" for s in bolty)
+
+
+def test_otadata_entry_bytes_match_bootloader_crc_formula():
+    """The 32-byte entry must satisfy the ESP-IDF 5.2.3 bootloader check
+    (bootloader_common_ota_select_crc -> esp_rom_crc32_le of the ota_seq
+    field only: invert-in, reflected loop, invert-out — verified against
+    the bootloader on hardware 2026-09-02; zlib variants get rejected)."""
+    entry = build_otadata_entry_ota0()
+    assert len(entry) == 32
+    seq = entry[:4]
+    import struct as _struct
+    assert _struct.unpack("<I", seq)[0] == 1            # (1-1) % 1 -> ota_0
+    assert entry[4:24].rstrip(b"\x00") == b"bolty-rig-flip"
+    assert _struct.unpack("<I", entry[24:28])[0] == 0   # ESP_OTA_IMG_VALID
+    # ROM crc32_le replication (exact algorithm from esp_rom_crc.c)
+    table = []
+    for n in range(256):
+        c = n
+        for _ in range(8):
+            c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
+        table.append(c)
+    crc = 0xFFFFFFFF
+    crc ^= 0xFFFFFFFF
+    for b in seq:
+        crc = table[(crc ^ b) & 0xFF] ^ (crc >> 8)
+    crc ^= 0xFFFFFFFF
+    assert _struct.unpack("<I", entry[28:32])[0] == crc
+    import zlib as _zlib
+    assert _struct.unpack("<I", entry[28:32])[0] not in (
+        _zlib.crc32(seq), _zlib.crc32(seq) ^ 0xFFFFFFFF)
 
 
 def test_graph_is_pure_and_serializable():
@@ -477,7 +561,7 @@ def test_port_wait_never_appearing_fails_before_pcscd_touched(tmp_path):
     assert not res.ok and "serial port absent" in res.detail
     assert res.hardware_touched
     assert runner.count("restart pcscd.socket pcscd.service") == 0
-    assert runner.count("esptool.py") == 1  # no ladder re-flash for a gone port
+    assert runner.count("esptool.py") == 2  # otadata erase+write; no ladder retries
 
 
 # --------------------------------------------- verify ladder + evidence ----
@@ -579,9 +663,14 @@ def test_cli_graph_and_selftest():
                        capture_output=True, text=True, timeout=60)
     assert g.returncode == 0 and "write-flash" in g.stdout
     assert "/etc/reader.conf.d/esp32-ccid" in g.stdout
+    assert "otadata-ota0.bin" in g.stdout and "erase_region" in g.stdout
     b = subprocess.run([sys.executable, str(here), "--graph", "bolty"],
                        capture_output=True, text=True, timeout=60)
-    assert b.returncode == 0 and "bolty-merged.bin" in b.stdout
+    assert b.returncode == 0 and "erase_region" in b.stdout
+    legacy = subprocess.run([sys.executable, str(here), "--graph", "bolty",
+                             "--via", "reflash"],
+                            capture_output=True, text=True, timeout=60)
+    assert legacy.returncode == 0 and "bolty-merged.bin" in legacy.stdout
     st = subprocess.run([sys.executable, str(here), "--selftest"],
                         capture_output=True, text=True, timeout=120)
     assert st.returncode == 0, st.stdout + st.stderr
