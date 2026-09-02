@@ -502,3 +502,46 @@ manager) captures every hard-won lesson from the manual sessions.
    warning (degraded run OK); absent target card = hard fail.
 4. The difftest needs its own make target and 30-min budget — don't try to
    squeeze it into a quick suite.
+
+## B25 — labgrid 26.0's exporter surface fails SILENTLY in three ways
+
+Getting the ACR1252 + M5Stick serial properly onto the coordinator (2026-09-02,
+issues #78/#79) surfaced three traps, each of which produces a running-looking
+exporter with broken resources:
+
+1. **Class-key confusion**: the exporter YAML key must be a class in labgrid's
+   `exports[]` map (`USBSerialPort`), NOT the client-visible name
+   (`NetworkSerialPort`). A wrong name silently rides the plain
+   `ResourceEntry` fallback: no `SerialPortExport` wrapper, no ser2net on
+   acquire, no `host` param — client-side expansion then dies with
+   `missing 1 required positional argument: 'host'`. The rig's serial export
+   had this bug since inception; nothing consumed it via labgrid, so it never
+   surfaced. Deliberate fallback use (our ACR1252 acquisition token) needs a
+   client-side class registered via env-yaml `imports:` (see
+   `tools/hil/labgrid_resources.py`) or place expansion dies with
+   `unknown resource class`.
+2. **Wire format**: exporter→coordinator params serialize to a flat protobuf
+   `MapValue` (bool/int/float/string only). A udev `match` dict can NEVER
+   cross it — "cannot translate OrderedDict to MapValue" is a design limit,
+   not a syntax error to fix.
+3. **Jinja**: exporter YAML goes through Jinja2 with
+   `line_statement_prefix="#"` — `# ` comment lines are STATEMENTS at any
+   indentation and crash the exporter ("unknown tag"). Comments must be
+   `##`. Cost one crash-restart loop to learn; documented in the YAML.
+
+Also: ser2net must be installed (the wrapper spawns it per-acquire and reaps
+it on the exporter poll cycle — the console daemon survives both); coordinator
+restarts wipe in-memory places → `make labgrid-place`; the coordinator binds
+ONLY 192.168.13.221:20408 (not 127.0.0.1) and this host has no mDNS resolver.
+
+## B26 — cross-cutting setup that must precede plugin fixtures belongs in pytest_sessionstart
+
+The labgrid plugin requires the place ACQUIRED before its env/target fixtures
+expand resources — but pytest fixture-store ordering does NOT guarantee a
+conftest fixture (our rig_lock) runs before plugin-registered fixtures
+(env/target), regardless of test-signature order. Symptom: expansion fails on
+unacquired-place params even though the lock fixture "should have run first".
+Fix: acquire in `pytest_sessionstart` (conftest hooks DO run before fixture
+instantiation) and have rig_lock defer to it when the --lg-env path is active.
+General rule: when a conftest fixture must ordered-before a plugin fixture,
+don't fight the fixture store — move the setup into a session hook.

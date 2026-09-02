@@ -49,6 +49,22 @@ Diagnosis runbook for proxy outages:
 5. boltcardpoc (edge) is independent — HIL taps stay green during proxy
    outages by design
 
+### HIL rig quick facts (2026-09-02; full detail: docs/lessons-learned.md B24-B26)
+
+- Entry points: `make test-hil` (fast, ACR only) · `make difftest` /
+  `make difftest-quick` (66/66 in ~3:40 / 46/46 in ~2s) · `make test-hil-lg`
+  (full labgrid plugin path) · `make report` (Allure) · `make status`
+- labgrid: coordinator binds ONLY `192.168.13.221:20408` (not 127.0.0.1; no
+  mDNS resolver on this host). Coordinator restarts wipe places →
+  `make labgrid-place`. Exporter YAML: class keys must be in labgrid's
+  exports[] map (`USBSerialPort`, not the client-visible name); comments
+  must be `##` (`# ` lines are Jinja statements). Traps in B25.
+- Rig exclusivity: coordinator place acquisition first, flock fallback when
+  the coordinator is down (conftest rig_lock / sessionstart — B26).
+- Cards: registry `tools/hil/cards.toml` is the contract (burn tests are
+  parametrized per burn-allowed card; non-coupled auto-skip). Current
+  placement: `04C474FA967380` on ACR, `04455FFA967380` on stick antenna.
+
 ## Card Recovery: UID 043365FA967380
 
 ### Status: RECOVERABLE (use "keep trying" — rapid AuthFirst in same connection)
