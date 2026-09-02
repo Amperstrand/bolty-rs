@@ -16,6 +16,7 @@ Run ledger: every session appends to results/history.jsonl (OpenHTF pattern).
 """
 
 import fcntl
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -28,6 +29,7 @@ from hil.bolty import DEFAULT_CONSOLE_CTL
 RESULTS_DIR = Path(__file__).parent / "results"
 LEDGER_PATH = RESULTS_DIR / "history.jsonl"
 RIG_LOCK_PATH = RESULTS_DIR / ".rig-lock"
+REPO_ROOT = Path(__file__).parent.parent.parent
 
 # ── Marker registration ─────────────────────────────────────────────────
 
@@ -84,6 +86,45 @@ def pytest_runtest_makereport(item, call):
         }
 
 
+def _fw_sha256() -> str:
+    """sha256 of the workspace ESP32 release binary (what the stick runs per
+    the AGENTS known-good stamping); falls back to the dated backup, then
+    'unknown'. Short-prefix — trend correlation, not integrity proof."""
+    for candidate in (
+        REPO_ROOT / "target" / "xtensa-esp32-espidf" / "release" / "bolty-esp32",
+        Path.home() / "fw-backup" / "bolty-esp32-knowngood-20260827-final.bin",
+    ):
+        if candidate.exists():
+            return hashlib.sha256(candidate.read_bytes()).hexdigest()[:16]
+    return "unknown"
+
+
+def _coupled_uid() -> str:
+    try:
+        BoltyCli.expect_binary()
+        return BoltyCli().uid_or_none() or "none"
+    except Exception:
+        return "none"
+
+
+def _stamp_allure_environment(session) -> None:
+    """Write environment.properties into the alluredir (#75) — fw_sha +
+    card_uid correlation for trend reading. No-op without --alluredir."""
+    try:
+        alluredir = session.config.getoption("--alluredir")
+    except (ValueError, KeyError):
+        return
+    if not alluredir:
+        return
+    lines = [
+        f"fw_sha={_fw_sha256()}",
+        f"card_uid={_coupled_uid()}",
+        f"ts={time.strftime('%Y-%m-%dT%H:%M:%S%z')}",
+    ]
+    Path(alluredir).mkdir(parents=True, exist_ok=True)
+    (Path(alluredir) / "environment.properties").write_text("\n".join(lines) + "\n")
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Append a run record to history.jsonl after every session."""
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -101,6 +142,7 @@ def pytest_sessionfinish(session, exitstatus):
             f.write(json.dumps(record) + "\n")
     except OSError:
         pass  # best-effort
+    _stamp_allure_environment(session)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────

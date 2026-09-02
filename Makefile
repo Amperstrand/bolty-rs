@@ -19,9 +19,10 @@
 # ensure_blank() for rerun-safety.
 # History: every run appends to results/history.jsonl.
 
-.PHONY: test test-hil difftest difftest-quick test-all status
+.PHONY: test test-hil difftest difftest-quick test-all status report
 
 HIL_TESTS := tools/hil/tests
+ALLURE_RESULTS := tools/hil/results/allure
 
 test:
 	cargo test --workspace --exclude bolty-esp32
@@ -31,7 +32,12 @@ test-hil:
 	mkdir -p tools/hil/results
 	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v \
 	  --reruns 2 --reruns-delay 3 \
-	  --json-report --json-report-file=tools/hil/results/hil-test-report.json
+	  --json-report --json-report-file=tools/hil/results/hil-test-report.json \
+	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S)
+
+# Allure dashboard: history-preserving HTML from the latest test-hil results.
+report:
+	bash tools/hil/report.sh
 
 # Takes 3-4 min (role switch + full APDU matrix + restore).
 difftest:
