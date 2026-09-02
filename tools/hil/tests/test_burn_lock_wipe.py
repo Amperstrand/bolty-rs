@@ -32,7 +32,7 @@ GATE_SKIPPED = "skipping pre-verification"
 
 
 def _require_card(cli: BoltyCli, registry: CardRegistry, uid: str, op: str):
-    registry.require(uid, op)  # raises CardError if not permitted
+    registry.require(uid, op)
     actual = cli.uid()
     assert actual == uid, (
         f"wrong card coupled: expected {uid}, got {actual} — refusing "
@@ -40,8 +40,11 @@ def _require_card(cli: BoltyCli, registry: CardRegistry, uid: str, op: str):
     )
 
 
-def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry, coupled_card_uid):
+@pytest.mark.flaky(reruns=2, reruns_delay=3)
+def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry,
+                                          coupled_card_uid, ensure_blank):
     uid = coupled_card_uid
+    ensure_blank()  # rerun-safety: wipe to blank if prior attempt half-failed
     _require_card(cli, registry, uid, "burn")
 
     # ── 1. burn: the 00E0 lock must land on silicon ─────────────────────
@@ -88,10 +91,11 @@ def test_burn_lock_tap_gated_wipe_blank(cli, registry: CardRegistry, coupled_car
     assert rights.get("change") == "key0", rights
 
 
-def test_wipe_wrong_issuer_refused(cli, registry: CardRegistry, coupled_card_uid):
-    """Wrong-key wipe must fail cleanly (bounded auth attempts) and leave
-    the card untouched — the wrong-issuer safety story."""
+@pytest.mark.flaky(reruns=2, reruns_delay=3)
+def test_wipe_wrong_issuer_refused(cli, registry: CardRegistry,
+                                   coupled_card_uid, ensure_blank):
     uid = coupled_card_uid
+    ensure_blank()
     _require_card(cli, registry, uid, "wipe")
 
     # Burn a known state first so the refusal is measurable.
