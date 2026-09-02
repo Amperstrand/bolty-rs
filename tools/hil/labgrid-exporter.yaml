@@ -1,4 +1,16 @@
+## "#" lines are Jinja statements in this file (labgrid line_statement_prefix) — comment with "##" only.
+## ACR1252 rides the ResourceEntry fallback: labgrid 26.0 has no exportable
+## generic-USB class, and udev match dicts cannot cross the coordinator wire
+## (flat MapValue protobuf). This entry is the acquisition/exclusivity token;
+## presence detection is HIL preflight's job (pcscd). id_path pins the stable
+## physical port; busnum/devnum change on replug.
 m5stick-serial:
   NetworkSerialPort:
     port: /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
     speed: 115200
+
+acr1252:
+  NetworkSmartcardReader:
+    vendor_id: '072f'
+    model_id: '223b'
+    id_path: 'pci-0000:02:00.0-usb-0:6'
