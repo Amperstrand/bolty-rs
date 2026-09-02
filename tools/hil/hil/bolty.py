@@ -1,12 +1,21 @@
-"""bolty-cli runner: subprocess wrapper with timeout + structured errors."""
+"""bolty-cli runner: subprocess wrapper with timeout + structured errors.
+
+Card coupling on the stick antenna is intermittent (documented in
+lessons-learned.md B13/§180) — uid() retries once after a 2-second settle
+before reporting failure, matching the "one retry after 2s always parses"
+pattern from the role-switch boot-noise learnings (§178).
+"""
 
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CLI = REPO_ROOT / "target" / "debug" / "bolty-cli"
 DEFAULT_CONSOLE_CTL = REPO_ROOT / "tools" / "hil" / "bolty-ctl.py"
+
+UID_RETRY_DELAY_S = 2.0
 
 
 class BoltyError(RuntimeError):
@@ -38,11 +47,29 @@ class BoltyCli:
             )
         return out.stdout
 
-    def uid(self) -> str:
-        for line in self.run("uid", timeout_s=30).splitlines():
-            if line.startswith("UID:"):
-                return line.split("UID:")[1].strip().lower()
-        raise BoltyError("uid command produced no UID line", 0, "")
+    def uid(self, retries: int = 1) -> str:
+        """Read the card UID; retry once after a settle delay on transient
+        coupling failures (the documented intermittent-coupling pattern)."""
+        last_err: Exception | None = None
+        for attempt in range(1 + retries):
+            if attempt > 0:
+                time.sleep(UID_RETRY_DELAY_S)
+            try:
+                for line in self.run("uid", timeout_s=30).splitlines():
+                    if line.startswith("UID:"):
+                        return line.split("UID:")[1].strip().lower()
+                last_err = BoltyError("uid command produced no UID line", 0, "")
+            except BoltyError as e:
+                last_err = e
+        assert last_err is not None
+        raise last_err
+
+    def uid_or_none(self) -> str | None:
+        """Read UID without raising; returns None on any failure."""
+        try:
+            return self.uid(retries=0)
+        except (BoltyError, Exception):  # noqa: BLE001 — deliberate broad catch
+            return None
 
     def readers_line(self) -> str:
         for line in self.run("uid", timeout_s=30).splitlines():

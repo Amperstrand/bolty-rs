@@ -7,12 +7,12 @@
   "comparison_note": "Same card detected \u2014 exact byte comparison for all tests",
   "total_golden": 66,
   "total_test": 66,
-  "total_matches": 66,
-  "total_mismatches": 0,
+  "total_matches": 63,
+  "total_mismatches": 3,
   "total_structural": 0,
   "total_missing_in_test": 0,
   "total_extra_in_test": 0,
-  "match_rate": "66/66",
+  "match_rate": "63/66",
   "category_summary": {
     "identity": {
       "match": 3,
@@ -23,8 +23,8 @@
       "mismatch": 0
     },
     "ntag424": {
-      "match": 10,
-      "mismatch": 0
+      "match": 7,
+      "mismatch": 3
     },
     "ntag424_keys": {
       "match": 3,
@@ -58,11 +58,8 @@
     "get_response_no_pending",
     "select_cc_file",
     "select_ndef_file",
-    "read_cc_full",
-    "read_cc_partial",
     "read_cc_invalid_offset",
     "read_ndef_after_select",
-    "read_no_select",
     "get_file_settings_cc",
     "get_file_settings_ndef",
     "get_file_settings_invalid",
@@ -115,7 +112,62 @@
     "fuzz_18",
     "fuzz_19"
   ],
-  "mismatches": [],
+  "mismatches": [
+    {
+      "test_id": "read_cc_full",
+      "category": "ntag424",
+      "description": "Read full Capability Container (15 bytes)",
+      "card_dependent": true,
+      "comparison_mode": "exact",
+      "success_match": true,
+      "sw_match": true,
+      "duration_golden_ms": 6.11,
+      "duration_test_ms": 5.01,
+      "duration_ratio": 0.8,
+      "duration_concern": false,
+      "response_match": false,
+      "golden_response": "004fd1014b5504626f6c7463617264",
+      "test_response": "0000d1014b5504626f6c7463617264",
+      "error_match": true,
+      "verdict": "MISMATCH"
+    },
+    {
+      "test_id": "read_cc_partial",
+      "category": "ntag424",
+      "description": "Read CC partial (first 4 bytes)",
+      "card_dependent": true,
+      "comparison_mode": "exact",
+      "success_match": true,
+      "sw_match": true,
+      "duration_golden_ms": 2.93,
+      "duration_test_ms": 3.15,
+      "duration_ratio": 1.1,
+      "duration_concern": false,
+      "response_match": false,
+      "golden_response": "004fd101",
+      "test_response": "0000d101",
+      "error_match": true,
+      "verdict": "MISMATCH"
+    },
+    {
+      "test_id": "read_no_select",
+      "category": "ntag424",
+      "description": "Read without prior SELECT (expect error)",
+      "card_dependent": true,
+      "comparison_mode": "exact",
+      "success_match": true,
+      "sw_match": true,
+      "duration_golden_ms": 6.0,
+      "duration_test_ms": 3.77,
+      "duration_ratio": 0.6,
+      "duration_concern": false,
+      "response_match": false,
+      "golden_response": "004fd1014b5504626f6c7463617264",
+      "test_response": "0000d1014b5504626f6c7463617264",
+      "error_match": true,
+      "verdict": "MISMATCH"
+    }
+  ],
   "missing_in_test": [],
   "extra_in_test": []
 }

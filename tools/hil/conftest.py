@@ -51,11 +51,11 @@ def console_ctl() -> str:
 def coupled_card_uid(cli, registry: CardRegistry) -> str:
     """The UID of whichever registered burn-allowed card is actually coupled
     (bolty-cli auto-picks the first reader with a card). Cards move between
-    readers in the lab; the registry is the safety contract, not placement."""
-    try:
-        actual = cli.uid()
-    except Exception as e:  # noqa: BLE001 — skip, not fail, when no card
-        pytest.skip(f"no card coupled: {e}")
+    readers in the lab; the registry is the safety contract, not placement.
+    Uses retry-aware uid() — one retry on transient coupling failure."""
+    actual = cli.uid_or_none()
+    if actual is None:
+        pytest.skip("no card coupled (intermittent coupling — check antenna)")
     card = registry.lookup(actual)
     if card is None or "burn" not in card.ops:
         pytest.skip(

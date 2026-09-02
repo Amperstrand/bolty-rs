@@ -95,3 +95,38 @@ Framework: `tools/hil/hil/` (cards.toml registry, preflight checks, role_guard
 context manager). Tests: `tools/hil/tests/`. The card registry is the safety
 contract — only listed UIDs with matching ops are touched. `test_burn_cycle.py`
 at this level is superseded by `tests/test_burn_lock_wipe.py`.
+
+## Troubleshooting
+
+### Stick "frozen" (console unresponsive)
+Two different failure modes with the same symptom:
+- **Daemon-level** (heartbeats FRESH in ~/.bolty/console.log): restart the daemon
+  ```bash
+  sudo systemctl restart bolty-console
+  ```
+- **MFRC522-level** (heartbeats STALE or uid still empty after daemon restart):
+  reflash cycle via role switch
+  ```bash
+  timeout 420 python3 -c "
+  import sys; sys.path.insert(0, 'tools/hil/overnight')
+  import role_switch
+  r = role_switch.switch_to('ccid', results_dir='tools/hil/overnight/results/recovery')
+  print(r.ok, r.detail)"
+  timeout 420 python3 -c "
+  import sys; sys.path.insert(0, 'tools/hil/overnight')
+  import role_switch
+  r = role_switch.switch_to('bolty', results_dir='tools/hil/overnight/results/recovery/restore')
+  print(r.ok, r.detail)"
+  ```
+
+### labgrid-exporter blocking the shell
+Never run labgrid-exporter interactively — it holds open network connections
+and blocks the calling shell. It runs as a systemd service:
+```bash
+systemctl status labgrid-exporter
+```
+
+### Difftest timeout
+The APDU differential takes 3-4 minutes through the GemPCTwin at 115200 baud.
+If it times out, the role_guard context manager will have restored the stick
+to bolty role (proven under interruption). Just re-run.
