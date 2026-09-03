@@ -7,7 +7,9 @@ fixtures) against the live coordinator. They auto-skip without
 
 import pytest
 
-from labgrid.resource.remote import RemotePlace
+pytest.importorskip("labgrid")
+
+from labgrid.resource.remote import RemotePlace  # noqa: E402
 
 pytestmark = [pytest.mark.hardware]
 
