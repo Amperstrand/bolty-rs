@@ -18,7 +18,7 @@
 
 use bolty_core::crypto::aes_cmac;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
-use bolty_core::picc::{PiccData, picc_verify_c, sdm_build_sv2};
+use bolty_core::picc::{PiccData, picc_verify_c, sdm_build_sv2, sdm_build_sv2_no_uid};
 use bolty_core::secret::AesKey;
 use bolty_core::uid::CardUid;
 use bolty_core::util::{decode_hex_into, encode_hex};
@@ -277,14 +277,13 @@ proptest! {
     ) {
         let picc = PiccData {
             valid: false,
-            uid,
+            uid: Some(uid),
             counter,
-            has_uid: true,
             has_counter: true,
         };
 
         // Reproduce the public SDM MAC computation (see picc::picc_verify_c).
-        let sv2 = sdm_build_sv2(&picc.uid, picc.counter);
+        let sv2 = sdm_build_sv2(&uid, picc.counter);
         let derived_key = aes_cmac(&k2, &sv2);
         let full_mac = aes_cmac(&derived_key, &[]);
 
@@ -313,5 +312,46 @@ proptest! {
             !picc_verify_c(&k2, &picc, &bad_hex),
             "tampered c value unexpectedly verified"
         );
+    }
+
+    /// Best-privacy (PICCDataTag 0x40) round-trip: the UID-less SV2 yields a
+    /// verifying `c`, tampered `c` fails, and a UID-bearing `c` never verifies.
+    #[test]
+    fn picc_cmac_verification_roundtrip_no_uid(
+        k2 in any::<[u8; 16]>(),
+        counter in 0u32..=0x00FF_FFFF,
+    ) {
+        let picc = PiccData {
+            valid: false,
+            uid: None,
+            counter,
+            has_counter: true,
+        };
+
+        let sv2 = sdm_build_sv2_no_uid(counter);
+        let derived_key = aes_cmac(&k2, &sv2);
+        let full_mac = aes_cmac(&derived_key, &[]);
+        let c_bytes: [u8; 8] = [
+            full_mac[1], full_mac[3], full_mac[5], full_mac[7],
+            full_mac[9], full_mac[11], full_mac[13], full_mac[15],
+        ];
+        let c_hex = encode_hex(&c_bytes);
+
+        prop_assert!(picc_verify_c(&k2, &picc, &c_hex));
+
+        let bad_first = c_bytes[0] ^ 0x01;
+        let bad_bytes: [u8; 8] = [
+            bad_first, c_bytes[1], c_bytes[2], c_bytes[3],
+            c_bytes[4], c_bytes[5], c_bytes[6], c_bytes[7],
+        ];
+        prop_assert!(!picc_verify_c(&k2, &picc, &encode_hex(&bad_bytes)));
+
+        let uid_picc = PiccData {
+            valid: false,
+            uid: Some([0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+            counter,
+            has_counter: true,
+        };
+        prop_assert!(!picc_verify_c(&k2, &uid_picc, &c_hex));
     }
 }

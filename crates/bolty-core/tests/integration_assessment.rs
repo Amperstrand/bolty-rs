@@ -79,7 +79,7 @@ fn picc_parse_url_extracts_fixture_bytes() {
     assert_eq!(p_hex, PICC_P);
     assert_eq!(c_hex, PICC_C);
     assert!(picc.valid);
-    assert_eq!(picc.uid, UID_PROVISIONED);
+    assert_eq!(picc.uid, Some(UID_PROVISIONED));
     assert_eq!(picc.counter, 0);
 }
 

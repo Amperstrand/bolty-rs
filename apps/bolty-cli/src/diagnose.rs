@@ -185,7 +185,7 @@ where
                 );
                 match picc_crypto::picc_decrypt_p(keys.k1.as_bytes(), p_hex) {
                     Some(picc) => {
-                        let uid_match = picc.uid == uid_fixed;
+                        let uid_match = picc.uid == Some(uid_fixed);
                         let mac_ok = sdm_settings
                             .as_ref()
                             .and_then(|sdm| Verifier::try_new(sdm, CryptoMode::Aes).ok())

@@ -18,6 +18,9 @@ type Aes128CbcDec = cbc::Decryptor<Aes128>;
 type Aes128CbcEnc = cbc::Encryptor<Aes128>;
 
 pub const PICC_FORMAT_BOLTCARD: u8 = 0xC7;
+
+// BOLT_PRIV: | best          | no        | no           |
+pub const PICC_FORMAT_BOLTCARD_NO_UID: u8 = 0x40;
 pub const PICC_FLAG_HAS_UID: u8 = 0x80;
 pub const PICC_FLAG_HAS_COUNTER: u8 = 0x40;
 pub const PICC_UID_BYTE_LEN: usize = 7;
@@ -27,9 +30,8 @@ pub const SV2_HEADER: [u8; 6] = [0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PiccData {
     pub valid: bool,
-    pub uid: [u8; 7],
+    pub uid: Option<[u8; 7]>,
     pub counter: u32,
-    pub has_uid: bool,
     pub has_counter: bool,
 }
 
@@ -74,24 +76,36 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
     // BOLT_DET: 3. Check `PICCData[0] == 0xc7`.
 
     // BOLT_PRIV: | good          | no        | yes          |
-    if buf[0] != PICC_FORMAT_BOLTCARD {
-        return None;
-    }
+    let (uid, ctr) = match buf[0] {
+        PICC_FORMAT_BOLTCARD => {
+            if (buf[0] & PICC_FLAG_HAS_UID) == 0
+                || (buf[0] & PICC_FLAG_HAS_COUNTER) == 0
+                || usize::from(buf[0] & 0x07) != PICC_UID_BYTE_LEN
+            {
+                return None;
+            }
+            let mut uid = [0u8; PICC_UID_BYTE_LEN];
+            uid.copy_from_slice(&buf[1..1 + PICC_UID_BYTE_LEN]);
+            (Some(uid), [buf[8], buf[9], buf[10]])
+        }
 
-    if (buf[0] & PICC_FLAG_HAS_UID) == 0
-        || (buf[0] & PICC_FLAG_HAS_COUNTER) == 0
-        || usize::from(buf[0] & 0x07) != PICC_UID_BYTE_LEN
-    {
-        return None;
-    }
+        // Best-privacy blocks carry no UID section, so the counter follows the
+        // tag directly (PICCData = tag || ctr || RandomPadding; NT4H2421Gx
+        // Table 21 guards this layout with byte-exact fixtures below).
+        PICC_FORMAT_BOLTCARD_NO_UID => {
+            if (buf[0] & PICC_FLAG_HAS_COUNTER) == 0 {
+                return None;
+            }
+            (None, [buf[1], buf[2], buf[3]])
+        }
+        _ => return None,
+    };
 
     let mut picc = PiccData {
-        has_uid: true,
+        uid,
         has_counter: true,
         ..PiccData::default()
     };
-
-    picc.uid.copy_from_slice(&buf[1..1 + PICC_UID_BYTE_LEN]);
 
     // BOLT_DET: 10. Confirm that the last-seen counter for `ID` is lower than what is stored in `counter=PICCData[8..11]`. (Little Endian)
 
@@ -99,7 +113,7 @@ pub fn picc_decrypt_p(k1: &[u8; 16], p_hex: &str) -> Option<PiccData> {
 
     // Bolty surfaces the counter here; the monotonicity check itself is the
     // card service's job (boltcard stores last_counter_value per card).
-    picc.counter = u32::from(buf[8]) | (u32::from(buf[9]) << 8) | (u32::from(buf[10]) << 16);
+    picc.counter = u32::from(ctr[0]) | (u32::from(ctr[1]) << 8) | (u32::from(ctr[2]) << 16);
 
     Some(picc)
 }
@@ -116,6 +130,22 @@ pub fn sdm_build_sv2(uid: &[u8; 7], counter: u32) -> [u8; 16] {
     sv2
 }
 
+/// SV2 for best-privacy cards (PICCDataTag 0x40, UID mirroring disabled): the
+/// UID is omitted — a field enters the SV calculation only when its mirroring
+/// bit is set (AN12196 §4.3 Table 2), so this is header || ctr || zero padding.
+/// Pinned against the AN12196 worked-example vectors in the tests below.
+///
+/// SAFETY: all indices are compile-time-known constants within [u8; 16].
+#[allow(clippy::indexing_slicing)]
+pub fn sdm_build_sv2_no_uid(counter: u32) -> [u8; 16] {
+    let mut sv2 = [0u8; 16];
+    sv2[..SV2_HEADER.len()].copy_from_slice(&SV2_HEADER);
+    sv2[6] = counter as u8;
+    sv2[7] = (counter >> 8) as u8;
+    sv2[8] = (counter >> 16) as u8;
+    sv2
+}
+
 // BOLT_SPEC: for the `c` value and the `SDM File Read Access Key` value, check with AES-CMAC
 
 // BOLT_DET: 9. Verify that the SUN MAC in `c=` matches the one calculated using `Authentication Key (K2)`.
@@ -123,9 +153,10 @@ pub fn sdm_build_sv2(uid: &[u8; 7], counter: u32) -> [u8; 16] {
 // Audited 2026-08-25 against boltcard (Go) lnurlw/lnurlw_request.go
 // `check_cmac`: SV2 layout (3cc3 0001 0080 || uid || ctr_lsb3), double-CMAC
 // derivation (ks = CMAC(K2, SV2); mac = CMAC(ks, empty)), and odd-byte
-// truncation match byte-for-byte.
+// truncation match byte-for-byte. The UID-less SV2 variant for 0x40 cards
+// follows AN12196 §4.3 Table 2 and is pinned by the an12196_* tests below.
 pub fn picc_verify_c(k2: &[u8; 16], picc: &PiccData, c_hex: &str) -> bool {
-    if !picc.has_uid || !picc.has_counter || c_hex.len() != 16 {
+    if !picc.has_counter || c_hex.len() != 16 {
         return false;
     }
 
@@ -134,7 +165,10 @@ pub fn picc_verify_c(k2: &[u8; 16], picc: &PiccData, c_hex: &str) -> bool {
         return false;
     }
 
-    let sv2 = sdm_build_sv2(&picc.uid, picc.counter);
+    let sv2 = match picc.uid {
+        Some(uid) => sdm_build_sv2(&uid, picc.counter),
+        None => sdm_build_sv2_no_uid(picc.counter),
+    };
     let derived_key = aes_cmac(k2, &sv2);
     let full_mac = aes_cmac(&derived_key, &[]);
     let computed = truncate_odd_bytes(&full_mac);
@@ -194,6 +228,10 @@ mod tests {
         0x2A, 0xB7, 0x4A, 0xBC, 0x12, 0x73, 0xFB, 0x43, 0xCA, 0xE9, 0x75, 0x53, 0xA3, 0x6D, 0x4D,
         0x08,
     ];
+    const K_AN12196_TABLE2: [u8; 16] = [
+        0x5A, 0xCE, 0x7E, 0x50, 0xAB, 0x65, 0xD5, 0xD5, 0x1F, 0xD5, 0xBF, 0x5A, 0x16, 0xB8, 0x20,
+        0x5B,
+    ];
 
     #[test]
     fn picc_valid_vectors() {
@@ -203,19 +241,21 @@ mod tests {
             "https://example.com/bolt?p=E61CB056F52D34F9368F079D1814D2CF&c=FCC9A22201EA2298";
         let fixture_picc = picc_parse_url(&K1, &K2, fixture_url);
         assert!(fixture_picc.valid);
-        assert_eq!(fixture_picc.uid, [0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80]);
+        assert_eq!(
+            fixture_picc.uid,
+            Some([0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80])
+        );
         assert_eq!(fixture_picc.counter, 0);
-        assert!(fixture_picc.has_uid);
         assert!(fixture_picc.has_counter);
 
+        let manual_uid = [0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80];
         let manual_picc = PiccData {
             valid: false,
-            uid: [0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80],
+            uid: Some(manual_uid),
             counter: 42,
-            has_uid: true,
             has_counter: true,
         };
-        let sv2 = sdm_build_sv2(&manual_picc.uid, manual_picc.counter);
+        let sv2 = sdm_build_sv2(&manual_uid, manual_picc.counter);
         assert_eq!(
             sv2,
             [
@@ -232,23 +272,127 @@ mod tests {
         let url = build_url(&p_hex, &mac_hex);
         let parsed = picc_parse_url(&K1, &K2, &url);
         assert!(parsed.valid);
-        assert_eq!(parsed.uid, manual_picc.uid);
+        assert_eq!(parsed.uid, Some(manual_uid));
         assert_eq!(parsed.counter, manual_picc.counter);
         assert!(extract_p_and_c(&url).is_some());
         assert_eq!(picc_decrypt_p(&K1, p_hex.as_str()), Some(manual_picc));
     }
 
     #[test]
+    fn picc_no_uid_valid_vectors() {
+        // Best-privacy block layout: tag(0x40) || ctr(3) || padding(12) — the
+        // counter sits directly after the tag because there is no UID section.
+        let manual_picc = PiccData {
+            valid: false,
+            uid: None,
+            counter: 42,
+            has_counter: true,
+        };
+
+        let p_hex = encrypt_p_hex_no_uid(&K1, manual_picc.counter);
+        let sv2 = sdm_build_sv2_no_uid(manual_picc.counter);
+        let derived_key = aes_cmac(&K2, &sv2);
+        let mac_hex = hex_string(&truncate_odd_bytes(&aes_cmac(&derived_key, &[])));
+        assert!(picc_verify_c(&K2, &manual_picc, &mac_hex));
+
+        let url = build_url(&p_hex, &mac_hex);
+        let parsed = picc_parse_url(&K1, &K2, &url);
+        assert!(parsed.valid);
+        assert_eq!(parsed.uid, None);
+        assert_eq!(parsed.counter, 42);
+        assert_eq!(picc_decrypt_p(&K1, p_hex.as_str()), Some(manual_picc));
+
+        // Mode confusion: a UID-bearing MAC must not verify a UID-less card,
+        // and a UID-less MAC must not verify a UID-bearing card.
+        let uid_picc = PiccData {
+            valid: false,
+            uid: Some([0x04, 0x10, 0x65, 0xFA, 0x96, 0x73, 0x80]),
+            counter: 42,
+            has_counter: true,
+        };
+        let uid_sv2 = sdm_build_sv2(&uid_picc.uid.unwrap(), 42);
+        let uid_mac_hex = hex_string(&truncate_odd_bytes(&aes_cmac(
+            &aes_cmac(&K2, &uid_sv2),
+            &[],
+        )));
+        assert!(picc_verify_c(&K2, &uid_picc, &uid_mac_hex));
+        assert!(!picc_verify_c(&K2, &manual_picc, &uid_mac_hex));
+        assert!(!picc_verify_c(&K2, &uid_picc, &mac_hex));
+    }
+
+    #[test]
+    fn picc_decrypt_p_rejects_non_boltcard_tags() {
+        // 0x00: nothing mirrored; 0x47: RFU uid-length bits set with UID mirror
+        // off; 0x80/0xC0: counter mirror missing; 0xFF: low nibble != 7.
+        for tag in [0x00u8, 0x47, 0x80, 0xC0, 0xFF] {
+            let mut block = [0u8; 16];
+            block[0] = tag;
+            let p_hex = encrypt_block_hex(&K1, &mut block);
+            assert!(
+                picc_decrypt_p(&K1, p_hex.as_str()).is_none(),
+                "tag {tag:#04x} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn an12196_table2_sv2_session_key_oracle() {
+        // AN12196 §4.3 Table 2, rows 7+9: SV2 = 3CC30001 0080 04C767F2066180
+        // 010000 under KSDMFileRead yields KSesSDMFileReadMAC.
+        let uid = decode_hex_fixed::<7>("04C767F2066180");
+        let sv2 = sdm_build_sv2(&uid, 1);
+        assert_eq!(hex_string_16(&sv2), "3CC30001008004C767F2066180010000");
+        assert_eq!(
+            hex_string_16(&aes_cmac(&K_AN12196_TABLE2, &sv2)),
+            "3A3E8110E05311F7A3FCF0D969BF2B48"
+        );
+    }
+
+    #[test]
+    fn an12196_table5_sdm_mac_oracle() {
+        // AN12196 §4.4.4.2.1 Table 5: the full SUN MAC pipeline with
+        // KSDMFileRead = 0^16, UID 04DE5F1EACC040, SDMReadCtr 3D0000.
+        let uid = decode_hex_fixed::<7>("04DE5F1EACC040");
+        let picc = PiccData {
+            valid: false,
+            uid: Some(uid),
+            counter: 0x3D,
+            has_counter: true,
+        };
+        let sv2 = sdm_build_sv2(&uid, picc.counter);
+        assert_eq!(hex_string_16(&sv2), "3CC30001008004DE5F1EACC0403D0000");
+        let derived_key = aes_cmac(&[0u8; 16], &sv2);
+        assert_eq!(
+            hex_string_16(&derived_key),
+            "3FB5F6E3A807A03D5E3570ACE393776F"
+        );
+        assert_eq!(
+            hex_string(&truncate_odd_bytes(&aes_cmac(&derived_key, &[]))),
+            "94EED9EE65337086"
+        );
+        assert!(picc_verify_c(&[0u8; 16], &picc, "94EED9EE65337086"));
+
+        // The same MAC is invalid under the UID-less SV2 construction.
+        let no_uid = PiccData {
+            valid: false,
+            uid: None,
+            counter: 0x3D,
+            has_counter: true,
+        };
+        assert!(!picc_verify_c(&[0u8; 16], &no_uid, "94EED9EE65337086"));
+    }
+
+    #[test]
     fn picc_invalid_inputs() {
+        let valid_uid = [0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80];
         let valid_picc = PiccData {
             valid: false,
-            uid: [0x04, 0x25, 0x60, 0x7A, 0x8F, 0x69, 0x80],
+            uid: Some(valid_uid),
             counter: 1,
-            has_uid: true,
             has_counter: true,
         };
         let p_hex = encrypt_p_hex(&K1, &valid_picc);
-        let derived_key = aes_cmac(&K2, &sdm_build_sv2(&valid_picc.uid, valid_picc.counter));
+        let derived_key = aes_cmac(&K2, &sdm_build_sv2(&valid_uid, valid_picc.counter));
         let mac_hex = hex_string(&truncate_odd_bytes(&aes_cmac(&derived_key, &[])));
 
         assert!(!picc_parse_url(&K1, &K2, "https://example.com/bolt?c=0011223344556677").valid);
@@ -285,17 +429,36 @@ mod tests {
     fn encrypt_p_hex(key: &[u8; 16], picc: &PiccData) -> heapless::String<32> {
         let mut plaintext = [0u8; 16];
         plaintext[0] = PICC_FORMAT_BOLTCARD;
-        plaintext[1..8].copy_from_slice(&picc.uid);
+        if let Some(uid) = &picc.uid {
+            plaintext[1..8].copy_from_slice(uid);
+        }
         plaintext[8] = picc.counter as u8;
         plaintext[9] = (picc.counter >> 8) as u8;
         plaintext[10] = (picc.counter >> 16) as u8;
+        encrypt_block_hex(key, &mut plaintext)
+    }
 
-        let pt_len = plaintext.len();
+    fn encrypt_p_hex_no_uid(key: &[u8; 16], counter: u32) -> heapless::String<32> {
+        let mut plaintext = [0u8; 16];
+        plaintext[0] = PICC_FORMAT_BOLTCARD_NO_UID;
+        plaintext[1] = counter as u8;
+        plaintext[2] = (counter >> 8) as u8;
+        plaintext[3] = (counter >> 16) as u8;
+        encrypt_block_hex(key, &mut plaintext)
+    }
+
+    fn encrypt_block_hex(key: &[u8; 16], block: &mut [u8; 16]) -> heapless::String<32> {
+        let block_len = block.len();
         Aes128CbcEnc::new(key.into(), (&[0u8; 16]).into())
-            .encrypt_padded::<NoPadding>(&mut plaintext, pt_len)
+            .encrypt_padded::<NoPadding>(block, block_len)
             .unwrap();
+        hex_string_16(block)
+    }
 
-        hex_string_16(&plaintext)
+    fn decode_hex_fixed<const N: usize>(hex: &str) -> [u8; N] {
+        let mut buf = [0u8; N];
+        decode_hex_into(hex, &mut buf).expect("fixture hex must decode");
+        buf
     }
 
     fn build_url(p_hex: &str, c_hex: &str) -> heapless::String<128> {
@@ -413,6 +576,16 @@ mod tests {
     }
 
     #[test]
+    fn sdm_build_sv2_no_uid_structure() {
+        let sv2 = sdm_build_sv2_no_uid(0x010203);
+        assert_eq!(&sv2[0..6], &SV2_HEADER);
+        assert_eq!(sv2[6], 0x03);
+        assert_eq!(sv2[7], 0x02);
+        assert_eq!(sv2[8], 0x01);
+        assert_eq!(&sv2[9..], &[0u8; 7]);
+    }
+
+    #[test]
     fn picc_decrypt_p_wrong_length() {
         assert!(picc_decrypt_p(&K1, "too_short").is_none());
         assert!(picc_decrypt_p(&K1, "this_is_way_too_long_to_be_valid").is_none());
@@ -427,9 +600,8 @@ mod tests {
     fn picc_verify_c_wrong_length() {
         let picc = PiccData {
             valid: false,
-            uid: [0x04; 7],
+            uid: Some([0x04; 7]),
             counter: 1,
-            has_uid: true,
             has_counter: true,
         };
         assert!(!picc_verify_c(&K2, &picc, "too_short"));
@@ -440,9 +612,8 @@ mod tests {
     fn picc_data_default() {
         let picc = PiccData::default();
         assert!(!picc.valid);
-        assert_eq!(picc.uid, [0u8; 7]);
+        assert_eq!(picc.uid, None);
         assert_eq!(picc.counter, 0);
-        assert!(!picc.has_uid);
         assert!(!picc.has_counter);
     }
 }

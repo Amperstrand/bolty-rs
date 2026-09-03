@@ -65,26 +65,46 @@ where
 
     match picc_crypto::picc_decrypt_p(k1, p_hex) {
         Some(picc) => {
-            println!("\nPICC data (decrypted with K1):");
-            println!("  UID:            {}", crate::to_hex(picc.uid));
-            println!("  Read counter:   {}", picc.counter);
-
-            let uid_match = picc.uid == uid_fixed;
-            println!("  UID matches:    {}", if uid_match { "YES" } else { "NO" });
-
             let c_ok = picc_crypto::picc_verify_c(k2, &picc, c_hex);
-            println!("  CMAC valid:     {}", if c_ok { "YES" } else { "NO" });
-
-            println!();
-            if uid_match && c_ok {
-                println!("SDM verification PASSED.");
-            } else if c_ok {
-                println!("CMAC valid but UID mismatch (card may be cloned).");
-            } else {
+            let mac_failed = || {
                 println!(
                     "SDM CMAC verification FAILED.\n\
                      Possible causes: wrong issuer key, wrong key version, or corrupt data."
                 );
+            };
+            println!("\nPICC data (decrypted with K1):");
+            match picc.uid {
+                Some(uid) => {
+                    println!("  UID:            {}", crate::to_hex(uid));
+                    println!("  Read counter:   {}", picc.counter);
+
+                    let uid_match = uid == uid_fixed;
+                    println!("  UID matches:    {}", if uid_match { "YES" } else { "NO" });
+                    println!("  CMAC valid:     {}", if c_ok { "YES" } else { "NO" });
+
+                    println!();
+                    if uid_match && c_ok {
+                        println!("SDM verification PASSED.");
+                    } else if c_ok {
+                        println!("CMAC valid but UID mismatch (card may be cloned).");
+                    } else {
+                        mac_failed();
+                    }
+                }
+                None => {
+                    println!("  UID:            (not mirrored — best-privacy card)");
+                    println!("  Read counter:   {}", picc.counter);
+                    println!("  CMAC valid:     {}", if c_ok { "YES" } else { "NO" });
+
+                    println!();
+                    if c_ok {
+                        println!(
+                            "SDM verification PASSED (privacy card: c= binds the counter; p= carries no UID)."
+                        );
+                    } else {
+                        mac_failed();
+                    }
+                }
             }
         }
         None => {

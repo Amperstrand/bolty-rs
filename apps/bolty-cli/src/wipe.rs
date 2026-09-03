@@ -237,9 +237,12 @@ where
     let picc = picc_decrypt_p(keys.k1.as_bytes(), p_hex)
         .context("pre-verification: p= decryption failed — wrong issuer key or version")?;
     anyhow::ensure!(
-        picc.uid == *uid_fixed,
+        picc.uid.as_ref() == Some(uid_fixed),
         "pre-verification: p= UID {} does not match card UID {} — refusing",
-        crate::to_hex(picc.uid),
+        picc.uid
+            .as_ref()
+            .map(crate::to_hex)
+            .unwrap_or_else(|| "none (privacy mode)".to_string()),
         crate::to_hex(uid_fixed),
     );
     anyhow::ensure!(
@@ -261,7 +264,9 @@ mod tests {
         type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
         let mut plaintext = [0u8; 16];
         plaintext[0] = 0xC7;
-        plaintext[1..8].copy_from_slice(&picc.uid);
+        if let Some(uid) = &picc.uid {
+            plaintext[1..8].copy_from_slice(uid);
+        }
         plaintext[8] = picc.counter as u8;
         plaintext[9] = (picc.counter >> 8) as u8;
         plaintext[10] = (picc.counter >> 16) as u8;
@@ -322,9 +327,8 @@ mod tests {
 
         let picc = PiccData {
             valid: false,
-            uid: crate::mock_transport::UID,
+            uid: Some(crate::mock_transport::UID),
             counter: 42,
-            has_uid: true,
             has_counter: true,
         };
         let p_hex = encrypt_p_hex(keys.k1.as_bytes(), &picc);
@@ -371,9 +375,8 @@ mod tests {
         );
         let picc = PiccData {
             valid: false,
-            uid: crate::mock_transport::UID,
+            uid: Some(crate::mock_transport::UID),
             counter: 42,
-            has_uid: true,
             has_counter: true,
         };
         let p_hex = encrypt_p_hex(keys.k1.as_bytes(), &picc);
