@@ -38,7 +38,10 @@ jobs:
         run: |
           cd tools/hil
           python3 -m pip install pytest pytest-timeout cryptography
-          python3 -m pytest --collect-only -q   # collection gate: zero errors
+          # Labgrid is a local/manual path (`make test-hil-lg`) — GitHub CI
+          # must not collect or run anything labgrid-mediated.
+          python3 -m pytest --collect-only -q --ignore=tests/test_labgrid_env.py   # collection gate: zero errors
           python3 -m pytest -q \
+            --ignore=tests/test_labgrid_env.py \
             -m "not hardware and not card_mutation and not env_dependent" \
             --timeout=120 --timeout-method=thread
