@@ -332,6 +332,11 @@ def test_graph_otadata_default_replaces_reflash():
          "--baud", "115200", "--after", "no-reset", "erase_region",
          str(0x10000), str(0x2000)),
     ]
+    # no usb rescan: the ESP32 reboot does not re-enumerate the FT232
+    # bridge; port_wait alone covers a rare bridge port drop
+    for plan in (ccid, bolty):
+        assert not any("unbind" in " ".join(s.get("argv", [])) for s in plan)
+        assert not any("bind" in " ".join(s.get("argv", [])) for s in plan)
     # everything after the esptool block is the proven post-flash ladder
     assert any(s["kind"] == "rts_pulse" for s in bolty)
     assert any(s["kind"] == "ping_verify" for s in bolty)

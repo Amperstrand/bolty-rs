@@ -534,8 +534,16 @@ def dry_graph(role: str, *, port: str = STICK_PORT, staged_conf=STAGED_CONF,
         plan.append(_flash_step(role, port, images_dir))
     plan.append({"kind": "rts_pulse", "port": port,
                  "label": "rts_pulse_reset (DTR-first, switch_role.sh:31-37)"})
-    plan.extend(_rescan_steps())
-    plan.extend(_post_rescan_port_steps(port))
+    if via == "otadata":
+        # The ESP32 reboot does not re-enumerate the FT232 bridge (separate
+        # USB chip), so the usb unbind/bind rescan is skipped — it costs
+        # ~10s of sleeps AND resets the FTDI latency_timer to the driver
+        # default (ccid-firmware-rs #59). port_wait still covers the rare
+        # case where the bridge drops the port across the reset.
+        plan.extend(_post_rescan_port_steps(port))
+    else:
+        plan.extend(_rescan_steps())
+        plan.extend(_post_rescan_port_steps(port))
     plan.extend(_latency_tune_step(role, port))
     plan.extend(_pcscd_restart_steps())
     plan.append(_probe_step(role))
