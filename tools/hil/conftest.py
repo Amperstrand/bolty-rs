@@ -9,8 +9,16 @@ Markers:
     role_switch   — switches the stick role (restore-always via role_guard)
     env_dependent — drives real reader/card state — pass only on the coupled bench
 
-Rig exclusivity: a session-scoped flock on results/.rig-lock prevents
-parallel agents from interleaving role switches with card mutations.
+Rig exclusivity: three layers, taken in this order and never reversed
+(AB-BA): (1) tollgate-lab BenchLock — a kernel flock on
+/tmp/amperstrand-bench.lock, FIRST in every path, because it is the only
+layer that excludes same-user sessions of OTHER harnesses on the shared
+physical bench (cargo target/, lab-daemon ports, RF): labgrid places only
+exclude per-place (upstream AcquirePlace rejects a second acquisition of
+THE SAME place — microfips-bench vs bolty-rig never contend), and neither
+cover non-labgrid resources nor survive coordinator restarts (upstream
+load() drops acquired state). (2) the bolty-rig coordinator place, when
+labgrid is up. (3) the local results/.rig-lock flock fallback.
 
 Run ledger: every session appends to results/history.jsonl (OpenHTF pattern).
 """
@@ -26,6 +34,20 @@ import pytest
 
 from hil import BoltyCli, BoltyError, CardRegistry
 from hil.bolty import DEFAULT_CONSOLE_CTL
+
+# Guarded like the labgrid import (#82): GitHub host CI collects this
+# conftest with only pytest/pytest-timeout/cryptography installed, and
+# tollgate-lab depends on labgrid — a bare import would break the
+# collection gate. On the bench host it is installed; rig_lock fails
+# LOUDLY if a hardware run ever starts without it (silent degradation to
+# place/flock-only is exactly the #199 collision class this closes).
+try:
+    from tollgate_lab import BenchLockHeldError, acquire_bench_lock
+    _BENCH_LOCK_AVAILABLE = True
+except ImportError:  # host CI collection — never drives hardware
+    BenchLockHeldError = None
+    acquire_bench_lock = None
+    _BENCH_LOCK_AVAILABLE = False
 
 RESULTS_DIR = Path(__file__).parent / "results"
 LEDGER_PATH = RESULTS_DIR / "history.jsonl"
@@ -97,17 +119,35 @@ LG_ACQUIRED_KEY = pytest.StashKey[bool]()
 
 @pytest.fixture(scope="session")
 def rig_lock(request):
-    """Exclusive rig ownership for the whole session. With --lg-env the
-    place is already held (pytest_sessionstart) — defer to it. Otherwise:
-    acquire the coordinator place when labgrid is up (loud refusal when
-    another session holds it), local flock when it is down."""
+    """Exclusive rig ownership for the whole session. Three layers, in
+    order (see the module docstring): the cross-harness bench flock FIRST,
+    then the coordinator place when labgrid is up (loud refusal when
+    another session holds it), then the local flock when it is down. With
+    --lg-env the place is already held (pytest_sessionstart) — the flock
+    still wraps it."""
+    if not _BENCH_LOCK_AVAILABLE:
+        pytest.exit(
+            "tollgate-lab missing: cross-harness bench flock unavailable "
+            "(pip install -e ~/src/tollgate-lab) — refusing to run hardware "
+            "with degraded exclusivity (bolty-rs #85)",
+            returncode=3,
+        )
+    try:
+        bench_lock = acquire_bench_lock(
+            "amperstrand-bench", project="bolty-hil", cwd=str(REPO_ROOT),
+        )
+    except BenchLockHeldError as exc:
+        pytest.exit(f"bench flock held: {exc}", returncode=3)
+
     if request.session.stash.get(LG_ACQUIRED_KEY, False):
         yield "labgrid-place"
+        bench_lock.release()
         return
     if _lg_coordinator_up():
         _lg_acquire_or_exit()
         yield "labgrid-place"
         _lg_client("release")
+        bench_lock.release()
         return
 
     RESULTS_DIR.mkdir(exist_ok=True)
@@ -116,6 +156,7 @@ def rig_lock(request):
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         lock_fd.close()
+        bench_lock.release()
         pytest.exit(
             f"rig is locked by another session ({RIG_LOCK_PATH}) "
             "— wait or remove the lock file",
@@ -124,6 +165,7 @@ def rig_lock(request):
     yield lock_fd
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
     lock_fd.close()
+    bench_lock.release()
 
 
 # ── Run ledger (append-only history, OpenHTF/TofuPilot pattern) ───────
