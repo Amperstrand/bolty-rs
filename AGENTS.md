@@ -451,3 +451,14 @@ The role-switch + restore is handled by the harness (restore-always).
 
 See docs/lessons-learned.md — append-only engineering log: rig facts (M5Stick pins, MFRC522 at 0x28), ESP-IDF sdkconfig traps, NTAG424 card-safety refinements (911E vs 91AE), and the byte-exact crypto port method.
 
+
+## External posting (owner directive 2026-09-06 — CHANNEL rule)
+
+Agents never post on non-member repos — no `gh` writes (issues, PRs,
+comments, reviews, gists), not even with per-text owner sign-off; the
+owner does the copy-paste into GitHub themselves. Member orgs (verify:
+`gh api user/orgs`; 2026-09-06: Amperstrand, OpenTollGate, net4sats,
+FreedomTechFeed) keep the existing owner-gate flow. Read the target
+repo CONTRIBUTING/AI policy before drafting anything upstream.
+Canonical text: lightning-playground AGENTS.md (standing rule UPDATE
+2026-09-06).
