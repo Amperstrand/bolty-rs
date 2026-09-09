@@ -28,6 +28,15 @@ Rules learned the hard way (2026-08-25):
 
 ## Lab & Service Topology (documented 2026-08-27)
 
+**RIG STATE CHANGE (2026-09-09 audit):** the M5Stick now runs **nucula**
+firmware (Cashu wallet — holds sats/keys; `nucula>` serial prompt), NOT bolty.
+It was reflashed around 2026-09-03 by another project. DO NOT reflash, role-
+switch, or run difftest/test-hil-lg without an explicit owner decision — that
+destroys nucula state. Stick-based HIL (burn cycles, labgrid place, button
+tests) is therefore OFF until restored. ACR1252 is attached but had no card
+on it at audit; `bolty-console` daemon was revived (it had died 2026-09-03)
+and serves the nucula console fine.
+
 Two lab machines + Cloudflare edge. **Use mDNS names, not IPs** (DHCP drift:
 this box was .218 in early docs, .221 now).
 
