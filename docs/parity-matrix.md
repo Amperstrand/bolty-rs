@@ -24,7 +24,7 @@ lesson B8) or line-by-line source comparison, pinned as tests.
 | SDM URL templating (`[[{mac}`) | real worker + ACR1252 | hardware `mac=true` + live taps | ✅ hardware-audited |
 | Full burn→tap→wipe lifecycle | live edge worker | HIL cycles (6× in one day, ALL PASS) | ✅ hardware-audited |
 | Deterministic key derivation | spec fixtures + hardware | fixture tests + burn/tap round-trips | ✅ |
-| Service-side counter/limits logic | Go proxy | — | ❌ pending (proxy repo) |
+| Service-side counter/limits logic | Go proxy | source audit (lnurlw_request.go + lnurlw_callback.go + db.go @ b8f11ec) | ✅ audited 2026-09-09 — counter gate spec-conformant & race-free (atomic conditional UPDATE); 3 findings filed on #58 (k1 TOCTOU double-pay race, day-limit TOCTOU, LNDHUB path skips day-limit/balance) |
 
 The parity fixtures live in the ntag424 fork
 (`Amperstrand/ntag424@ai-experiments`, tests in `commands/change_key.rs`
