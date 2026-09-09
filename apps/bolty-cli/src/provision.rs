@@ -69,9 +69,23 @@ pub fn parse_provision_response(body: &str) -> anyhow::Result<ProvisionKeys> {
     if !(base.starts_with("lnurlw://") || base.starts_with("https://")) || base.contains('{') {
         bail!("suspicious lnurlw_base from proxy: {base:?}");
     }
-    let url = format!("{base}?p={{picc:uid+ctr}}&c={{mac}}");
 
     let uid_privacy = matches!(resp.uid_privacy.trim(), "true" | "TRUE" | "True");
+
+    // uid_privacy=true maps to the counter-only PICCData placeholder: the
+    // card stops mirroring its UID into the encrypted part (PICCDataTag 0x40
+    // instead of 0xC7 — NT4H2421Gx Table 21), so a point-of-sale reading the
+    // NDEF sees no card identifier. `p=` stays 32 hex chars in every mode;
+    // only the mirrored content changes. Random ID (the anti-tracking half
+    // of the spec's "best" level) is deliberately NOT enabled here: it is
+    // irreversible (AN12196 §6.2) and would permanently break UID-based card
+    // identification for recovery tooling (bolty-rs #59 track b/c).
+    let picc_placeholder = if uid_privacy {
+        "{picc:ctr}"
+    } else {
+        "{picc:uid+ctr}"
+    };
+    let url = format!("{base}?p={picc_placeholder}&c={{mac}}");
 
     Ok(ProvisionKeys {
         keys,
@@ -120,11 +134,13 @@ where
         // BOLT_PRIV: | good          | no        | yes          |
         // BOLT_PRIV: | best          | no        | no           |
 
-        // uid_privacy=true requests "best" privacy (no static id, no UID
-        // plaintext) — not yet applied by this burner (bolty-rs#59), hence
-        // the warning; burns land at "good".
+        // uid_privacy=true is now applied (bolty-rs #59 track b): the burn
+        // template uses {picc:ctr}, disabling UID mirroring in the SDM file
+        // settings. Random ID remains off (irreversible, AN12196 §6.2) — the
+        // NDEF-side halves of "best" are in place, the anticollision UID is
+        // still readable via authenticated NXP commands.
         println!(
-            "  ⚠ uid_privacy=true requested by proxy — this burner does not yet apply UID-privacy mode"
+            "  ✓ uid_privacy=true applied — burning with UID mirroring disabled (PICCDataTag 0x40)"
         );
     }
 
@@ -204,7 +220,11 @@ mod tests {
     #[test]
     fn parses_uid_privacy_true() {
         let good = SAMPLE.replace("\"uid_privacy\": \"false\"", "\"uid_privacy\": \"true\"");
-        assert!(parse_provision_response(&good).unwrap().uid_privacy);
+        let p = parse_provision_response(&good).unwrap();
+        assert!(p.uid_privacy);
+        // uid_privacy=true must switch the template to counter-only PICCData
+        // (UID mirroring disabled — bolty-rs #59 track b).
+        assert_eq!(p.url, "lnurlw://proxy.example.com/ln?p={picc:ctr}&c={mac}");
     }
 
     #[test]
@@ -222,5 +242,54 @@ mod tests {
             msg.contains("one time code was used"),
             "error should surface the proxy's message: {msg}"
         );
+    }
+
+    // #59 track b: a uid_privacy=true provision response must produce a burn
+    // whose SDM file settings carry counter-only encrypted PICCData (no UID
+    // mirroring) — asserted end-to-end against the mock card.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn privacy_provision_burns_ctr_only_sdm() {
+        let _guard = crate::audit::AUDIT_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!(
+            "bolty-audit-priv-provision-{}.log",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::set_audit_log_path(tmp_path.clone());
+
+        let body = SAMPLE.replace("\"uid_privacy\": \"false\"", "\"uid_privacy\": \"true\"");
+        let provisioned = parse_provision_response(&body).unwrap();
+        assert!(provisioned.uid_privacy);
+
+        let mut transport = crate::mock_transport::MockTransport::new();
+        burn_provisioned(&mut transport, &provisioned, false, None, false)
+            .await
+            .expect("privacy provision burn should succeed");
+
+        let view = bolty_ntag::FileSettingsView::decode(transport.file_settings())
+            .expect("file settings should decode after burn");
+        let sdm = view.sdm.expect("SDM must be enabled after burn");
+        match sdm.picc_data() {
+            bolty_ntag::PiccData::Encrypted { key, content, .. } => {
+                assert_eq!(key, bolty_ntag::KeyNumber::Key1, "SDMMetaRead key");
+                assert!(
+                    !content.includes_uid(),
+                    "privacy burn must NOT mirror the UID"
+                );
+                assert!(
+                    content.includes_rctr(),
+                    "privacy burn must still mirror the counter"
+                );
+            }
+            other => panic!("privacy burn must use encrypted PICCData, got {other:?}"),
+        }
+        assert!(sdm.file_read().is_some(), "file-read MAC must stay enabled");
+
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
     }
 }

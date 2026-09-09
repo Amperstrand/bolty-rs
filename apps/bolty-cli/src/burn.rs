@@ -11,6 +11,13 @@ use bolty_ntag::{
 use crate::audit;
 use crate::common::{AuthRetry, gen_rnd_a, is_auth_delay, map_ntag_error, record_auth_failure};
 
+/// True when the URL template requests best-privacy SDM: the encrypted part
+/// carries the counter only (`{picc:ctr}`), so the card does not mirror its
+/// UID into the NDEF (PICCDataTag 0x40 — bolty-rs #59 track b).
+fn privacy_template(url: &str) -> bool {
+    url.contains("{picc:ctr}") && !url.contains("{picc:uid")
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_burn<T: Transport>(
     transport: &mut T,
@@ -120,15 +127,16 @@ where
             ..SdmUrlOptions::new()
         };
         let standardized = standardize_url_template(url);
-        let ndef_size = sdm_url_config(&standardized, CryptoMode::Aes, sdm_opts)
-            .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?
-            .ndef_bytes
-            .len();
+        let plan = sdm_url_config(&standardized, CryptoMode::Aes, sdm_opts)
+            .map_err(|e| anyhow::anyhow!("SDM URL config error: {e}"))?;
 
         println!("\n=== DRY RUN — no card modifications ===");
         println!("URL:       {url}");
         println!("Version:   {version}");
-        println!("NDEF size: {ndef_size} bytes");
+        println!("NDEF size: {} bytes", plan.ndef_bytes.len());
+        if privacy_template(url) {
+            println!("Privacy:   UID mirroring disabled (counter-only PICCData, tag 0x40)");
+        }
         println!("\nPlanned steps:");
         println!("  [1] Authenticate (factory K0 or derived K0)");
         println!("  [2] Write NDEF template + verify readback");
@@ -155,6 +163,9 @@ where
         println!("[0/7] Checking card state...");
     } else {
         println!("[0/7] Safety checks bypassed (--force)");
+    }
+    if privacy_template(url) {
+        println!("  Privacy mode: UID mirroring disabled (counter-only PICCData, tag 0x40)");
     }
 
     // BOLT_DET: 1. Execute `ReadData` or `ISOReaDBinary` on the BoltCard to ensure the card is blank.
@@ -421,6 +432,111 @@ mod tests {
             "dry-run with correct UID should pass: {:?}",
             result.err()
         );
+    }
+
+    // #59 track b: a {picc:ctr} template must produce counter-only encrypted
+    // PICCData (UID mirroring off) with the file-read MAC still enabled.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn privacy_burn_writes_ctr_only_sdm() {
+        let _guard = crate::audit::AUDIT_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!("bolty-audit-priv-burn-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::set_audit_log_path(tmp_path.clone());
+
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:ctr}&c={mac}";
+
+        cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("privacy burn should succeed");
+
+        let view = bolty_ntag::FileSettingsView::decode(transport.file_settings())
+            .expect("file settings should decode after privacy burn");
+        let sdm = view.sdm.expect("SDM must be enabled after privacy burn");
+        match sdm.picc_data() {
+            bolty_ntag::PiccData::Encrypted { key, content, .. } => {
+                assert_eq!(key, bolty_ntag::KeyNumber::Key1, "SDMMetaRead key");
+                assert!(
+                    !content.includes_uid(),
+                    "privacy burn must NOT mirror the UID"
+                );
+                assert!(
+                    content.includes_rctr(),
+                    "privacy burn must still mirror the counter"
+                );
+            }
+            other => panic!("privacy burn must use encrypted PICCData, got {other:?}"),
+        }
+        assert!(
+            sdm.file_read().is_some(),
+            "file-read MAC must stay enabled in privacy mode"
+        );
+
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
+    }
+
+    // Negative control for the privacy burn: the standard {picc:uid+ctr}
+    // template must keep mirroring the UID (privacy must not leak into the
+    // default path).
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn standard_burn_still_mirrors_uid() {
+        let _guard = crate::audit::AUDIT_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut tmp_path = std::env::temp_dir();
+        tmp_path.push(format!("bolty-audit-std-burn-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::set_audit_log_path(tmp_path.clone());
+
+        let mut transport = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0u8; 16];
+        let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
+
+        cmd_burn(
+            &mut transport,
+            &issuer_key,
+            url,
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("standard burn should succeed");
+
+        let view = bolty_ntag::FileSettingsView::decode(transport.file_settings())
+            .expect("file settings should decode after burn");
+        let sdm = view.sdm.expect("SDM must be enabled after burn");
+        match sdm.picc_data() {
+            bolty_ntag::PiccData::Encrypted { content, .. } => {
+                assert!(
+                    content.includes_uid(),
+                    "standard burn must keep mirroring the UID"
+                );
+                assert!(content.includes_rctr());
+            }
+            other => panic!("standard burn must use encrypted PICCData, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::audit::reset_audit_log_path_for_test();
     }
 
     // Audit-path tests across modules share one mutable global; the centralized

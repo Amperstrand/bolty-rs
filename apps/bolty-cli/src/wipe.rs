@@ -236,15 +236,24 @@ where
 
     let picc = picc_decrypt_p(keys.k1.as_bytes(), p_hex)
         .context("pre-verification: p= decryption failed — wrong issuer key or version")?;
-    anyhow::ensure!(
-        picc.uid.as_ref() == Some(uid_fixed),
-        "pre-verification: p= UID {} does not match card UID {} — refusing",
-        picc.uid
-            .as_ref()
-            .map(crate::to_hex)
-            .unwrap_or_else(|| "none (privacy mode)".to_string()),
-        crate::to_hex(uid_fixed),
-    );
+    match picc.uid.as_ref() {
+        Some(p_uid) => {
+            anyhow::ensure!(
+                p_uid == uid_fixed,
+                "pre-verification: p= UID {} does not match card UID {} — refusing",
+                crate::to_hex(p_uid),
+                crate::to_hex(uid_fixed),
+            );
+        }
+        None => {
+            // Privacy cards (PICCDataTag 0x40, bolty-rs #59 track b) carry no
+            // UID in p=. The UID binding is cryptographic instead: these K1/K2
+            // were derived from the preflight UID, and a valid 0x40 decrypt
+            // plus the SUN MAC check below can only come from a card whose
+            // UID matches that derivation.
+            println!("  privacy card (no UID in p=) — binding via UID-diversified keys + SUN MAC");
+        }
+    }
     anyhow::ensure!(
         picc_verify_c(keys.k2.as_bytes(), &picc, c_hex),
         "pre-verification: SUN MAC mismatch — wrong issuer key or version, refusing to wipe",
@@ -279,6 +288,31 @@ mod tests {
 
     fn sun_mac_hex(k2: &[u8; 16], uid: &[u8; 7], counter: u32) -> String {
         let sv2 = sdm_build_sv2(uid, counter);
+        let ks = aes_cmac(k2, &sv2);
+        let full = aes_cmac(&ks, &[]);
+        let odd: Vec<u8> = (0..8).map(|i| full[i * 2 + 1]).collect();
+        crate::to_hex(odd).to_lowercase()
+    }
+
+    /// 0x40 privacy block: tag || counter(3) || zero padding, no UID section.
+    fn encrypt_p_hex_no_uid(key: &[u8; 16], counter: u32) -> String {
+        use bolty_core::picc::PICC_FORMAT_BOLTCARD_NO_UID;
+        use cbc::cipher::{BlockModeEncrypt, KeyIvInit, block_padding::NoPadding};
+        type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
+        let mut plaintext = [0u8; 16];
+        plaintext[0] = PICC_FORMAT_BOLTCARD_NO_UID;
+        plaintext[1] = counter as u8;
+        plaintext[2] = (counter >> 8) as u8;
+        plaintext[3] = (counter >> 16) as u8;
+        let pt_len = plaintext.len();
+        let ct = Aes128CbcEnc::new(key.into(), (&[0u8; 16]).into())
+            .encrypt_padded::<NoPadding>(&mut plaintext, pt_len)
+            .expect("in-length block");
+        crate::to_hex(ct).to_lowercase()
+    }
+
+    fn sun_mac_hex_no_uid(k2: &[u8; 16], counter: u32) -> String {
+        let sv2 = bolty_core::picc::sdm_build_sv2_no_uid(counter);
         let ks = aes_cmac(k2, &sv2);
         let full = aes_cmac(&ks, &[]);
         let odd: Vec<u8> = (0..8).map(|i| full[i * 2 + 1]).collect();
@@ -389,6 +423,79 @@ mod tests {
             result.is_ok(),
             "wipe with valid p/c must succeed: {:?}",
             result.err()
+        );
+    }
+
+    // #59 track b: privacy cards (0x40, no UID in p=) wipe when the SUN MAC
+    // verifies under the UID-diversified keys.
+    #[tokio::test]
+    async fn wipe_proceeds_when_sdm_pc_valid_privacy_card() {
+        let issuer_key = [0x42u8; 16];
+        let mut transport = crate::mock_transport::MockTransport::new();
+        crate::burn::cmd_burn(
+            &mut transport,
+            &issuer_key,
+            "https://card.bolt.local/lnurl?p={picc:ctr}&c={mac}",
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("privacy burn to provision card");
+
+        let keys = BoltcardDeterministicDeriver::derive_keys(
+            &issuer_key,
+            CardUid::new(crate::mock_transport::UID),
+            1,
+        );
+        let p_hex = encrypt_p_hex_no_uid(keys.k1.as_bytes(), 42);
+        let c_hex = sun_mac_hex_no_uid(keys.k2.as_bytes(), 42);
+        let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c={c_hex}");
+        transport.replace_ndef(ndef_file_with_url(&url_with_hex));
+
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        assert!(
+            result.is_ok(),
+            "wipe of a privacy card with valid p/c must succeed: {:?}",
+            result.err()
+        );
+    }
+
+    // #59 track b: a privacy card with a wrong SUN MAC must still be refused —
+    // the UID-less path must not weaken the MAC gate.
+    #[tokio::test]
+    async fn wipe_refuses_when_privacy_card_mac_mismatches() {
+        let issuer_key = [0x42u8; 16];
+        let mut transport = crate::mock_transport::MockTransport::new();
+        crate::burn::cmd_burn(
+            &mut transport,
+            &issuer_key,
+            "https://card.bolt.local/lnurl?p={picc:ctr}&c={mac}",
+            1,
+            false,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("privacy burn to provision card");
+
+        let keys = BoltcardDeterministicDeriver::derive_keys(
+            &issuer_key,
+            CardUid::new(crate::mock_transport::UID),
+            1,
+        );
+        let p_hex = encrypt_p_hex_no_uid(keys.k1.as_bytes(), 42);
+        let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c=deadbeefdeadbeef");
+        transport.replace_ndef(ndef_file_with_url(&url_with_hex));
+
+        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let err = result.expect_err("privacy-card wipe must refuse on SUN MAC mismatch");
+        assert!(
+            err.to_string().contains("SUN MAC"),
+            "error must name the SUN MAC failure, got: {err}"
         );
     }
 

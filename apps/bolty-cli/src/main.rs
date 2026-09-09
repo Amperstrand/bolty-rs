@@ -359,7 +359,9 @@ async fn run() -> anyhow::Result<()> {
                 println!("K3:   {}", to_hex(provisioned.keys.k3.as_bytes()));
                 println!("K4:   {}", to_hex(provisioned.keys.k4.as_bytes()));
                 if provisioned.uid_privacy {
-                    println!("  ⚠ uid_privacy=true requested — not yet applied by this burner");
+                    println!(
+                        "  ✓ uid_privacy=true — burn template uses {{picc:ctr}} (UID mirroring disabled)"
+                    );
                 }
                 println!("\nNo APDUs sent. No card needed.");
                 let _ = verbose;
