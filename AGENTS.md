@@ -60,6 +60,10 @@ Diagnosis runbook for proxy outages:
 
 ### HIL rig quick facts (2026-09-02; full detail: docs/lessons-learned.md B24-B26)
 
+- Cross-project bench sharing via the shared labgrid coordinator (places:
+  bolty-rig, microfips-bench, gm65-qr-loopback, nucula-rig) — topology,
+  locking order, and the gm65-scanner lessons learned are documented in
+  docs/labgrid-bench-sharing.md.
 - Entry points: `make test-hil` (fast, ACR only) · `make difftest` /
   `make difftest-quick` (66/66 in ~3:40 / 46/46 in ~2s) · `make test-hil-lg`
   (full labgrid plugin path) · `make report` (Allure) · `make status`
