@@ -93,8 +93,9 @@ make test-all   # everything
 
 Framework: `tools/hil/hil/` (cards.toml registry, preflight checks, role_guard
 context manager). Tests: `tools/hil/tests/`. The card registry is the safety
-contract — only listed UIDs with matching ops are touched. `test_burn_cycle.py`
-at this level is superseded by `tests/test_burn_lock_wipe.py`.
+contract — only listed UIDs with matching ops are touched. The old
+script-level test_burn_cycle.py was removed (2026-09-11 dead-code audit);
+`tests/test_burn_lock_wipe.py` is the successor.
 
 ## Troubleshooting
 
