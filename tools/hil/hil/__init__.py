@@ -11,10 +11,12 @@ from .cards import CardRegistry, CardError
 from .preflight import Preflight, Check
 from .bolty import BoltyCli, BoltyError
 from .roles import role_guard
+from .labgrid_state import note_rig_state
 
 __all__ = [
     "CardRegistry", "CardError",
     "Preflight", "Check",
     "BoltyCli", "BoltyError",
     "role_guard",
+    "note_rig_state",
 ]

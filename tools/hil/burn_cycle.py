@@ -24,6 +24,8 @@ import re
 import subprocess
 import sys
 
+from hil.labgrid_state import note_rig_state
+
 UID_EXPECT = os.environ.get("HIL_UID", "04c474fa967380")
 PUBLIC_ISSUER = "0" * 31 + "1"  # well-known public dev issuer key (zeros+1), v1 — NOT a secret
 URL = os.environ.get("HIL_URL", "https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac}")
@@ -62,6 +64,8 @@ def main() -> int:
     ap.add_argument("--skip-burn", action="store_true")
     ap.add_argument("--skip-wipe", action="store_true")
     args = ap.parse_args()
+
+    note_rig_state(test="burn_cycle")
 
     print("=== PING (daemon health) ===")
     print(ctl("PING"))

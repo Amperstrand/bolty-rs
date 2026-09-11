@@ -34,6 +34,7 @@ import pytest
 
 from hil import BoltyCli, BoltyError, CardRegistry
 from hil.bolty import DEFAULT_CONSOLE_CTL
+from hil.labgrid_state import note_rig_state
 
 # Guarded like the labgrid import (#82): GitHub host CI collects this
 # conftest with only pytest/pytest-timeout/cryptography installed, and
@@ -138,6 +139,13 @@ def rig_lock(request):
         )
     except BenchLockHeldError as exc:
         pytest.exit(f"bench flock held: {exc}", returncode=3)
+
+    # Pattern 15 (docs/labgrid-bench-sharing.md P1): mirror rig state onto
+    # the place tags once the session owns the bench — best-effort. Suite
+    # label from -m (test-hil vs difftest differ only in the marker expr).
+    markexpr = request.config.getoption("-m", "") or "hil"
+    note_rig_state(test=f"pytest:{'-'.join(markexpr.split())}",
+                   firmware=_fw_sha256())
 
     if request.session.stash.get(LG_ACQUIRED_KEY, False):
         yield "labgrid-place"

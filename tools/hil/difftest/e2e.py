@@ -23,6 +23,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
 
+sys.path.insert(0, str(HERE.parent))  # hil package (tools/hil/hil)
+
+from hil.labgrid_state import note_rig_state  # noqa: E402
+
 
 def run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[int, str]:
     """Run a command, return (rc, output)."""
@@ -277,6 +281,8 @@ def main(argv=None):
                         help="APDU phase: gem capture + diff only (skip ACR re-capture, "
                              "skip fuzz, 0.02s repeat sleeps)")
     args = parser.parse_args(argv)
+
+    note_rig_state(test=f"difftest:{args.phase}")
 
     golden = Path(args.golden) if args.golden else None
     all_results = []

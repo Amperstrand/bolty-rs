@@ -158,6 +158,8 @@ package, called by `test-hil`/`difftest`/`burn_cycle`. Anyone on the bench
 (including a nucula or microfips session) can then ask labgrid what the
 stick runs, instead of probing serial prompts. This would have made the
 2026-09-03 nucula takeover visible as `owner=nucula` on the spot.
+**Implemented 2026-09-11: `hil/labgrid_state.py` (`note_rig_state`), called
+from conftest `rig_lock`, `burn_cycle.py`, `difftest/e2e.py`.**
 
 ### P2 — Per-board state places for bolty hardware — cheap, do now
 Create documentation-only places `bolty-m5stick` and `bolty-acr1252`
@@ -167,6 +169,9 @@ records. Optionally *enroll* the ACR reader and stick formally via the
 five-step bench-enrollment bundle — the stick is already de-facto a
 multi-project board (bolty ↔ nucula ↔ ccid role switching), which is
 exactly what the bundle exists for.
+**Implemented 2026-09-11: `make hil-state-places`
+(`tools/hil/labgrid-state-places.sh`) — both places live on the
+coordinator.**
 
 ### P3 — A shared-stick protocol with nucula (the gm65/micronuts pattern)
 gm65's F469 is another project's board; every flash session backs up 2 MiB

@@ -19,7 +19,7 @@
 # ensure_blank() for rerun-safety.
 # History: every run appends to results/history.jsonl.
 
-.PHONY: test test-hil test-hil-lg difftest difftest-quick test-all status report labgrid-place
+.PHONY: test test-hil test-hil-lg difftest difftest-quick test-all status report labgrid-place hil-state-places
 
 HIL_TESTS := tools/hil/tests
 ALLURE_RESULTS := tools/hil/results/allure
@@ -54,6 +54,10 @@ test-hil-lg:
 # Idempotent bolty-rig place (re)creation — run after coordinator restarts.
 labgrid-place:
 	bash tools/hil/labgrid-place.sh
+
+# Per-board documentation state places (P2) — tags mirror live rig state.
+hil-state-places:
+	bash tools/hil/labgrid-state-places.sh
 
 # Takes 3-4 min (role switch + full APDU matrix + restore).
 difftest:
