@@ -147,6 +147,18 @@ def rig_lock(request):
     note_rig_state(test=f"pytest:{'-'.join(markexpr.split())}",
                    firmware=_fw_sha256())
 
+    # Shared disk hygiene (2026-09-11 ENOSPC incident): no-op with
+    # headroom, conservative prunes without — tollgate_lab owns it. Only
+    # reachable on bench sessions (the flock is bench-only).
+    try:
+        from tollgate_lab import ensure_run_headroom
+
+        hygiene = ensure_run_headroom()
+        if hygiene.acted:
+            print(f"disk hygiene: {hygiene.actions}")
+    except Exception:
+        pass  # hygiene must never gate a hardware run
+
     if request.session.stash.get(LG_ACQUIRED_KEY, False):
         yield "labgrid-place"
         bench_lock.release()

@@ -271,6 +271,12 @@ def phase_switch(target: str) -> dict:
 
 
 def main(argv=None):
+    from tollgate_lab import ensure_run_headroom
+
+    hygiene = ensure_run_headroom()
+    if hygiene.acted:
+        print(f"disk hygiene: {hygiene.actions}")
+
     parser = argparse.ArgumentParser(description="E2E test orchestrator")
     parser.add_argument("--phase", required=True,
                         choices=["apdu", "bolty-acr", "bolty-diff", "unit-tests",

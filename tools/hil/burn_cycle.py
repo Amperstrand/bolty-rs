@@ -54,6 +54,12 @@ def ctl(cmd: str) -> str:
 
 
 def main() -> int:
+    from tollgate_lab import ensure_run_headroom
+
+    hygiene = ensure_run_headroom()
+    if hygiene.acted:
+        print(f"disk hygiene: {hygiene.actions}")
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--issuer", default=PUBLIC_ISSUER, help="issuer key hex (default: public deterministic v1)")
     ap.add_argument("--keys", help="raw per-card keys 'k0 k1 k2 k3 k4' (overrides --issuer)")
