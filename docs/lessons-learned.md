@@ -561,3 +561,31 @@ own host twin verbatim (it exists precisely so linux-target builds
 match), and pin the bytes with a golden test before touching hardware.
 The boot log over UART (pyserial + RTS pulse) is the fastest
 bootloader-verdict oracle — one reset, six seconds, no flashing.
+
+## B28 — modular and DRY: shared logic lives in ONE crate, projects inherit (owner directive 2026-09-11)
+
+The 2026-09-11 micronuts QR-rig session proved the cost of violating
+this: micronuts firmware hand-rolled the GM65 continuous-mode dance,
+the silent-buzzer policy, and the ACK-leak strip because the knowledge
+lived in gm65-scanner's examples and issues instead of its API — and
+the first hand-rolled SETTINGS write beeped the lab (buzzer is bit 6;
+the composer guessed the bits).
+
+Rule (owner directive, applies to every Amperstrand MCU project):
+- Domain logic has exactly one home. QR-scanner logic belongs to the
+  gm65-scanner crate (`ScanPolicy::start_scanning`, sanitize-in-read,
+  module-heal commands) — consumers pin the crate and write ZERO
+  module lore. bolty-rs consumes ntag424-fork primitives the same way.
+- Board-level glue belongs in the BSP crates, not per-project firmware:
+  screen/display settings for the STM32F469 (embassy-stm32f469i-disco)
+  and the ESP32 boards (CYD, Lilygo S3) live in their BSPs so every
+  project driving that board inherits fixes.
+- Heal/recovery commands are crate-or-BSP surface, never per-project
+  copies (the gm65 deep_sleep_reboot Tier-A heal is the model).
+- Fix it once upstream; every project inherits the benefit. When a
+  consumer discovers itself re-implementing module/board lore, that is
+  a bug in the crate — file it, promote the API, delete the local copy
+  (the micronuts adoption commit is the template: net −20 lines).
+- Audit for old/deprecated/legacy/dead code when touching a crate;
+  deprecate the old path in the same commit that ships the new one
+  (gm65's enter_continuous_mode deprecation).
