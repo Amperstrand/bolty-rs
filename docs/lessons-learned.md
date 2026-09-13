@@ -589,3 +589,65 @@ Rule (owner directive, applies to every Amperstrand MCU project):
 - Audit for old/deprecated/legacy/dead code when touching a crate;
   deprecate the old path in the same commit that ships the new one
   (gm65's enter_continuous_mode deprecation).
+
+## B29 — GM65 deep wedge: software heals are a LADDER, not a panacea; shared-bench sessions must check-in AND check-out (2026-09-13)
+
+Evidence: micronuts physical-loop session 2026-09-13; gm65-scanner soak
+2026-09-11 (#92, QR-RIG-SESSION-PLAN); gm65-scanner AGENTS.md wedge
+taxonomy; micronuts firmware factory_heal (0x14) failing live.
+
+**The wedge taxonomy** (three classes, distinct recovery requirements):
+
+| Class | Symptom | Software recovery | Physical recovery |
+|---|---|---|---|
+| Decode fatigue (#92) | UART ACKs, zero decodes, watchdog climbs | Idle time; deep-sleep (0x13) sometimes | board power-cycle (always) |
+| Settings corruption | init VERIFY fails; register writes ACK but read back wrong | factory_reset ladder (0x14) usually | board power-cycle (always) |
+| Deep wedge (ROM state) | init fails at EVERY step; even factory_reset doesn't restore init | **NONE PROVEN** — 0x13 and 0x14 both fail | board power-cycle (only known fix) |
+
+The 2026-09-13 micronuts session hit class 3: `ScannerTrigger`
+(raw UART set_aim) returned OK, proving power + UART alive, but `init()`
+failed across 3 ST resets (each running the firmware boot-heal =
+deep-sleep + retry), 60 s of idle polls, AND the full 0x14
+factory-heal ladder. The module's internal state machine was wedged
+below the register layer. **A GM65 that ACKs UART but fails init after
+factory_reset needs its power rail cycled — stop burning session time
+on software heals.**
+
+**Why we kept hitting this**: each "fix" addressed the PREVIOUS session's
+wedge class. The 2026-09-11 session added the boot-heal (deep-sleep) for
+class 1, then the factory-heal for class 2, then documented "expect idle
+recovery by morning" for what was actually class 3. The ladder was
+complete for classes 1-2 but the session notes read as if ALL wedges
+recover with time. They do not.
+
+**Rules:**
+
+1. **Bench check-in/check-out protocol**: every session that acquires
+   shared-bench hardware runs a health probe FIRST (CYD `ID`, GM65
+   `ScannerStatus`, F469 `swap gate --selftest`) and records it. At
+   session end, re-run the probe and leave the bench in a known state.
+   A session that finds the bench degraded names the degradation in its
+   session notes — silent handoffs are how wedges compound across days.
+2. **Recovery matrix, not "try everything"**: when a module misbehaves,
+   classify the wedge (ACKs? decodes? init?) and apply the matching
+   fix. If the factory ladder (0x14) fails, escalate to physical
+   power-cycle immediately — do not re-run software heals hoping for a
+   different result.
+3. **Heal ladders must document their CEILING**: every software-recovery
+   path needs a "this is the deepest state I can fix" line. The
+   factory-heal now has one: it cannot fix a module whose init fails
+   after factory-reset (class 3). Writing "expect idle recovery" without
+   distinguishing class 3 from class 1 is how the next session burns
+   an hour.
+4. **Shared-bench hardware is a commons**: the CYD was found running
+   foreign firmware (wifi console debris); the GM65 was found wedged.
+   Neither was the current session's fault; both cost current-session
+   time. The check-in probe catches both in under 60 seconds. Treat it
+   like `git status` at the start of a session — non-optional.
+
+**Applied across projects:**
+- gm65-scanner: AGENTS.md wedge table + README recovery matrix
+- micronuts: AGENTS.md bench protocol reference + tools/hil/bringup.py
+  becomes the check-in gate
+- tollgate-lab (owner of the bench tooling): the check-in/check-out
+  helpers live here so every project inherits them without copying
