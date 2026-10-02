@@ -1,0 +1,16 @@
+[package]
+name = "bolty-pn7160"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "PN7160 NFC transport for bolty-rs: ntag424::Transport over the pn7160-nci reader session"
+
+[dependencies]
+ntag424 = { workspace = true }
+pn7160-nci = { path = "../../../ccid-c3-wt/crates/pn7160-nci" }
+
+[dev-dependencies]
+futures-lite = "2"
+
+[lints]
+workspace = true
