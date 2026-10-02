@@ -16,6 +16,8 @@ led-matrix = []
 display-st7789 = ["dep:mipidsi", "dep:embedded-graphics"]
 board-m5atom = ["nfc-mfrc522", "led-matrix"]
 board-m5stick = ["nfc-mfrc522", "display-st7789"]
+nfc-pn7160 = ["dep:bolty-pn7160"]
+board-nucula = ["nfc-pn7160"]
 wifi = []
 rest = ["wifi"]
 ota = ["wifi", "dep:ed25519-dalek"]
@@ -28,6 +30,8 @@ bolty-core = { path = "../../crates/bolty-core" }
 bolty-ntag = { path = "../../crates/bolty-ntag" }
 mfrc522-pcd = { path = "../../crates/mfrc522-pcd" }
 bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
+bolty-pn7160 = { path = "../../crates/bolty-pn7160", optional = true }
+mfrc522 = { workspace = true }
 embedded-hal = "=1.0.0"
 embedded-svc = "=0.29.0"
 heapless = { version = "=0.9.2", default-features = false }

@@ -65,8 +65,11 @@ compile_error!("Enable exactly one board feature: `board-m5atom` or `board-m5sti
 ))]
 compile_error!("Enable one board feature: `board-m5atom` or `board-m5stick`.");
 
-#[cfg(all(target_arch = "xtensa", not(feature = "nfc-mfrc522")))]
-compile_error!("The current firmware requires the `nfc-mfrc522` feature.");
+#[cfg(all(
+    target_arch = "xtensa",
+    not(any(feature = "nfc-mfrc522", feature = "nfc-pn7160"))
+))]
+compile_error!("The current firmware requires the nfc-mfrc522 or nfc-pn7160 feature.");
 
 #[cfg(all(
     target_arch = "xtensa",
