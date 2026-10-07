@@ -1,3 +1,7 @@
+// Tests assert on known fixtures: panicking on malformed data IS the
+// failure mode this suite wants (workspace warn-level lints stay
+// enforced for all production code).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic, clippy::chunks_exact_to_as_chunks)]
 use aes::{
     Aes128,
     cipher::{Array, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit},

@@ -330,6 +330,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -380,7 +381,7 @@ mod tests {
         let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
         let wrong_uid = [0xFFu8; 7];
 
-        let keys_before = transport.keys().clone();
+        let keys_before = *transport.keys();
 
         let result = cmd_burn(
             &mut transport,
@@ -437,11 +438,8 @@ mod tests {
     // #59 track b: a {picc:ctr} template must produce counter-only encrypted
     // PICCData (UID mirroring off) with the file-read MAC still enabled.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn privacy_burn_writes_ctr_only_sdm() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!("bolty-audit-priv-burn-{}.log", std::process::id()));
         let _ = std::fs::remove_file(&tmp_path);
@@ -494,11 +492,8 @@ mod tests {
     // template must keep mirroring the UID (privacy must not leak into the
     // default path).
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn standard_burn_still_mirrors_uid() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!("bolty-audit-std-burn-{}.log", std::process::id()));
         let _ = std::fs::remove_file(&tmp_path);
@@ -542,11 +537,8 @@ mod tests {
     // Audit-path tests across modules share one mutable global; the centralized
     // AUDIT_TEST_MUTEX serializes set→write→read so each test sees its own log.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn burn_logs_factory_provenance() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
 
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!("bolty-audit-burn-{}.log", std::process::id()));
@@ -584,11 +576,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn burn_logs_derived_provenance() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
 
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!("bolty-audit-burn-{}.log", std::process::id()));
@@ -651,6 +640,7 @@ mod tests {
 /// opts out. The guard sits in `cmd_burn` (private to this binary crate) so it
 /// is verified here rather than in the integration test binary.
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
 mod security_tests {
     use super::cmd_burn;
 
@@ -659,13 +649,11 @@ mod security_tests {
     /// burn path writes to a process-global audit path, so without
     /// serialization a concurrent audit-content test would see stray lines.
     ///
-    /// The `#[allow(clippy::await_holding_lock)]` on each async test covers
-    /// holding the returned guard across `.await`.
+    /// The mutex is tokio's (await-safe): holding the guard across
+    /// `.await` in the async tests is sound.
     macro_rules! setup_audit_isolation {
         () => {{
-            let _guard = crate::audit::AUDIT_TEST_MUTEX
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
             let mut path = std::env::temp_dir();
             path.push(format!(
                 "bolty-security-burn-{}-{}.log",
@@ -685,7 +673,6 @@ mod security_tests {
     // before any card write occurs. Burning such a URL yields a card whose taps
     // carry no encrypted UID/counter — the server can never identify the card.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn url_without_picc_placeholder_is_rejected() {
         let (_guard, _path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
@@ -720,7 +707,6 @@ mod security_tests {
     // Without {mac} the card never embeds a CMAC, so tap authenticity cannot be
     // verified — a silent integrity failure.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn url_without_mac_placeholder_is_rejected() {
         let (_guard, _path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
@@ -751,7 +737,6 @@ mod security_tests {
     // guard short-circuits on the first missing placeholder; this confirms the
     // `||` semantics, not an `&&` regression that would pass if one existed).
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn url_with_no_placeholders_is_rejected() {
         let (_guard, _path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
@@ -779,7 +764,6 @@ mod security_tests {
     // the documented escape hatch for advanced users who manage SDM externally.
     // If force stopped bypassing, legitimate power-user workflows would break.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn force_bypasses_url_guard() {
         let (_guard, path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
@@ -813,7 +797,6 @@ mod security_tests {
     // above and guards against an over-strict regression that rejects valid
     // templates.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn well_formed_url_passes_guard() {
         let (_guard, path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
@@ -842,7 +825,6 @@ mod security_tests {
     // negative assertions above already check this; this test restates the
     // invariant at the boundary by re-using the mock's untouched factory keys).
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn url_guard_runs_before_card_modification() {
         let (_guard, _path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
