@@ -1,5 +1,14 @@
 //! Integration tests for bolty-cli using MockTransport.
 
+// Tests assert on known fixtures: panicking on malformed data IS the
+// failure mode this suite wants (workspace warn-level lints stay
+// enforced for all production code).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 #[path = "../src/mock_transport.rs"]
 mod mock_transport;
 
@@ -194,9 +203,10 @@ async fn wipe_on_provisioned_card_resets_keys() {
     let settings = FileSettingsView::decode(transport.file_settings()).expect("decode");
     // Sdm::disabled() sets the SDM bit but configures no active mirroring/MAC.
     // Check that SDM is effectively inert.
-    let sdm_inert = settings.sdm.as_ref().map_or(true, |sdm| {
-        matches!(sdm.picc_data(), PiccData::None) && sdm.file_read().is_none()
-    });
+    let sdm_inert = settings
+        .sdm
+        .as_ref()
+        .is_none_or(|sdm| matches!(sdm.picc_data(), PiccData::None) && sdm.file_read().is_none());
     assert!(sdm_inert, "SDM disabled after wipe");
 }
 
@@ -204,7 +214,7 @@ async fn wipe_on_provisioned_card_resets_keys() {
 async fn burn_on_provisioned_card_replaces_keys() {
     let mut transport = MockTransport::new();
     do_burn(&mut transport).await;
-    let first_keys = transport.keys().clone();
+    let first_keys = *transport.keys();
 
     let keys = derive_keys();
     let plan = sdm_url_config(TEST_URL, CryptoMode::Aes, boltcard_sdm_opts()).unwrap();

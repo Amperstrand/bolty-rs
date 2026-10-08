@@ -263,6 +263,12 @@ where
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::*;
     use bolty_core::crypto::aes_cmac;
@@ -545,9 +551,7 @@ mod tests {
 
     #[tokio::test]
     async fn wipe_logs_derived_provenance() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
 
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!("bolty-audit-wipe-{}.log", std::process::id()));

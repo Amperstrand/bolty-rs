@@ -49,7 +49,38 @@ pub fn decode_hex<const N: usize>(hex: &str) -> Result<[u8; N], HexError> {
     Ok(out)
 }
 
+const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
+
+#[allow(clippy::indexing_slicing)]
+pub fn encode_hex_into(input: &[u8], out: &mut [u8]) -> usize {
+    let max = input.len().min(out.len() / 2);
+    for (i, &b) in input[..max].iter().enumerate() {
+        #[allow(clippy::indexing_slicing)]
+        let pos = i * 2;
+        out[pos] = HEX_LOWER[(b >> 4) as usize];
+        out[pos + 1] = HEX_LOWER[(b & 0xf) as usize];
+    }
+    max * 2
+}
+
+#[cfg(feature = "std")]
+#[allow(clippy::indexing_slicing)]
+pub fn encode_hex(input: &[u8]) -> String {
+    let mut s = String::with_capacity(input.len() * 2);
+    for &b in input {
+        s.push(HEX_LOWER[(b >> 4) as usize] as char);
+        s.push(HEX_LOWER[(b & 0xf) as usize] as char);
+    }
+    s
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::{HexError, decode_hex, decode_hex_into, decode_hex_nibble, encode_hex_into};
 
@@ -260,29 +291,4 @@ mod tests {
         assert_eq!(&buf[..4], b"0001");
         assert_eq!(&buf[510..], b"ff");
     }
-}
-
-const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
-
-#[allow(clippy::indexing_slicing)]
-pub fn encode_hex_into(input: &[u8], out: &mut [u8]) -> usize {
-    let max = input.len().min(out.len() / 2);
-    for (i, &b) in input[..max].iter().enumerate() {
-        #[allow(clippy::indexing_slicing)]
-        let pos = i * 2;
-        out[pos] = HEX_LOWER[(b >> 4) as usize];
-        out[pos + 1] = HEX_LOWER[(b & 0xf) as usize];
-    }
-    max * 2
-}
-
-#[cfg(feature = "std")]
-#[allow(clippy::indexing_slicing)]
-pub fn encode_hex(input: &[u8]) -> String {
-    let mut s = String::with_capacity(input.len() * 2);
-    for &b in input {
-        s.push(HEX_LOWER[(b >> 4) as usize] as char);
-        s.push(HEX_LOWER[(b & 0xf) as usize] as char);
-    }
-    s
 }

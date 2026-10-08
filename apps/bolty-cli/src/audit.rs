@@ -37,7 +37,8 @@ fn audit_log_path() -> PathBuf {
 
 /// Test-only mutex serializing tests that share the mutable audit log path.
 #[cfg(test)]
-pub static AUDIT_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub static AUDIT_TEST_MUTEX: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// Reset the audit log path to None. Call this in test cleanup to prevent
 /// test-to-test path leakage when tests run in parallel.
@@ -168,7 +169,7 @@ mod tests {
 
     #[test]
     fn provenance_tag_emitted() {
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
 
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!(
@@ -252,7 +253,7 @@ mod security_tests {
         // SECURITY invariant: every audit line must lead with `[<millis>]` so a
         // SIEM parser can extract the timestamp with a fixed anchor. A line
         // without the leading bracket would break timestamp extraction.
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
         let path = fresh_path("timestamp");
         set_audit_log_path(path.clone());
 
@@ -287,7 +288,7 @@ mod security_tests {
         // message containing `]` or `[provenance=` could break parser
         // field-splitting or spoof a tag. Appending makes the tag unforgeable
         // from the message body.
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
         let path = fresh_path("appended");
         set_audit_log_path(path.clone());
 
@@ -311,7 +312,7 @@ mod security_tests {
         // SECURITY invariant: `None` provenance must NOT emit a `[provenance=]`
         // token at all. A spurious empty tag would confuse parsers that key on
         // tag presence to decide whether a line is a key-operation event.
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
         let path = fresh_path("none");
         set_audit_log_path(path.clone());
 
@@ -332,7 +333,7 @@ mod security_tests {
         // SECURITY invariant: the factory-default path must label the line
         // `[provenance=FactoryDefault]` exactly, so an auditor grepping for
         // blank-card burns matches reliably.
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
         let path = fresh_path("factory");
         set_audit_log_path(path.clone());
 
@@ -352,7 +353,7 @@ mod security_tests {
         // must not be able to overwrite or mask the genuine trailing tag. The
         // parser reads the final `[provenance=...]` token, which is the real
         // one.
-        let _guard = AUDIT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
         let path = fresh_path("spoof");
         set_audit_log_path(path.clone());
 

@@ -679,6 +679,12 @@ pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod ndef_tests {
     use super::*;
     use alloc::{format, vec};
@@ -900,7 +906,7 @@ mod ndef_tests {
         data.extend_from_slice(&100u32.to_be_bytes());
         data.push(0x55);
         data.push(0x04);
-        data.extend(core::iter::repeat(b'x').take(99));
+        data.extend(core::iter::repeat_n(b'x', 99));
         let nlen = (data.len() - 2) as u16;
         data[0..2].copy_from_slice(&nlen.to_be_bytes());
         let parsed = parse_ndef_uri(&data).unwrap();
@@ -976,6 +982,12 @@ mod ndef_tests {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod zeroize_tests {
     use super::*;
     use alloc::format;

@@ -248,11 +248,8 @@ mod tests {
     // whose SDM file settings carry counter-only encrypted PICCData (no UID
     // mirroring) — asserted end-to-end against the mock card.
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn privacy_provision_burns_ctr_only_sdm() {
-        let _guard = crate::audit::AUDIT_TEST_MUTEX
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
         let mut tmp_path = std::env::temp_dir();
         tmp_path.push(format!(
             "bolty-audit-priv-provision-{}.log",
