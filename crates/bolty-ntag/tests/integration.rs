@@ -1,7 +1,12 @@
 // Tests assert on known fixtures: panicking on malformed data IS the
 // failure mode this suite wants (workspace warn-level lints stay
 // enforced for all production code).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod mock;
 
 use bolty_core::secret::{AesKey, CardKeys};

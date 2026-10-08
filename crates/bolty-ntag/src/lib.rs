@@ -679,7 +679,12 @@ pub fn parse_ndef_uri(data: &[u8]) -> Option<NdefUri> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod ndef_tests {
     use super::*;
     use alloc::{format, vec};
@@ -977,7 +982,12 @@ mod ndef_tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod zeroize_tests {
     use super::*;
     use alloc::format;

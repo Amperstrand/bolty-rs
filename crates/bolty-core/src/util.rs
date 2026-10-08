@@ -63,7 +63,6 @@ pub fn encode_hex_into(input: &[u8], out: &mut [u8]) -> usize {
     max * 2
 }
 
-
 #[cfg(feature = "std")]
 #[allow(clippy::indexing_slicing)]
 pub fn encode_hex(input: &[u8]) -> String {
@@ -76,7 +75,12 @@ pub fn encode_hex(input: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use super::{HexError, decode_hex, decode_hex_into, decode_hex_nibble, encode_hex_into};
 
