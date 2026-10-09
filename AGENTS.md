@@ -1,5 +1,21 @@
 # AGENTS.md — bolty-rs Project Knowledge Base
 
+## Hardware Testing (shared Amperstrand bench, 2026-10-09)
+
+Bolt-card hardware testing uses the SAME labgrid-coordinated bench as
+ccid-firmware-rs (ai-legion). Before any bench work with an NFC device:
+
+1. Check bench health: `python3 /root/src/ccid-firmware-rs/tests/hardware/labgrid/bench_inventory.py`
+2. Acquire the device's labgrid place before touching hardware
+   (`labgrid-client -p <place> acquire`; places: `stm32-ccid`, `nucula-c3`,
+   `m5stick`, `ref-acr1252`, `ref-cardman`)
+3. Reader selection in tests: by USB serial / stable identity, never
+   enumeration order — see the "Labgrid Bench Doctrine" in
+   ccid-firmware-rs/AGENTS.md for the full rules.
+
+The M5Stack Atom + MFRC522 rig (bolty's primary target) is the `m5stick`
+place; the nucula (PN7160) is available for differential NFC work.
+
 ## Spec Conformance (greatspectations)
 
 Spec-relevant code carries verbatim boltcard-spec quotes as `//` comments with
