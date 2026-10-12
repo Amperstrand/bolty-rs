@@ -7,7 +7,23 @@ runner = "espflash flash --monitor"
 rustflags = ["--cfg", "espidf_time64", "-Zunstable-options", "-C", "panic=immediate-abort"]
 
 [env]
+# sdkconfig.defaults MUST be pinned here: esp-idf-sys resolves relative
+# sdkconfig paths against the WORKSPACE root, where no sdkconfig.defaults
+# exists — without this entry the custom defaults are silently DROPPED
+# (observed 2026-10-12: a build ran on embuild's bare defaults with zero of
+# bolty's kconfig). `relative = true` makes cargo resolve it against the
+# invocation dir (= this crate, per the documented build flow). build.sh
+# overrides it with an ABSOLUTE --sdkconfig path (process env wins over
+# [env]); relative variant paths from the workspace root never resolve.
 ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }
+# Which crate carries [package.metadata.esp-idf-sys] (the IDF pin + mdns
+# component). Two traps make this mandatory: (1) virtual workspace — a
+# `cargo metadata` from the workspace root has no resolve root, so
+# esp-idf-sys cannot find the crate with the pin without this (ccid
+# pattern); (2) without it the build silently falls back to whatever
+# ESP-IDF the stale .embuild state holds — a v5.5.5 manifest pin produced
+# a v5.2.3 firmware on 2026-10-12 that way.
+ESP_IDF_SYS_ROOT_CRATE = { value = "bolty-esp32" }
 
 [unstable]
 build-std = ["std", "panic_abort"]

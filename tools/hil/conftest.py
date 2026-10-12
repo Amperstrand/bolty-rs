@@ -60,6 +60,11 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 LABGRID_COORDINATOR = "192.168.13.221:20408"
 LABGRID_PLACE = "bolty-rig"
 LG_ACQUIRED_KEY = pytest.StashKey[bool]()
+# True when the place was already acquired by THIS identity (crashed prior
+# session or wrapper script): acquisition is inherited, not taken — so
+# teardown must NOT release it (ccid-firmware-rs fe17ea5 pattern; releasing
+# an inherited place kills the enclosing session's exclusivity).
+LG_INHERITED_KEY = pytest.StashKey[bool]()
 
 # ── Marker registration ─────────────────────────────────────────────────
 
@@ -98,24 +103,32 @@ def _lg_coordinator_up() -> bool:
         return False
 
 
-def _lg_acquire_or_exit():
-    acquired = _lg_client("acquire")
+def _lg_acquire_or_exit(session) -> bool:
+    """Acquire the rig place. Returns True when the place was INHERITED
+    (already acquired by this same identity) — callers must not release an
+    inherited place. Any other holder is a loud refusal."""
+    try:
+        acquired = _lg_client("acquire")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.exit(f"labgrid-client failed during acquire: {exc}", returncode=3)
     if acquired.returncode != 0:
+        stderr = acquired.stderr.strip()
+        if "already acquired" in stderr:
+            session.stash[LG_INHERITED_KEY] = True
+            return True
         pytest.exit(
             f"rig place {LABGRID_PLACE} is acquired by another session "
-            f"({acquired.stderr.strip() or 'see labgrid-client who'})",
+            f"({stderr or 'see labgrid-client who'})",
             returncode=3,
         )
+    return False
 
 
 def pytest_sessionstart(session):
     lg_env = session.config.getoption("lg_env", None)
     if lg_env and _lg_coordinator_up():
-        _lg_acquire_or_exit()
+        _lg_acquire_or_exit(session)
         session.stash[LG_ACQUIRED_KEY] = True
-
-
-LG_ACQUIRED_KEY = pytest.StashKey[bool]()
 
 
 @pytest.fixture(scope="session")
@@ -164,9 +177,12 @@ def rig_lock(request):
         bench_lock.release()
         return
     if _lg_coordinator_up():
-        _lg_acquire_or_exit()
+        inherited = _lg_acquire_or_exit(request.session)
+        if not inherited:
+            request.session.stash[LG_ACQUIRED_KEY] = True
         yield "labgrid-place"
-        _lg_client("release")
+        if not inherited:
+            _lg_release_best_effort()
         bench_lock.release()
         return
 
@@ -208,13 +224,18 @@ def pytest_runtest_makereport(item, call):
 def _fw_sha256() -> str:
     """sha256 of the workspace ESP32 release binary (what the stick runs per
     the AGENTS known-good stamping); falls back to the dated backup, then
-    'unknown'. Short-prefix — trend correlation, not integrity proof."""
+    'unknown'. Short-prefix — trend correlation, not integrity proof.
+    Path stats/reads are OSError-guarded: hosted CI collects this conftest
+    against root-owned target dirs where stat() raises EACCES, not ENOENT
+    (ccid-firmware-rs 54524aa rule: resolution helpers never raise)."""
     for candidate in (
         REPO_ROOT / "target" / "xtensa-esp32-espidf" / "release" / "bolty-esp32",
         Path.home() / "fw-backup" / "bolty-esp32-knowngood-20260827-final.bin",
     ):
-        if candidate.exists():
+        try:
             return hashlib.sha256(candidate.read_bytes()).hexdigest()[:16]
+        except OSError:
+            continue
     return "unknown"
 
 
@@ -244,10 +265,19 @@ def _stamp_allure_environment(session) -> None:
     (Path(alluredir) / "environment.properties").write_text("\n".join(lines) + "\n")
 
 
+def _lg_release_best_effort():
+    try:
+        _lg_client("release")
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # teardown must never crash; coordinator restarts wipe places anyway
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Append a run record to history.jsonl after every session."""
-    if session.stash.get(LG_ACQUIRED_KEY, False):
-        _lg_client("release")
+    if session.stash.get(LG_ACQUIRED_KEY, False) and not session.stash.get(
+        LG_INHERITED_KEY, False
+    ):
+        _lg_release_best_effort()
     RESULTS_DIR.mkdir(exist_ok=True)
     results = getattr(session, "hil_results", {})
     record = {

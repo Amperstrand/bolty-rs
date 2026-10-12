@@ -188,6 +188,7 @@ pub fn main() {
         initial_config,
         display_ok,
         I2C_BAUDRATE_HZ,
+        FreeRtos::delay_ms,
     )));
 
     #[cfg(feature = "display-st7789")]
@@ -1261,7 +1262,7 @@ fn process_ble_command<S: crate::service::BoltyService>(
     cmd: &str,
     service: &Arc<Mutex<S>>,
     _config: &Arc<Mutex<BoltyConfig>>,
-) -> String {
+) -> std::string::String {
     use crate::commands::{Command, parse_command};
 
     let Ok(mut svc) = service.lock() else {
@@ -1297,8 +1298,10 @@ fn process_ble_command<S: crate::service::BoltyService>(
         Command::Inspect | Command::Diagnose | Command::Picc | Command::Check => {
             use crate::service::WorkflowResult;
             use crate::workflow::dispatch_command;
-            let mut cfg = _config.lock().unwrap();
-            match dispatch_command(command, &mut svc, &mut cfg) {
+            let Ok(mut cfg) = _config.lock() else {
+                return "[FAIL] config unavailable".to_string();
+            };
+            match dispatch_command(command, &mut *svc, &mut cfg) {
                 WorkflowResult::Success => "[OK] done".to_string(),
                 other => format!("[FAIL] {other:?}"),
             }
