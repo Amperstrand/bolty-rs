@@ -1,6 +1,14 @@
 """Activation-ladder bench evidence (dry port of ccid-firmware-rs 9fd1626
 + 89382e6, 2026-10-12).
 
+SCOPE (Codex PR #93 P2, corrected): this suite drives bolty-cli over
+PC/SC — i.e. the ACR1252 reference reader — and is the ladder's
+ACCEPTANCE ORACLE (protocol-level stability under repetition). It does
+NOT execute the ESP32 firmware's `activate_with_delays` path; firmware
+ladder evidence comes from the runbook procedure
+(docs/hil-runbook-2026-10-13.md), which flashes the stick and drives
+the console/REST service path.
+
 The firmware's activation path now runs: antenna cycle with 50 ms field-off
 dwell + 5 ms settle, then up to 4 rounds of (prepare → settle → WUPA) before
 giving up. Bench evidence for the port is stability under repetition — the

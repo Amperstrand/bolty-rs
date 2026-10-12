@@ -89,7 +89,13 @@ impl<'a, I2C: I2c> Mfrc522Transport<'a, I2C> {
             }
             delay.delay_ms(ACTIVATION_SETTLE_MS);
             match activation::wakeup(transceiver) {
-                Ok(_) => return Self::activate_after_prepare(transceiver),
+                // ISO 14443-3: a PICC in ACTIVE state does not answer a
+                // further WUPA — the answered activation must flow
+                // STRAIGHT into RATS/session setup (Codex PR #93 P1);
+                // re-entering activate_after_prepare here would issue a
+                // second WUPA with no field reset and convert success
+                // into CardNotPresent.
+                Ok(activation) => return Self::from_activation(transceiver, activation),
                 Err(e) => last_err = Some(Error::Activation(e)),
             }
         }
@@ -100,6 +106,16 @@ impl<'a, I2C: I2c> Mfrc522Transport<'a, I2C> {
         transceiver: &'a mut Mfrc522Transceiver<I2C>,
     ) -> Result<Self, Error<I2C::Error>> {
         let activation = activation::wakeup(transceiver).map_err(Error::Activation)?;
+        Self::from_activation(transceiver, activation)
+    }
+
+    /// Post-wakeup session setup: the caller supplies a SUCCESSFUL
+    /// activation (card ACTIVE) and this runs the SAK/UID checks, RATS,
+    /// and ISO-DEP session bring-up — never another WUPA.
+    fn from_activation(
+        transceiver: &'a mut Mfrc522Transceiver<I2C>,
+        activation: activation::Activation,
+    ) -> Result<Self, Error<I2C::Error>> {
         if !activation.sak.iso14443_4_compliant {
             return Err(Error::UnsupportedTag);
         }
