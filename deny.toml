@@ -20,6 +20,7 @@ allow = [
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "GPL-3.0-or-later",
+    "GPL-2.0-or-later",  # pn7160-nci (ccid-firmware-rs, Amperstrand)
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
@@ -37,4 +38,5 @@ allow-git = [
     "https://github.com/Amperstrand/mfrc522-rs.git",
     "https://github.com/Amperstrand/iso14443-rs.git",
     "https://github.com/Amperstrand/esp-idf-svc.git",
+    "https://github.com/Amperstrand/ccid-firmware-rs.git",  # pn7160-nci (shared NCI core, rev-pinned)
 ]

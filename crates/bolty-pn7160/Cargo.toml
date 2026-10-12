@@ -1,0 +1,16 @@
+[package]
+name = "bolty-pn7160"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "PN7160 NFC frontend transport for NTAG424 (ntag424::Transport over pn7160-nci)"
+
+[dependencies]
+# Shared crate per lesson B28 ("shared logic lives in ONE crate, projects
+# inherit"): the NCI core stays homed in ccid-firmware-rs; bolty consumes it
+# pinned by rev, exactly like ntag424/mfrc522/iso14443.
+pn7160-nci = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "f2a250b4d259be07d5bc63cd45a26b389d580502", default-features = false }
+ntag424 = { workspace = true }
+
+[lints]
+workspace = true

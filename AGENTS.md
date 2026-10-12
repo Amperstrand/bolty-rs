@@ -76,6 +76,12 @@ Diagnosis runbook for proxy outages:
 
 ### HIL rig quick facts (2026-09-02; full detail: docs/lessons-learned.md B24-B26)
 
+Next scheduled bench session: **docs/hil-runbook-2026-10-13.md** (phased —
+ACR-only work is safe while the stick runs nucula; stick reflash phases are
+owner-gated). Includes the bench-evidence task for the 2026-10-12 MFRC522
+dwell/activation-ladder port (`tests/test_activation_ladder.py`) and the
+BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
+
 - Cross-project bench sharing via the shared labgrid coordinator (places:
   bolty-rig, microfips-bench, gm65-qr-loopback, nucula-rig) — topology,
   locking order, and the gm65-scanner lessons learned are documented in
@@ -426,23 +432,39 @@ Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → 
 ```bash
 # One-time setup:
 cargo install espup espflash
-espup install
+# Crosstool pin: IDF v5.5.5's tool_version_check accepts esp-14.2.0_20260121
+# and rejects the 20241119 build — always pin (CI does the same):
+espup install -c 14.2.0_20260121
 # Verify xtensa std is present (interrupted espup installs lose it):
 rustup +esp target list --installed   # must NOT be only x86_64-unknown-linux-gnu
 # If missing: the build fails with E0463 "can't find crate for `core`".
 # espup 0.17 ships host-std-only toolchains; std is built from source
 # via -Zbuild-std (see apps/bolty-esp32/.cargo/config.toml).
 
-# Build firmware — MUST run from apps/bolty-esp32/ (the .cargo/config.toml
-# there supplies --target xtensa-esp32-espidf + build-std; building from
-# the workspace root silently produces a useless x86-64 host binary):
-cd /home/ubuntu/src/bolty-rs/apps/bolty-esp32
+# Canonical bench build (2026-10-12+): build.sh pins CARGO_WORKSPACE_DIR +
+# a repo-local CARGO_TARGET_DIR (the shared global target dir once silently
+# built v5.2.3 under a v5.5.5 manifest pin — lesson B30) and FAILS LOUDLY if
+# the resolved ESP-IDF does not match the manifest pin:
+cd apps/bolty-esp32
+./build.sh m5stick                      # board-m5stick,wifi,rest,ota
+./build.sh m5stick --flash /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
+./build.sh m5stick-ble --sdkconfig sdkconfig.defaults.ble   # BLE experiment
+# After an esp_idf_version bump: ./build.sh m5stick --clean-sys
+
+# Raw cargo (what build.sh wraps) — MUST run from apps/bolty-esp32/ (the
+# .cargo/config.toml there supplies --target xtensa-esp32-espidf + build-std
+# + ESP_IDF_SYS_ROOT_CRATE; building from the workspace root silently
+# produces a useless x86-64 host binary):
+cd apps/bolty-esp32
+export CARGO_WORKSPACE_DIR="$PWD/../.." CARGO_TARGET_DIR="$PWD/../../target"
 . ~/export-esp.sh
 cargo +esp build --release --features 'board-m5stick,wifi,rest'
-# Output: /home/ubuntu/src/bolty-rs/target/xtensa-esp32-espidf/release/bolty-esp32
+# Output: target/xtensa-esp32-espidf/release/bolty-esp32
+# Verify the IDF actually used (must end with the manifest tag):
+python3 -c "import json,glob; print(json.load(open(glob.glob('../../target/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/esp-idf-build.json')[0]))['esp_idf_dir'])"
 
 # Flash (espflash default 115200 baud — reliable on this FT232 link):
-cd /home/ubuntu/src/bolty-rs
+cd ../..
 espflash flash --port /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0 \
   target/xtensa-esp32-espidf/release/bolty-esp32
 ```

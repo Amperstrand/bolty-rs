@@ -16,6 +16,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Display, Formatter};
 
+use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
 use iso14443::type_a::{
     Ats, Cid, Fsdi, activation,
@@ -26,7 +27,30 @@ use ntag424::{Response, Transport};
 
 // Re-export the PCD-layer types from mfrc522-pcd so consumers of bolty-mfrc522
 // see the same public API as before.
-pub use mfrc522_pcd::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
+pub use mfrc522_pcd::{DEFAULT_I2C_ADDRESS, FnDelay, Mfrc522Transceiver, NoDelay};
+
+/// Marginal coupling makes a single REQA→RATS sequence flaky (~50% on the
+/// bench, ccid-firmware-rs 2026-10-09 against a J3R180):
+/// [`Mfrc522Transport::activate_with_delays`] retries the activation up to
+/// this many times with a fresh frontend reset between attempts (~50% →
+/// 20/20 on their bench).
+pub const ACTIVATION_ATTEMPTS: usize = 4;
+
+/// Settle time between the antenna/frontend reset and the first WUPA, and
+/// again between retry attempts — a card's charge pump needs it after a
+/// field cycle (JavaCards need more than DESFire).
+pub const ACTIVATION_SETTLE_MS: u32 = 15;
+
+/// Whether an [`Error`] is worth retrying: radio/I2C/protocol classes are
+/// transient (marginal coupling, wedged ISO-14443-4 state), while
+/// `UnsupportedTag` and `InvalidUidLength` are deterministic card
+/// properties — retrying those just burns 4× the poll budget.
+pub fn is_retryable_activation_error<E>(e: &Error<E>) -> bool {
+    !matches!(
+        e,
+        Error::UnsupportedTag | Error::InvalidUidLength(_) | Error::InvalidCid
+    )
+}
 
 /// NFC transport over MFRC522, borrowing the transceiver for the card session lifetime.
 ///
@@ -46,6 +70,30 @@ impl<'a, I2C: I2c> Mfrc522Transport<'a, I2C> {
             .prepare_for_activation()
             .map_err(Error::Mfrc522)?;
         Self::activate_after_prepare(transceiver)
+    }
+
+    /// Activation with the bench-proven reliability ladder: up to
+    /// [`ACTIVATION_ATTEMPTS`] rounds of (antenna cycle with field-off
+    /// dwell → settle → WUPA), then one full activation. The retry
+    /// budget targets the flaky part — marginal coupling loses REQA/WUPA,
+    /// not the RATS that follows an answered WUPA.
+    pub fn activate_with_delays<D: DelayNs>(
+        transceiver: &'a mut Mfrc522Transceiver<I2C>,
+        delay: &mut D,
+    ) -> Result<Self, Error<I2C::Error>> {
+        let mut last_err: Option<Error<I2C::Error>> = None;
+        for _attempt in 1..=ACTIVATION_ATTEMPTS {
+            if let Err(e) = transceiver.prepare_for_activation_with_delays(delay) {
+                last_err = Some(Error::Mfrc522(e));
+                continue;
+            }
+            delay.delay_ms(ACTIVATION_SETTLE_MS);
+            match activation::wakeup(transceiver) {
+                Ok(_) => return Self::activate_after_prepare(transceiver),
+                Err(e) => last_err = Some(Error::Activation(e)),
+            }
+        }
+        Err(last_err.unwrap_or(Error::Mfrc522(Mfrc522Error::Timeout)))
     }
 
     pub fn activate_after_prepare(
@@ -152,5 +200,42 @@ fn frame_wait_time_ms(ats: &Ats) -> u32 {
     } else {
         let fwt_us = 302u64 * (1u64 << fwi);
         (fwt_us / 1000 + 10) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    #[test]
+    fn deterministic_card_errors_are_not_retryable() {
+        assert!(!is_retryable_activation_error(&Error::<u8>::UnsupportedTag));
+        assert!(!is_retryable_activation_error(
+            &Error::<u8>::InvalidUidLength(5)
+        ));
+        assert!(!is_retryable_activation_error(&Error::<u8>::InvalidCid));
+    }
+
+    #[test]
+    fn transient_radio_errors_are_retryable() {
+        assert!(is_retryable_activation_error(&Error::<u8>::Mfrc522(
+            Mfrc522Error::Timeout
+        )));
+        assert!(is_retryable_activation_error(&Error::<u8>::Mfrc522(
+            Mfrc522Error::Nak
+        )));
+        assert!(is_retryable_activation_error(&Error::<u8>::Protocol(
+            PcdError::PcdTransceiver(Mfrc522Error::Timeout)
+        )));
+    }
+
+    #[test]
+    fn ladder_constants_match_bench_proven_values() {
+        assert_eq!(ACTIVATION_ATTEMPTS, 4);
+        assert_eq!(ACTIVATION_SETTLE_MS, 15);
+        assert_eq!(mfrc522_pcd::FIELD_OFF_DWELL_MS, 50);
+        assert_eq!(mfrc522_pcd::FIELD_ON_SETTLE_MS, 5);
     }
 }

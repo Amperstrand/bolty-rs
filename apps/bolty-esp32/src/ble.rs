@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use enumset::enum_set;
 use esp_idf_svc::bt::ble::gap::{AdvConfiguration, BleGapEvent, EspBleGap};
-use esp_idf_svc::bt::ble::gatt::server::{ConnectionId, EspGatts, GattsEvent, TransferId};
+use esp_idf_svc::bt::ble::gatt::server::{EspGatts, GattsEvent};
 use esp_idf_svc::bt::ble::gatt::{
     AutoResponse, GattCharacteristic, GattId, GattInterface, GattResponse, GattServiceId,
     GattStatus, Handle, Permission, Property,

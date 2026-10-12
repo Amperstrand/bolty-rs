@@ -6,7 +6,7 @@ use bolty_core::{
     config::BoltyConfig,
     secret::CardKeys,
 };
-use bolty_mfrc522::{Mfrc522Transceiver, Mfrc522Transport};
+use bolty_mfrc522::{FnDelay, Mfrc522Transceiver, Mfrc522Transport};
 
 use crate::block_on;
 #[cfg(feature = "rest")]
@@ -43,6 +43,10 @@ where
     transceiver: Option<Mfrc522Transceiver<I2C>>,
     raw_i2c: Option<I2C>,
     last_i2c_scan: Vec<u8>,
+    /// Platform delay hook (ms) used by the activation ladder's field
+    /// dwells. Injected at construction: FreeRtos on hardware (yields —
+    /// busy-waits trip the task watchdog), no-op in host tests.
+    delay_ms: fn(u32),
     pub(super) current_config: BoltyConfig,
     pub(super) keys: Option<CardKeys>,
     pub(super) authenticated_key0: Option<bolty_core::secret::AesKey>,
@@ -71,12 +75,14 @@ where
         current_config: BoltyConfig,
         display_init_ok: bool,
         i2c_baudrate: u32,
+        delay_ms: fn(u32),
     ) -> Self {
         let nfc_ready = transceiver.is_some();
         let mut service = Self {
             transceiver,
             raw_i2c,
             last_i2c_scan,
+            delay_ms,
             current_config,
             keys: None,
             authenticated_key0: None,
@@ -199,11 +205,13 @@ where
             return Err(nfc_unavailable_result());
         };
 
-        Mfrc522Transport::activate(transceiver).map_err(|_| {
-            self.status.nfc_ready = true;
-            self.last_card = CardAssessment::default();
-            WorkflowResult::CardNotPresent
-        })
+        Mfrc522Transport::activate_with_delays(transceiver, &mut FnDelay(self.delay_ms)).map_err(
+            |_| {
+                self.status.nfc_ready = true;
+                self.last_card = CardAssessment::default();
+                WorkflowResult::CardNotPresent
+            },
+        )
     }
 }
 

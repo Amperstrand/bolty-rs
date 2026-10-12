@@ -61,12 +61,41 @@ capability rather than being hidden inside board selection.
 
 ## Build and flash
 
-Build from **inside `apps/bolty-esp32/`** — its `.cargo/config.toml` supplies the
-`xtensa-esp32-espidf` target and `-Zbuild-std` settings. Building from the
-workspace root compiles a useless host (x86-64) binary instead:
+The verified bench flow is `apps/bolty-esp32/build.sh` — it pins
+`CARGO_WORKSPACE_DIR` + a repo-local target dir (shared global target dirs
+have silently built the wrong ESP-IDF revision under this repo's manifest
+pin) and **fails loudly if the resolved ESP-IDF does not match the
+manifest** (`[package.metadata.esp-idf-sys] esp_idf_version`, currently
+`tag:v5.5.5`):
 
 ```bash
 cd apps/bolty-esp32
+
+# Canonical bench build (board-m5stick,wifi,rest,ota), with optional flash:
+./build.sh m5stick
+./build.sh m5stick --flash /dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0
+
+# Serial-console-only and M5Atom Matrix variants:
+./build.sh m5stick-min
+./build.sh m5atom
+
+# BLE experiment (sdkconfig variant + feature travel together):
+./build.sh m5stick-ble --sdkconfig sdkconfig.defaults.ble
+
+# After an esp_idf_version bump (metadata changes do NOT rerun the build
+# script on their own):
+./build.sh m5stick --clean-sys
+```
+
+Raw cargo works too — but MUST run from **inside `apps/bolty-esp32/`**
+(its `.cargo/config.toml` supplies the `xtensa-esp32-espidf` target and
+`-Zbuild-std` settings; building from the workspace root compiles a useless
+host x86-64 binary), and needs the same two env guards build.sh sets:
+
+```bash
+cd apps/bolty-esp32
+export CARGO_WORKSPACE_DIR="$PWD/../.." CARGO_TARGET_DIR="$PWD/../../target"
+. ~/export-esp.sh
 
 # M5StickC Plus
 cargo +esp build --release --features "board-m5stick"
@@ -180,9 +209,10 @@ are guarded by byte-exact fixture vectors instead.
 ## Improvement areas already identified
 
 - Re-enable `display-st7789` and verify NFC + display coexist on M5StickC Plus hardware (display driver code exists, feature is wired into `board-m5stick`).
-- Add I2C bus recovery (SCL toggle) before `I2cDriver` init for robustness against stuck-bus conditions.
-- Add MFRC522 init retry with backoff (currently single attempt; vendor `init()` consumes the bus on failure).
+- ~~Add I2C bus recovery (SCL toggle) before `I2cDriver` init~~ — done (`mfrc522-pcd` `bus_recovery`, AN10217 sequence).
+- MFRC522 init retry with backoff: the **activation** path now has the bench-proven reliability ladder (field-off dwell + 4× prepare→settle→WUPA, 2026-10-12 port from ccid-firmware-rs); the vendor `init()` itself remains single-attempt and consumes the bus on failure.
 - Introduce a separate PN532 frontend when that transport is added, rather than overloading board features.
+- Wire `crates/bolty-pn7160` (ntag424::Transport over the shared pn7160-nci crate — host-tested since 2026-10-12) into the firmware with an ESP32 I2C transport; enables differential NFC work on the nucula bench device.
 
 ## Contributing
 

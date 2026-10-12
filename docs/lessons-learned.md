@@ -651,3 +651,86 @@ recover with time. They do not.
   becomes the check-in gate
 - tollgate-lab (owner of the bench tooling): the check-in/check-out
   helpers live here so every project inherits them without copying
+
+## B30 — silent-wrong-firmware class on this bench: THREE independent ways a cargo build lies (2026-10-12)
+
+The ESP-IDF v5.5.5 unification session (bolty-rs + ccid-firmware-rs, same
+day) hit three stacked traps; each produced a build that LOOKED successful.
+ccid had already documented trap 1 (their AGENTS.md, bench lost a full day);
+bolty reproduced it and then found two more.
+
+1. **Stale esp-idf-sys state ignores the IDF pin.** With a shared/global
+   `CARGO_TARGET_DIR`, the esp-idf-sys build script resolves the workspace
+   by popping OUT_DIR six levels — inside the target dir — and silently
+   builds whatever IDF the stale state holds. Symptom here: manifest said
+   `tag:v5.5.5`, binary strings said v5.2.3 (also: `/root/.cargo-target`
+   holds ccid's artifacts with ITS v5.5.1 — two workspaces sharing one
+   esp-idf-sys build dir cross-contaminate). Fix: `CARGO_WORKSPACE_DIR`
+   export + per-repo `CARGO_TARGET_DIR` + `ESP_IDF_SYS_ROOT_CRATE` (virtual
+   workspace has no resolve root without it). All encoded in
+   `apps/bolty-esp32/build.sh`.
+2. **`esp_idf_version` bumps do NOT rerun the build script.** Nothing
+   declares rerun-if-changed on manifest metadata — after a bump you MUST
+   `--clean-sys` (delete the `build/esp-idf-sys-*` dirs). Same class:
+   sdkconfig-defaults switches.
+3. **Relative sdkconfig paths resolve against the WORKSPACE root, not the
+   crate.** `ESP_IDF_SDKCONFIG_DEFAULTS=sdkconfig.defaults` handed to a
+   build from `apps/bolty-esp32/` resolves to `<workspace>/sdkconfig.defaults`
+   — which does not exist — and embuild DROPS it silently: the build runs on
+   bare embuild defaults (no 4MB flash, no HTTPS server, no watchdog cfg)
+   and still compiles. The `[env]` entry in `apps/bolty-esp32/.cargo/config.toml`
+   with `relative = true` is the resolution mechanism, not documentation —
+   do not delete it. Variant files (`sdkconfig.defaults.ble`) must be passed
+   as ABSOLUTE paths (build.sh does).
+
+**Countermeasure (build.sh gates):** every build verifies (a) the resolved
+`esp_idf_dir` ends with the manifest tag, and (b) `esp-idf-build.json`'s
+`sdkconfig_defaults` list contains the requested defaults file — both fail
+LOUDLY with the `--clean-sys` instruction. `strings <binary> | grep v5\.`
+is the zero-tooling spot check.
+
+**Also learned (same session):** cargo `[env]` values shadow/shapes reach
+the build script only after [env]→process-env precedence is considered —
+verify empirically, not from memory, before relying on either direction.
+
+## B31 — ccid-firmware-rs port session: what crossed projects dry (2026-10-12)
+
+Ported from ccid-firmware-rs @ f2a250b (182-commit window, 2026-10-02→10-12;
+full port-candidate matrix built first — see the session's explore output):
+
+- **MFRC522 field dwell + activation ladder** (ccid 89382e6 + 9fd1626):
+  `prepare_for_activation_with_delays` (50 ms field-off dwell / 5 ms settle,
+  DelayNs-injected; legacy no-delay path preserved for host tests) +
+  `Mfrc522Transport::activate_with_delays` (4 × prepare→settle→WUPA, then
+  full activation; retry budget targets the flaky RF half). Service layer
+  injects `FreeRtos::delay_ms` as a `fn(u32)` hook — busy-waits through
+  ≥1 ms dwells trip the task watchdog (ccid #63/#80 root cause).
+  Bench evidence task: tools/hil/tests/test_activation_ladder.py.
+- **pn7160-nci as a git dependency** (B28 doctrine — the crate keeps ONE
+  home in ccid-firmware-rs; bolty inherits at rev f2a250b) +
+  `crates/bolty-pn7160`: the ntag424::Transport bridge, host-tested against
+  a byte-exact scripted NCI mock. NOT yet wired into firmware (needs the
+  esp32 i2c_master transport port — future work with the vendored-hal
+  legacy-i2c gating).
+- **tools/hil conftest hardening** (ccid bbc8f6a/54524aa/fe17ea5): labgrid
+  place INHERITANCE ("You have already acquired" by our identity = success,
+  inherited places are never released at teardown), OSError-guarded path
+  resolution (stat() on root-owned dirs raises EACCES, not ENOENT —
+  collection-time helpers must never raise), best-effort release. Locked by
+  tests/test_conftest_hardening.py.
+- **Not ported, deliberately:** pn7160-nci's ESP32 i2c_master transport
+  (needs ccid's vendored esp-idf-hal legacy-i2c gating — revisit when bolty
+  gains a PN7160 board feature); SPP/classic-BT (no pcscd in bolty);
+  serial_ports.py dynamic detection (bolty's console goes through the
+  unix-socket daemon, no hardcoded ttys in python tooling).
+
+**BLE verdict (dry, 2026-10-12, IDF v5.5.5):** **COMPILES.** The esp-idf-svc
+0.52.x fork's bt module builds against IDF v5.5.5 once the BT sdkconfig
+actually reaches the build — the earlier "blocked on the esp-idf-rs
+generation" analysis was an artifact of the B30.2/B30.3 delivery traps, not
+a real API gap. Full `board-m5stick,ble` firmware built with both build.sh
+gates green (IDF pin + sdkconfig consumption verified); two never-compiled
+ble-gated bugs were fixed along the way (heapless::String type confusion in
+`process_ble_command`, and a `MutexGuard` reborrow in its dispatch path).
+RADIO behavior (advertising, GATT, pairing) remains unproven until Phase 3
+of docs/hil-runbook-2026-10-13.md runs on hardware.
