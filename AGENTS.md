@@ -441,9 +441,12 @@ Full cycle tested: diagnose(blank) → burn → diagnose(mac=true) → wipe → 
 ```bash
 # One-time setup:
 cargo install espup espflash
-# Crosstool pin: IDF v5.5.5's tool_version_check accepts esp-14.2.0_20260121
-# and rejects the 20241119 build — always pin (CI does the same):
-espup install -c 14.2.0_20260121
+# BOTH pins load-bearing (ccid-firmware-rs #150): the fork version floats to
+# latest without -v, and ≥1.99.0.0 rust-src breaks -Z build-std on *-espidf
+# (fchmodat/AT_FDCWD libc gap, rustix#1652). Crosstool pin: IDF v5.5.5's
+# tool_version_check accepts esp-14.2.0_20260121 and rejects the 20241119
+# build — always pin (CI does the same):
+espup install -v 1.98.1.0 -c 14.2.0_20260121
 # Verify xtensa std is present (interrupted espup installs lose it):
 rustup +esp target list --installed   # must NOT be only x86_64-unknown-linux-gnu
 # If missing: the build fails with E0463 "can't find crate for `core`".

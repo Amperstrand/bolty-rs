@@ -40,9 +40,14 @@ jobs:
         # provided it via its `ldproxy: true` input, which this pinned-espup
         # provision replaced (CI failed: "linker `ldproxy` not found").
         run: cargo install espup ldproxy
-      - name: Install ESP toolchain (xtensa, pinned crosstool)
+      - name: Install ESP toolchain (xtensa, pinned fork + crosstool)
         run: |
-          espup install -c 14.2.0_20260121
+          # BOTH pins are load-bearing (ccid-firmware-rs #150): espup
+          # installs the LATEST fork by default, and fork v1.99.0.0+ rust-src
+          # uses fchmodat(AT_FDCWD) while the vendored libc lacks AT_FDCWD
+          # for *-espidf — -Z build-std dies E0425 (bytecodealliance/
+          # rustix#1652, open; blocked on the rust std↔libc sync gap).
+          espup install -v 1.98.1.0 -c 14.2.0_20260121
           . ${HOME}/export-esp.sh
       - name: Build firmware (board-m5stick, wifi+rest+ota)
         run: |

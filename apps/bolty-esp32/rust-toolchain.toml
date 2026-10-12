@@ -1,2 +1,7 @@
 [toolchain]
+# Floating alias to whatever espup last installed — the REAL pin lives in
+# the espup invocation (AGENTS.md + CI): espup install -v 1.98.1.0
+# -c 14.2.0_20260121. Fork ≥1.99.0.0 breaks -Z build-std on *-espidf
+# (fchmodat/AT_FDCWD libc gap — rustix#1652); 1.98.1.0 predates it and is
+# bench-proven on both triples (ccid-firmware-rs #150).
 channel = "esp"
