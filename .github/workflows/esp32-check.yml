@@ -34,8 +34,12 @@ jobs:
       # that way). The pin must match the full crosstool-NG build string the
       # pinned ESP-IDF demands — v5.5.5 accepts esp-14.2.0_20260121 and
       # rejects the 20241119 build of the same GCC 14.2.0.
-      - name: Install espup
-        run: cargo install espup
+      - name: Install espup + ldproxy
+        # ldproxy is the xtensa-espidf linker (.cargo/config.toml selects
+        # it) — espup does NOT install it; the old xtensa-toolchain action
+        # provided it via its `ldproxy: true` input, which this pinned-espup
+        # provision replaced (CI failed: "linker `ldproxy` not found").
+        run: cargo install espup ldproxy
       - name: Install ESP toolchain (xtensa, pinned crosstool)
         run: |
           espup install -c 14.2.0_20260121
