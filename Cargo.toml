@@ -13,9 +13,17 @@ iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "268d
 
 # Temporary fork of esp-idf-svc to fix BLE ble_ping_en struct mismatch.
 # Branch: ai-experimental/fix-ble-ping-en
-# DO NOT use in production. Remove when esp-idf-svc 0.53.0 is released.
+# DO NOT use in production. esp-idf-svc 0.53.0 is released but requires the
+# next esp-idf-rs generation (esp-idf-hal ^0.47 + esp-idf-sys ^0.38) — a
+# svc-only bump hits a `links = "esp_idf_hal"` conflict with hal 0.46.2.
+# Remove when the full generation bump lands.
 [patch.crates-io]
 esp-idf-svc = { git = "https://github.com/Amperstrand/esp-idf-svc.git", branch = "ai-experimental/fix-ble-ping-en" }
+# Vendored hal 0.46.2: carries the upstream (v0.47.0) sd.rs backport for the
+# sdmmc_host_t field added in ESP-IDF 6.0.1 and backported to v5.5.5 —
+# pristine 0.46.2 does not compile against the pinned ESP-IDF v5.5.5
+# (E0063 in sd.rs). Drop when the esp-idf-rs generation bump supersedes it.
+esp-idf-hal = { path = "vendor/esp-idf-hal" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

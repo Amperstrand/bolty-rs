@@ -77,7 +77,7 @@
 ## In Progress
 
 - [ ] Issue #33: Serial console startup crash on M5StickC (AXP192 I2C init)
-- [x] Issue #34: BLE pairing/bonding — code complete but BLOCKED upstream: esp-idf-svc fork bt module needs ESP-IDF ≥5.3 symbols on pinned 5.2.3; unblock = esp-idf-svc 0.53.0 + matrix bump (see sdkconfig.defaults comment + lesson B18)
+- [x] Issue #34: BLE pairing/bonding — code complete but BLOCKED upstream on the esp-idf-rs generation (esp-idf-svc 0.53.0 is out but needs hal ^0.47 + sys ^0.38, conflicting with the pinned 0.46.2/0.37.2); the IDF pin (now v5.5.5) is no longer the blocker — it ships the >= 5.3 symbols (see sdkconfig.defaults comment + lesson B18)
 - [ ] M5StickC UART0 hardware failure — needs replacement device
 - [ ] iso14443-rs upstream contribution (waiting for stability proof)
 - [ ] AuthFirst/AuthSecond handshake byte-parity vs bolt-card-programmer (fixtures exist for ChangeKey/FS_RESET suite)

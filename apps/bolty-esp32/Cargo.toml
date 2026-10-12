@@ -45,10 +45,18 @@ esp-idf-hal = "=0.46.2"
 esp-idf-svc = "=0.52.1"
 
 [build-dependencies]
-embuild = { version = "=0.32.0", features = ["espidf"] }
+# 0.32 cannot parse ESP-IDF v5.5.5's tools.json (new win-arm64 platform
+# variant → serde panic) and coexists with esp-idf-sys's own 0.33 copy in
+# the lock — unify on 0.33.
+embuild = { version = "=0.33.5", features = ["espidf"] }
 
 [lints]
 workspace = true
+
+# Pinned so the IDF version no longer rides embuild defaults (Amperstrand
+# unification, 2026-10-12). Same mechanism as ccid-firmware-rs.
+[package.metadata.esp-idf-sys]
+esp_idf_version = "tag:v5.5.5"
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.8.2" }

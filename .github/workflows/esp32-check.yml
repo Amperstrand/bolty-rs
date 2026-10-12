@@ -25,24 +25,39 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Install xtensa toolchain
-        uses: esp-rs/xtensa-toolchain@v1.5
-        with:
-          buildtargets: esp32
-          ldproxy: true # required for std targets (linker)
+      # esp-rs/xtensa-toolchain@v1.5 was replaced by pinned-espup provision
+      # (ccid-firmware-rs CI pattern): the action's `version` input only pins
+      # the Rust toolchain (espup --toolchain-version) — it cannot pin the
+      # crosstool GCC and installs the LATEST. A new crosstool release can
+      # fail the pinned IDF's tool_version_check at cmake configure time (the
+      # esp-16.2.0_20260914 release broke ccid-firmware-rs CI on 2026-10-09
+      # that way). The pin must match the full crosstool-NG build string the
+      # pinned ESP-IDF demands — v5.5.5 accepts esp-14.2.0_20260121 and
+      # rejects the 20241119 build of the same GCC 14.2.0.
+      - name: Install espup
+        run: cargo install espup
+      - name: Install ESP toolchain (xtensa, pinned crosstool)
+        run: |
+          espup install -c 14.2.0_20260121
+          . ${HOME}/export-esp.sh
       - name: Build firmware (board-m5stick, wifi+rest+ota)
         run: |
+          . ${HOME}/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5stick,wifi,rest,ota"
       - name: Build firmware (board-m5atom)
         run: |
+          . ${HOME}/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5atom"
-      # The `board-m5stick,ble` config is deliberately absent: it cannot
-      # compile on the pinned ESP-IDF 5.2.x matrix (the esp-idf-svc fork's
-      # bt module needs IDF >= 5.3 symbols). Unblock with esp-idf-svc 0.53.0
-      # + the matching esp-idf-sys/hal bump, then uncomment the BT block in
-      # apps/bolty-esp32/sdkconfig.defaults (see that comment for details).
+      # The `board-m5stick,ble` config is deliberately absent: enabling
+      # Bluedroid compiles the esp-idf-svc 0.52.x fork's bt module, which is
+      # blocked on the esp-idf-rs generation, not on the IDF pin (v5.5.5 now
+      # ships the >= 5.3 symbols). esp-idf-svc 0.53.0 is released but requires
+      # esp-idf-hal ^0.47 + esp-idf-sys ^0.38 — a full generation bump
+      # (links conflict with the pinned hal 0.46.2 / sys 0.37.2), not a
+      # svc-only bump. Unblock with that generation bump, then uncomment the
+      # BT block in apps/bolty-esp32/sdkconfig.defaults.
 
   # Firmware unit tests (issue #63): the pure-logic modules (commands,
   # service, workflow) have no esp-idf deps and compile on host, so their
