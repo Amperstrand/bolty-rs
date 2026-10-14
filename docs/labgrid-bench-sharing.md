@@ -1,5 +1,13 @@
 # Labgrid Bench Sharing Across Amperstrand Projects
 
+> **2026-10-14:** the canonical, maintained version of this sharing
+> architecture is **conwrt-bench `docs/labgrid-coordination.md`** (single
+> source of truth: coordinator topology, reservation queueing,
+> exclusion domains, security model). This file remains as the
+> historical research snapshot + the flock protocol detail; topology
+> facts below predate the 2026-09-26 coordinator consolidation to
+> .208 — trust conwrt-bench where they disagree.
+
 Research snapshot: **2026-09-10** (live coordinator state verified; gm65-scanner
 studied at `fa6dc93` + in-flight tree). Purpose: document how the org shares
 bench hardware through labgrid, record which project is currently exercising
@@ -12,7 +20,7 @@ cross-project places. Locked down 2026-09-02 (fips-lab
 `docs/bench-testing-playbook.md` §Coordinator topology).
 
 ```
-coordinator  192.168.13.221:20408        (binds only that address; no mDNS here)
+coordinator  192.168.13.208:20408        (binds only that address; no mDNS here)
 exporters    ai-legion-small             (bolty-rs repo, tools/hil/labgrid-exporter.yaml)
              ai-legion-small-microfips   (microfips repo, tools/hil/labgrid-exporter.yaml)
 places       bolty-rig, microfips-bench, gm65-qr-loopback, nucula-rig,

@@ -15,7 +15,7 @@ import time
 
 # Coordinator binds only this address (see labgrid-env.yaml); mDNS does not
 # resolve on this host. Kept in sync with conftest.LABGRID_COORDINATOR.
-COORDINATOR = "192.168.13.221:20408"
+COORDINATOR = "192.168.13.208:20408"
 PLACE = "bolty-rig"
 TIMEOUT_S = 5
 # labgrid-client is on PATH on the bench host (~/.local/bin); the fips-lab

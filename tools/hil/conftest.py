@@ -57,7 +57,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 
 # Coordinator binds only this address (see labgrid-env.yaml); mDNS does not
 # resolve on this host.
-LABGRID_COORDINATOR = "192.168.13.221:20408"
+LABGRID_COORDINATOR = "192.168.13.208:20408"
 LABGRID_PLACE = "bolty-rig"
 LG_ACQUIRED_KEY = pytest.StashKey[bool]()
 # True when the place was already acquired by THIS identity (crashed prior
