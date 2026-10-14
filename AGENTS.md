@@ -10,8 +10,12 @@ ccid-firmware-rs (ai-legion). Before any bench work with an NFC device:
    (`labgrid-client -p <place> acquire`; places: `stm32-ccid`, `nucula-c3`,
    `m5stick`, `ref-acr1252`, `ref-cardman`)
 3. Reader selection in tests: by USB serial / stable identity, never
-   enumeration order — see the "Labgrid Bench Doctrine" in
-   ccid-firmware-rs/AGENTS.md for the full rules.
+   enumeration order.
+4. Queue, don't race: `labgrid-client reserve --wait name=<place>` (+
+   `--priority` for CI lanes), then `-p + lock`. Cross-project
+   practices — coordinator address, exporter state, exclusion domains,
+   trusted-network security — live in **conwrt-bench
+   `docs/labgrid-coordination.md`** (single source of truth).
 
 The M5Stack Atom + MFRC522 rig (bolty's primary target) is the `m5stick`
 place; the nucula (PN7160) is available for differential NFC work.
