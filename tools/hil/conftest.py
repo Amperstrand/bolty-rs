@@ -103,6 +103,61 @@ def _lg_coordinator_up() -> bool:
         return False
 
 
+def _sign_hold_identity(config):
+    """Bench canon (conwrt-bench docs/labgrid-coordination.md): every hold
+    is signed so `labgrid-client who` answers who-and-why. Richer text by
+    exporting LG_USERNAME yourself; this only fills the unset case."""
+    import os
+
+    if os.environ.get("LG_USERNAME"):
+        return
+    markexpr = config.getoption("-m", "") or "hil"
+    try:
+        import subprocess as sp
+
+        sha = sp.run(["git", "rev-parse", "--short=7", "HEAD"],
+                     capture_output=True, text=True, timeout=10,
+                     cwd=REPO_ROOT).stdout.strip()
+    except Exception:
+        sha = "nogit"
+    os.environ["LG_USERNAME"] = f"bolty-hil~mark={'-'.join(markexpr.split())}~sha={sha}"
+
+
+def _lg_client_p(place: str, *args: str, timeout_s: float = 15):
+    """labgrid-client against an explicit place (reservation tokens use
+    '+<token>' as the -p argument)."""
+    return subprocess.run(
+        ["labgrid-client", "-x", LABGRID_COORDINATOR, "-p", place, *args],
+        capture_output=True, text=True, timeout=timeout_s,
+    )
+
+
+LG_RESERVE_TOKEN_KEY = pytest.StashKey[str]()
+
+
+def _reserve_wait(session, prio: int, timeout_s: int) -> str:
+    """Queue for the rig place via a coordinator reservation instead of
+    exiting when busy (the canon's polite-queue pattern: once allocated,
+    only this reservation's owner can lock the place)."""
+    import re
+
+    try:
+        r = subprocess.run(
+            ["labgrid-client", "-x", LABGRID_COORDINATOR, "reserve", "--wait",
+             "--prio", str(prio), f"name={LABGRID_PLACE}"],
+            capture_output=True, text=True, timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.exit(f"reservation for {LABGRID_PLACE} timed out after {timeout_s}s", returncode=3)
+    if r.returncode != 0:
+        pytest.exit(f"reservation for {LABGRID_PLACE} failed: {(r.stderr or r.stdout).strip()[:200]}",
+                    returncode=3)
+    m = re.search(r"^\s*token:\s*(\S+)", r.stdout, re.M)
+    if not m:
+        pytest.exit(f"no reservation token in output: {r.stdout!r}", returncode=3)
+    return m.group(1)
+
+
 def _lg_acquire_or_exit(session) -> bool:
     """Acquire the rig place. Returns True when the place was INHERITED
     (already acquired by this same identity) — callers must not release an
@@ -116,17 +171,45 @@ def _lg_acquire_or_exit(session) -> bool:
         if "already acquired" in stderr:
             session.stash[LG_INHERITED_KEY] = True
             return True
+        reserve = session.config.getoption("reserve", False)
+        if reserve:
+            prio = session.config.getoption("reserve_priority", 0)
+            timeout_s = session.config.getoption("reserve_timeout_min", 120) * 60
+            token = _reserve_wait(session, prio, timeout_s)
+            session.stash[LG_RESERVE_TOKEN_KEY] = token
+            alloc = _lg_client_p(f"+{token}", "acquire", timeout_s=timeout_s)
+            if alloc.returncode != 0:
+                subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,
+                                "cancel-reservation", token],
+                               capture_output=True, timeout=30)
+                pytest.exit(f"could not acquire allocated {LABGRID_PLACE}: "
+                            f"{alloc.stderr.strip()[:200]}", returncode=3)
+            print(f"[labgrid] {LABGRID_PLACE} acquired via reservation {token}")
+            return False
         pytest.exit(
             f"rig place {LABGRID_PLACE} is acquired by another session "
-            f"({stderr or 'see labgrid-client who'})",
+            f"({stderr or 'see labgrid-client who'}); pass --reserve to queue "
+            f"politely instead of failing",
             returncode=3,
         )
     return False
 
 
+def pytest_addoption(parser):
+    group = parser.getgroup("bolty-hil")
+    group.addoption("--reserve", action="store_true", default=False,
+                    help="Queue for the rig place via a coordinator "
+                         "reservation instead of failing when busy.")
+    group.addoption("--reserve-priority", type=int, default=0,
+                    help="Reservation priority (CI lanes use negative).")
+    group.addoption("--reserve-timeout-min", type=int, default=120,
+                    help="How long --reserve may block waiting (minutes).")
+
+
 def pytest_sessionstart(session):
     lg_env = session.config.getoption("lg_env", None)
     if lg_env and _lg_coordinator_up():
+        _sign_hold_identity(session.config)
         _lg_acquire_or_exit(session)
         session.stash[LG_ACQUIRED_KEY] = True
 
@@ -177,6 +260,7 @@ def rig_lock(request):
         bench_lock.release()
         return
     if _lg_coordinator_up():
+        _sign_hold_identity(request.config)
         inherited = _lg_acquire_or_exit(request.session)
         if not inherited:
             request.session.stash[LG_ACQUIRED_KEY] = True
@@ -278,6 +362,11 @@ def pytest_sessionfinish(session, exitstatus):
         LG_INHERITED_KEY, False
     ):
         _lg_release_best_effort()
+    token = session.stash.get(LG_RESERVE_TOKEN_KEY, None)
+    if token:
+        subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,
+                        "cancel-reservation", token],
+                       capture_output=True, timeout=30)
     RESULTS_DIR.mkdir(exist_ok=True)
     results = getattr(session, "hil_results", {})
     record = {
