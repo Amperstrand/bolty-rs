@@ -171,10 +171,13 @@ def _lg_acquire_or_exit(session) -> bool:
         if "already acquired" in stderr:
             session.stash[LG_INHERITED_KEY] = True
             return True
-        reserve = session.config.getoption("reserve", False)
+        # getattr: the hardening tests drive this path with a bare
+        # stash-only session mock (test_conftest_hardening contract).
+        config = getattr(session, "config", None)
+        reserve = config.getoption("reserve", False) if config is not None else False
         if reserve:
-            prio = session.config.getoption("reserve_priority", 0)
-            timeout_s = session.config.getoption("reserve_timeout_min", 120) * 60
+            prio = config.getoption("reserve_priority", 0)
+            timeout_s = config.getoption("reserve_timeout_min", 120) * 60
             token = _reserve_wait(session, prio, timeout_s)
             session.stash[LG_RESERVE_TOKEN_KEY] = token
             alloc = _lg_client_p(f"+{token}", "acquire", timeout_s=timeout_s)
