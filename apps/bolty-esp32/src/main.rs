@@ -85,6 +85,9 @@ compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 // Pure logic (parsing, service trait, dispatch) has no esp-idf deps, so it
 // also compiles on host — that makes its #[cfg(test)] tests runnable with
 // `cargo test -p bolty-esp32` (issue #63: they never executed anywhere).
+// The AXP192 register map is pure data in the same boat: its GREAT
+// EXPECTATION lock runs on host even though display.rs is xtensa-only.
+mod axp192_map;
 mod commands;
 #[cfg(target_arch = "xtensa")]
 mod firmware;

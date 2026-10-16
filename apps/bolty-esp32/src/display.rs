@@ -22,6 +22,12 @@ use esp_idf_hal::{
 use log::{info, warn};
 use mipidsi::{Builder, models::ST7789, options::ColorInversion};
 
+use crate::axp192_map::{
+    REG_ADC_EN_1, REG_BATT_VOLTAGE_H, REG_BATT_VOLTAGE_L, REG_CHARGE_CTL1, REG_DCDC1_VOLTAGE,
+    REG_GPIO0_FUNCTION, REG_GPIO0_LDO_VOLTAGE, REG_LDO2_LDO3_VOLTAGE, REG_PEK_KEY_MODE,
+    REG_POWER_OUT_CTL, REG_POWER_STATUS,
+};
+
 const LCD_H_RES: u16 = 135;
 const LCD_V_RES: u16 = 240;
 const DISPLAY_OFFSET_X: u16 = 52;
@@ -110,41 +116,61 @@ fn axp192_write_reg(
 
 fn init_axp192(i2c: &mut I2cDriver) -> Result<(), &'static str> {
     info!("AXP192: beginning power sequencing...");
-    axp192_write_reg(i2c, 0x28, 0xCC, "LDO2/LDO3 voltage")?; // LDO2=3.0V (backlight), LDO3=3.0V (display)
+    axp192_write_reg(i2c, REG_LDO2_LDO3_VOLTAGE, 0xCC, "LDO2/LDO3 voltage")?; // LDO2=3.0V (backlight), LDO3=3.0V (display)
 
     let mut buf = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut buf, AXP192_TIMEOUT)
-        .map_err(|e| {
-            warn!("AXP192 read reg 0x12 failed: {e:?}");
-            "axp192 i2c read failed"
-        })?;
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_POWER_OUT_CTL],
+        &mut buf,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|e| {
+        warn!("AXP192 read reg 0x12 failed: {e:?}");
+        "axp192 i2c read failed"
+    })?;
     info!(
         "AXP192: power ctrl was 0x{:02X}, enabling DCDC1+LDO2+LDO3+EXTEN",
         buf[0]
     );
-    axp192_write_reg(i2c, 0x12, buf[0] | 0x4D, "power ctrl DCDC1+LDO2+LDO3")?;
+    axp192_write_reg(
+        i2c,
+        REG_POWER_OUT_CTL,
+        buf[0] | 0x4D,
+        "power ctrl DCDC1+LDO2+LDO3",
+    )?;
 
-    axp192_write_reg(i2c, 0x82, 0xFF, "ADC all enabled")?;
-    axp192_write_reg(i2c, 0x33, 0xC0, "charge 4.2V/100mA")?;
-    axp192_write_reg(i2c, 0x36, 0x0C, "poweron/off timing")?;
-    axp192_write_reg(i2c, 0x91, 0xF0, "RTC 3.3V")?;
-    axp192_write_reg(i2c, 0x90, 0x02, "GPIO0 LDO mode")?;
+    axp192_write_reg(i2c, REG_ADC_EN_1, 0xFF, "ADC all enabled")?;
+    axp192_write_reg(i2c, REG_CHARGE_CTL1, 0xC0, "charge 4.2V/100mA")?;
+    axp192_write_reg(i2c, REG_PEK_KEY_MODE, 0x0C, "poweron/off timing")?;
+    axp192_write_reg(i2c, REG_GPIO0_LDO_VOLTAGE, 0xF0, "RTC 3.3V")?;
+    axp192_write_reg(i2c, REG_GPIO0_FUNCTION, 0x02, "GPIO0 LDO mode")?;
 
     let mut grove_reg = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x10], &mut grove_reg, AXP192_TIMEOUT)
-        .map_err(|e| {
-            warn!("AXP192 read reg 0x10 failed: {e:?}");
-            "axp192 grove read failed"
-        })?;
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_DCDC1_VOLTAGE],
+        &mut grove_reg,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|e| {
+        warn!("AXP192 read reg 0x10 failed: {e:?}");
+        "axp192 grove read failed"
+    })?;
     let grove_val = grove_reg[0] | (1 << 2);
-    axp192_write_reg(i2c, 0x10, grove_val, "Grove 5V boost enable")?;
+    axp192_write_reg(i2c, REG_DCDC1_VOLTAGE, grove_val, "Grove 5V boost enable")?;
 
     let mut verify = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x12], &mut verify, AXP192_TIMEOUT)
-        .map_err(|e| {
-            warn!("AXP192 verify read failed: {e:?}");
-            "axp192 verify failed"
-        })?;
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_POWER_OUT_CTL],
+        &mut verify,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|e| {
+        warn!("AXP192 verify read failed: {e:?}");
+        "axp192 verify failed"
+    })?;
     if verify[0] & 0x4D != 0x4D {
         warn!(
             "AXP192: power ctrl verify mismatch, got 0x{:02X}, expected 0x4D bits set",
@@ -281,12 +307,22 @@ pub fn read_battery_mv() -> Option<u32> {
     let i2c = guard.as_mut()?;
 
     let mut reg78 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x78], &mut reg78, AXP192_TIMEOUT)
-        .ok()?;
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_BATT_VOLTAGE_H],
+        &mut reg78,
+        AXP192_TIMEOUT,
+    )
+    .ok()?;
 
     let mut reg79 = [0u8; 1];
-    i2c.write_read(AXP192_ADDRESS, &[0x79], &mut reg79, AXP192_TIMEOUT)
-        .ok()?;
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_BATT_VOLTAGE_L],
+        &mut reg79,
+        AXP192_TIMEOUT,
+    )
+    .ok()?;
 
     let raw = ((reg78[0] as u32) << 4) | ((reg79[0] as u32) >> 4);
     Some((raw * 11) / 10)
@@ -302,7 +338,12 @@ pub fn is_usb_powered() -> bool {
 
     let mut reg01 = [0u8; 1];
     if i2c
-        .write_read(AXP192_ADDRESS, &[0x01], &mut reg01, AXP192_TIMEOUT)
+        .write_read(
+            AXP192_ADDRESS,
+            &[REG_POWER_STATUS],
+            &mut reg01,
+            AXP192_TIMEOUT,
+        )
         .is_err()
     {
         return false;
