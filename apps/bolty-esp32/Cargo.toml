@@ -40,9 +40,9 @@ enumset = "=1.1.10"
 ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["alloc"], optional = true }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
-esp-idf-sys = { version = "=0.37.2", features = ["binstart"] }
-esp-idf-hal = "=0.46.2"
-esp-idf-svc = "=0.52.1"
+esp-idf-sys = { version = "0.38", features = ["binstart"] }
+esp-idf-hal = "0.47"
+esp-idf-svc = "0.53"
 
 [build-dependencies]
 # 0.32 cannot parse ESP-IDF v5.5.5's tools.json (new win-arm64 platform
@@ -60,3 +60,6 @@ esp_idf_version = "tag:v5.5.5"
 
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.8.2" }
+
+[package.metadata.esp-idf-sys]
+esp_idf_version = "tag:v5.5.5"
