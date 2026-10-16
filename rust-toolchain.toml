@@ -4,3 +4,7 @@
 # fork (esp-idf targets), nightly for instrumented fuzzing.
 [toolchain]
 channel = "1.99.0"
+# dtolnay's action installs components from HERE when the toolchain is
+# toml-driven (the input is ignored on that path — the 2026-10-16 bolty
+# red run: "'cargo-fmt' is not installed for the toolchain '1.99.0'").
+components = ["rustfmt", "clippy"]
