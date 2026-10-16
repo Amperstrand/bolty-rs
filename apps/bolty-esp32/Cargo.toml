@@ -61,5 +61,3 @@ esp_idf_version = "tag:v5.5.5"
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.8.2" }
 
-[package.metadata.esp-idf-sys]
-esp_idf_version = "tag:v5.5.5"
