@@ -484,6 +484,14 @@ impl MockTransport {
         assert_eq!(apdu.len(), 5);
         assert_eq!(apdu[1], 0xB0);
 
+        if apdu[2] & 0x80 != 0 {
+            // Short-FID addressing (ISO 7816-4 P1 bit 8). Workflow reads
+            // use plain 15-bit offsets (files are ≤256 B, P1 bit 8 never
+            // set), so only golden-matrix rows land here: no file with
+            // that FID exists → 6A82 (`read_ndef_after_select`).
+            return Self::response(Vec::new(), 0x6A, 0x82);
+        }
+
         // P1 P2 encode a 15-bit big-endian offset (no short file ID mode).
         let offset = (u16::from(apdu[2]) << 8) | u16::from(apdu[3]);
         // Le: 0x00 means 256 bytes.
@@ -497,6 +505,83 @@ impl MockTransport {
             Vec::new()
         };
         Self::response(data, 0x90, 0x00)
+    }
+
+    /// Generic ISO 7816-4 handling for APDUs the fixed workflow arms do
+    /// not cover. SW semantics pinned by the ACR1252 golden recording
+    /// (tools/hil/difftest/generated/test_golden_responses.py — the
+    /// host-side half of the #73 wave-3 graduation; stateful read rows
+    /// are capture-session artifacts and stay bench-side).
+    fn handle_iso_generic(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        if apdu.len() < 4 {
+            // golden rows: `malformed_cla_only`, `malformed_single_byte_zero`
+            return Self::response(Vec::new(), 0x67, 0x00);
+        }
+        match apdu[1] {
+            0xA4 => self.handle_iso_select(apdu),
+            // golden rows: `get_response_no_pending`, `get_key_version_*`,
+            // `get_file_settings_*`, `read_sdm_no_select`,
+            // `malformed_invalid_ins`, `malformed_reserved_ins` — the card
+            // does not support these INS via the ISO interface.
+            _ => Self::response(Vec::new(), 0x6D, 0x00),
+        }
+    }
+
+    fn handle_iso_select(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        let (p1, p2) = (apdu[2], apdu[3]);
+        if apdu.len() == 4 && p1 == 0x00 && p2 == 0x00 {
+            // golden row `malformed_short_header`: bare 4-byte SELECT
+            // header is accepted by the card (recorded quirk).
+            return Self::iso_ok();
+        }
+        let Some(lc) = apdu.get(4).copied() else {
+            return Self::response(Vec::new(), 0x67, 0x00);
+        };
+        let data = &apdu[5..];
+        if data.len() != lc as usize {
+            // golden rows: `malformed_lc_mismatch`, `malformed_oversized_lc`
+            return Self::response(Vec::new(), 0x67, 0x00);
+        }
+        if data.len() < 2 {
+            return Self::response(Vec::new(), 0x6A, 0x82);
+        }
+        match p2 & 0x0F {
+            0x0C => {
+                // Select by FID. golden rows: 3F00 MF → 9000, E103 CC →
+                // 9000, anything else → 6A82 (`select_invalid_df`).
+                let fid = u16::from_be_bytes([data[0], data[1]]);
+                if matches!(fid, 0x3F00 | 0xE103 | 0xE104) {
+                    Self::iso_ok()
+                } else {
+                    Self::response(Vec::new(), 0x6A, 0x82)
+                }
+            }
+            0x04 => {
+                // Select by AID: only the NDEF application AID exists
+                // (`select_by_aid_ntag424` / `select_by_aid_invalid`).
+                // The 13-byte exact form is consumed by the dedicated arm
+                // above; everything landing here with a different AID is
+                // file-not-found.
+                Self::response(Vec::new(), 0x6A, 0x82)
+            }
+            _ => Self::response(Vec::new(), 0x6A, 0x82),
+        }
+    }
+
+    /// Non-standard CLA bytes. golden rows: the fuzz/malformed family
+    /// returns 6700, with one recorded exception — a SELECT-shaped APDU
+    /// under proprietary CLA 0xFF returns 6300 (`malformed_invalid_cla`).
+    fn handle_unknown_cla(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        if apdu[0] == 0xFF && apdu.get(1) == Some(&0xA4) {
+            return Self::response(Vec::new(), 0x63, 0x00);
+        }
+        Self::response(Vec::new(), 0x67, 0x00)
+    }
+
+    /// Pin the card UID to a golden recording's card (e.g. 04C474FA967380
+    /// for the ACR1252 capture) so card-dependent rows compare exactly.
+    pub fn set_uid(&mut self, uid: [u8; 7]) {
+        self.uid = uid;
     }
 }
 
@@ -554,8 +639,18 @@ impl Transport for MockTransport {
             self.handle_read_data_plain(apdu)
         } else if apdu.len() >= 2 && apdu[0] == 0x90 && apdu[1] == 0x8D {
             self.handle_write_data_plain(apdu)
+        } else if apdu.len() >= 4 && apdu[0] == 0xFF && apdu[1] == 0xCA {
+            // Reader pseudo-APDU: GET UID. Golden matrix row `get_uid`
+            // (difftest/generated/test_golden_responses.py).
+            Self::response(self.uid.to_vec(), 0x90, 0x00)
+        } else if !apdu.is_empty() && apdu[0] == 0x00 {
+            self.handle_iso_generic(apdu)
+        } else if !apdu.is_empty() && apdu[0] == 0x90 {
+            // Native-command CLA with an INS the mock does not model is a
+            // workflow bug, not card behavior — keep failing loud.
+            panic!("unexpected native APDU: {:02X?}", apdu);
         } else {
-            panic!("unexpected APDU: {:02X?}", apdu);
+            self.handle_unknown_cla(apdu)
         };
 
         Ok(response)
