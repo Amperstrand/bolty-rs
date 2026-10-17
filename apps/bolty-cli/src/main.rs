@@ -4,6 +4,9 @@ mod audit;
 pub(crate) mod burn;
 mod common;
 mod diagnose;
+#[cfg(test)]
+#[path = "golden_matrix_tests.rs"]
+mod golden_matrix_tests;
 mod inspect;
 mod keyver;
 #[cfg(test)]
