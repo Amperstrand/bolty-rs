@@ -1,0 +1,56 @@
+[package]
+name = "bolty-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Host-side fuzz targets (#86 phase 1: parser/auth pure functions — the
+# differential-vs-ACR1252U leg is queued behind the rig lane's reader
+# ownership). Runs on the nightly exception documented in rust-toolchain.toml.
+# NOT part of the main workspace (empty workspace table detaches it) so
+# `cargo test --workspace` never builds libfuzzer on stable.
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+bolty-core = { path = "../crates/bolty-core" }
+bolty-ntag = { path = "../crates/bolty-ntag" }
+
+[[bin]]
+name = "picc_parse_url"
+path = "fuzz_targets/picc_parse_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "picc_decrypt_p"
+path = "fuzz_targets/picc_decrypt_p.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "picc_verify_c"
+path = "fuzz_targets/picc_verify_c.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_ndef_uri"
+path = "fuzz_targets/parse_ndef_uri.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "standardize_url_template"
+path = "fuzz_targets/standardize_url_template.rs"
+test = false
+doc = false
+bench = false
