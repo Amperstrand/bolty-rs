@@ -35,12 +35,12 @@ fn classify_card_state(
         "AUTH_DELAY"
     } else if !has_sdm && !has_ndef_content {
         if factory_auth_ok {
-            "BLANK"
+            crate::output::CARD_STATE_BLANK
         } else {
             "INCONSISTENT"
         }
     } else if has_sdm && has_ndef_content {
-        "PROVISIONED"
+        crate::output::CARD_STATE_PROVISIONED
     } else {
         "HALF-WIPED"
     }
@@ -288,7 +288,7 @@ where
         );
     } else {
         println!("\n=== DIAGNOSIS ===");
-        println!("Card state:     {state}");
+        println!("{}{}", crate::output::DIAG_CARD_STATE_LABEL, state);
         println!("Key provenance:  {}", provenance.to_audit_tag());
         match state {
             "BLANK" => {

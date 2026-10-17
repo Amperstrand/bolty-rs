@@ -129,7 +129,7 @@ where
     // Non-hex p/c values (template placeholders — SDM not mirroring on this
     // interface) skip the gate; hex values that fail decryption or the SUN
     // MAC refuse the wipe (wrong issuer key / version — the DET:72 brick guard).
-    println!("Pre-verifying p/c (DET:57-59)...");
+    println!("{}", crate::output::WIPE_PREVERIFY);
     pre_verify_pc(transport, &keys, &uid_fixed).await?;
 
     // Derived K0 auth with AuthRetry (handles auth delay backoff).
@@ -190,7 +190,7 @@ where
         "wipe: SUCCESS — all keys reset to factory zeros",
         Some(provenance),
     );
-    println!("\n✅ Card wiped and verified successfully!");
+    println!("\n{}", crate::output::WIPE_OK);
     Ok(())
 }
 
@@ -258,7 +258,7 @@ where
         picc_verify_c(keys.k2.as_bytes(), &picc, c_hex),
         "pre-verification: SUN MAC mismatch — wrong issuer key or version, refusing to wipe",
     );
-    println!("  ✓ p/c verified (UID + counter + SUN MAC valid)");
+    println!("{}", crate::output::WIPE_PC_VERIFIED);
     Ok(())
 }
 
