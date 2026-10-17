@@ -1,17 +1,26 @@
 # greatspectations spec-quote drift config for bolty-rs
 #
-# Tool: https://github.com/rustyrussell/greatspectations
-# Specs: https://github.com/boltcard/boltcard (docs/ — markdown)
+# Tool: Amperstrand fork https://github.com/Amperstrand/greatspectations
+#       (branch ai-experimental-slop, issue #69; pinned in the workflow)
+# Specs: https://github.com/boltcard/boltcard (docs/ — markdown), pinned
+#       in .github/workflows/spec-quote-drift.yml (conformance-audit.md
+#       §1: quote-lock sources are PINNED, never floating-HEAD; bumping the
+#       pin is a deliberate reviewed change that re-verifies every quote)
 #
 # Comment marker syntax in Rust source:
 #   // BOLT_SPEC: <verbatim quote from spec/docs/SPEC.md>
 #   // BOLT_DET:  <verbatim quote from spec/docs/DETERMINISTIC.md>
 #   // BOLT_PRIV: <verbatim quote from spec/docs/CARD_PRIVACY.md>
 #
+# Trap (AGENTS.md "Spec Conformance"): consecutive `//` lines join into ONE
+# multi-line quote matched against contiguous spec text — separate quotes
+# from prose with a blank line. Quotes are verbatim incl. backticks and
+# upstream typos ("specfying" in CARD_PRIVACY:26 is pinned deliberately).
+#
 # Setup (one-time, local):
 #   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
 #   uv venv .gs-env && uv pip install --python .gs-env/bin/python \
-#       -e /path/to/greatspectations   (or: pip install git+https://github.com/rustyrussell/greatspectations.git)
+#       git+https://github.com/Amperstrand/greatspectations.git@ai-experimental-slop
 #
 # Run (from repo root):
 #   .gs-env/bin/python -m greatspectations check --config specquotes.toml \
@@ -35,7 +44,14 @@ format = "markdown"
 file = "spec/docs/DETERMINISTIC.md"
 comment_marker = "BOLT_DET"
 
-normative = ["5", "6", "7", "8", "24", "25", "26", "27", "28", "29", "30", "37"]  # key roles + PRF formulas + PRF=CMAC
+normative = [
+  "5", "6", "7", "8",        # key roles (K0..K4)
+  "24", "25", "26", "27", "28", "29", "30",  # PRF derivation formulas
+  "33", "34", "35",          # IssuerKey/UID/Version parameter contracts (35: version must increment)
+  "37",                      # PRF = CMAC (NIST SP 800-38B)
+  "41",                      # blank-check before setup (burn preflight)
+  "57", "58", "59",          # reset pre-verification gate (wipe gate, DET:57-59 in test_burn_lock_wipe.py)
+]
 
 [sources.BOLT_PRIV]
 format = "markdown"
