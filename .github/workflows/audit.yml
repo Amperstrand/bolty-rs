@@ -15,7 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Same fix as host-ci.yml: the action needs an explicit channel
+      # (empty input red-runs "'toolchain' is a required input").
+      - name: Read pinned toolchain from rust-toolchain.toml
+        id: toolchain
+        run: echo "channel=$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
