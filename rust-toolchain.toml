@@ -1,10 +1,12 @@
-# One authority per repo: CI reads this file (dtolnay/rust-toolchain with no
-# explicit version). Fleet standard 2026-10-15: exact-pinned stable (ccid-firmware-rs
-# AGENTS toolchain policy). Exceptions live ONLY where structural: the pinned esp
-# fork (esp-idf targets), nightly for instrumented fuzzing.
+# One authority per repo: CI extracts the channel from this file and passes
+# it to dtolnay/rust-toolchain explicitly (host-ci.yml). Fleet standard
+# 2026-10-15: exact-pinned stable (ccid-firmware-rs AGENTS toolchain policy).
+# Exceptions live ONLY where structural: the pinned esp fork (esp-idf
+# targets), nightly for instrumented fuzzing.
 [toolchain]
 channel = "1.99.0"
-# dtolnay's action installs components from HERE when the toolchain is
-# toml-driven (the input is ignored on that path — the 2026-10-16 bolty
-# red run: "'cargo-fmt' is not installed for the toolchain '1.99.0'").
+# For LOCAL rustup users: ensures rustfmt+clippy on toolchain install. CI
+# passes its own components input (the action does NOT read this list —
+# the 2026-10-16 red runs: "'cargo-fmt' is not installed", then
+# "'toolchain' is a required input" when the input was dropped entirely).
 components = ["rustfmt", "clippy"]

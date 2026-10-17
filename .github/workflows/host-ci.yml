@@ -17,8 +17,19 @@ jobs:
         with:
           submodules: recursive
 
+      # Single authority stays rust-toolchain.toml (a258f01): extract its
+      # channel and hand it to the action explicitly. The toml-driven path
+      # (empty toolchain input) red-ran twice on 2026-10-16 — run
+      # 38958165544: "'toolchain' is a required input"; and before that
+      # "'cargo-fmt' is not installed" when the components input was absent.
+      # The action needs BOTH an explicit channel and explicit components.
+      - name: Read pinned toolchain from rust-toolchain.toml
+        id: toolchain
+        run: echo "channel=$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
