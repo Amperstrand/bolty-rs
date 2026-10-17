@@ -1,0 +1,84 @@
+From bc3ebfb1bd0884eabba9dd20f59b602ccc6b137b Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@localhost>
+Date: Mon, 15 Jun 2026 17:15:20 +0200
+Subject: [PATCH 2/4] docs: add MIT OR Apache-2.0 licensing and update metadata
+
+- Add LICENSE file (dual MIT OR Apache-2.0, matching upstream)
+- Add LICENSING.md documenting the fork relationship
+- Add license/repository fields to Cargo.toml
+- Update description to reflect I2C support (not just 'esp32-ccid')
+---
+ Cargo.toml   |  4 +++-
+ LICENSE      |  7 +++++++
+ LICENSING.md | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 40 insertions(+), 1 deletion(-)
+ create mode 100644 LICENSE
+ create mode 100644 LICENSING.md
+
+diff --git a/Cargo.toml b/Cargo.toml
+index b67e471..2824792 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -2,7 +2,9 @@
+ edition = "2021"
+ name = "mfrc522"
+ version = "0.8.0"
+-description = "Vendored MFRC522 driver — patched for esp32-ccid (timer, register access)"
++description = "MFRC522 NFC frontend driver with I2C support (forked from upstream SPI-only crate)"
++license = "MIT OR Apache-2.0"
++repository = "https://github.com/Amperstrand/mfrc522-rs"
+ 
+ [lib]
+ name = "mfrc522"
+diff --git a/LICENSE b/LICENSE
+new file mode 100644
+index 0000000..df917b0
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,7 @@
++MIT OR Apache-2.0
++
++This crate is a fork of the upstream `mfrc522` Rust driver (v0.8.0),
++with patches for ESP32 I2C communication, timer configuration, and
++register access patterns.
++
++SPDX-License-Identifier: MIT OR Apache-2.0
+diff --git a/LICENSING.md b/LICENSING.md
+new file mode 100644
+index 0000000..5e9ad51
+--- /dev/null
++++ b/LICENSING.md
+@@ -0,0 +1,30 @@
++# Licensing
++
++## License
++
++This crate is dual-licensed under **MIT OR Apache-2.0**, matching the upstream
++`mfrc522` crate from which it is forked.
++
++## Why MIT OR Apache-2.0?
++
++The upstream [mfrc522 crate](https://crates.io/crates/mfrc522) (v0.8.0) uses
++the standard Rust dual-license (MIT OR Apache-2.0). As a derivative work, this
++fork maintains the same license.
++
++This license is compatible with all downstream consumers:
++- **bolty-rs** (GPL-3.0-or-later) — GPL-3.0 can incorporate MIT code
++- **ccid-firmware-rs** (GPL-2.0-or-later) — GPL-2.0 can incorporate MIT code
++
++## Relationship to upstream
++
++This fork adds:
++- I2C communication support (upstream only supported SPI)
++- Hardware timer configuration (`set_timeout_ms` pattern)
++- Register access patches for ESP32 I2C bus timing
++
++The upstream crate was at v0.8.0 when forked. This fork is maintained
++separately and is not intended for crates.io publication.
++
++## SPDX
++
++`SPDX-License-Identifier: MIT OR Apache-2.0`
+-- 
+2.43.0
+

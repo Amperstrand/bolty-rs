@@ -1,0 +1,174 @@
+From 82f706e18d08968a5b8c129fb924e82cf3c815ce Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@localhost>
+Date: Mon, 15 Jun 2026 15:42:42 +0200
+Subject: [PATCH] feat(wtx): implement S(WTX) timeout extension for NTAG424 DNA
+
+When the card sends S(WTX) to request more processing time, extend the
+transceiver timeout to WTXM * FWT before echoing the S(WTX) block, then
+restore the original timeout after. Without this, the ESP32 NFC frontend
+times out during long NTAG424 DNA cryptographic operations (MAC
+computation, key diversification).
+
+Adds try_set_timeout_ms() to PcdTransceiver trait (default: no-op) and
+base_fwt_ms field to PcdSession/Pcd for tracking the base frame waiting
+time.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)
+
+Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>
+---
+ src/type_a/mod.rs | 11 +++++++++++
+ src/type_a/pcd.rs | 34 ++++++++++++++++++++++++++++++++--
+ 2 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/src/type_a/mod.rs b/src/type_a/mod.rs
+index de027db..337f0f1 100644
+--- a/src/type_a/mod.rs
++++ b/src/type_a/mod.rs
+@@ -51,6 +51,17 @@ pub trait PcdTransceiver {
+     ///   compute and append CRC_A in software (via `crc::append_crc_a`) and
+     ///   validate it on received frames.
+     fn try_enable_hw_crc(&mut self) -> Result<(), Self::Error>;
++
++    /// Extend the receive timeout for S(WTX) exchanges.
++    ///
++    /// Called before sending an S(WTX) echo to give the card the additional
++    /// processing time it requested (ISO 14443-4 §7.5.7).  The default
++    /// implementation is a no-op; hardware transceivers should override it.
++    ///
++    /// Returns `Ok(())` if the timeout was updated, `Err(())` otherwise.
++    fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
++        Err(())
++    }
+ }
+ 
+ /// Trait for ISO14443 Type A PICC (card emulation) transceiver hardware.
+diff --git a/src/type_a/pcd.rs b/src/type_a/pcd.rs
+index d5e591b..3a29203 100644
+--- a/src/type_a/pcd.rs
++++ b/src/type_a/pcd.rs
+@@ -44,6 +44,7 @@ pub struct PcdSession {
+     hw_crc: bool,
+     fsc: usize,
+     handler: ProtocolHandler,
++    base_fwt_ms: u32,
+ }
+ 
+ #[derive(Debug)]
+@@ -52,6 +53,7 @@ pub struct Pcd<'t, T: PcdTransceiver> {
+     hw_crc: bool,
+     fsc: usize,
+     handler: ProtocolHandler,
++    base_fwt_ms: u32,
+ }
+ 
+ fn connect_session<T: PcdTransceiver>(
+@@ -154,6 +156,7 @@ fn collect_response_with<T: PcdTransceiver>(
+     t: &mut T,
+     handler: &mut ProtocolHandler,
+     hw_crc: bool,
++    base_fwt_ms: u32,
+     first: Block,
+ ) -> Result<ChainVec, PcdError<T::Error>> {
+     let mut block = first;
+@@ -162,7 +165,17 @@ fn collect_response_with<T: PcdTransceiver>(
+         match handler.process_received(block)? {
+             Action::Complete(data) => return Ok(data),
+             Action::Reply(reply) => {
++                let is_wtx = reply.block_type() == BlockType::SBlock
++                    && reply.pcb.s_subtype == Some(SBlockSubtype::Wtx);
++                if is_wtx && base_fwt_ms > 0 {
++                    let wtxm = reply.payload.as_slice().first().copied().unwrap_or(1) as u32;
++                    let extended = (wtxm * base_fwt_ms).max(base_fwt_ms);
++                    let _ = t.try_set_timeout_ms(extended);
++                }
+                 block = transceive_with_recovery_with(t, handler, hw_crc, &reply, true)?;
++                if is_wtx && base_fwt_ms > 0 {
++                    let _ = t.try_set_timeout_ms(base_fwt_ms);
++                }
+             }
+             _ => return Err(PcdError::Protocol(TypeAError::Other)),
+         }
+@@ -174,6 +187,7 @@ fn exchange_session<T: PcdTransceiver>(
+     handler: &mut ProtocolHandler,
+     hw_crc: bool,
+     fsc: usize,
++    base_fwt_ms: u32,
+     apdu: &[u8],
+ ) -> Result<ChainVec, PcdError<T::Error>> {
+     handler.reset_chain();
+@@ -214,7 +228,7 @@ fn exchange_session<T: PcdTransceiver>(
+     }
+ 
+     let first = last_resp.ok_or(PcdError::Protocol(TypeAError::Other))?;
+-    collect_response_with(t, handler, hw_crc, first)
++    collect_response_with(t, handler, hw_crc, base_fwt_ms, first)
+ }
+ 
+ fn deselect_session<T: PcdTransceiver>(
+@@ -258,9 +272,14 @@ impl PcdSession {
+             hw_crc,
+             fsc: ats.format.fsci.fsc(),
+             handler: ProtocolHandler::new(cid),
++            base_fwt_ms: 0,
+         }
+     }
+ 
++    pub fn set_base_fwt_ms(&mut self, ms: u32) {
++        self.base_fwt_ms = ms;
++    }
++
+     pub fn set_fsc(&mut self, fsc: usize) {
+         self.fsc = fsc;
+     }
+@@ -270,7 +289,14 @@ impl PcdSession {
+         t: &mut T,
+         apdu: &[u8],
+     ) -> Result<ChainVec, PcdError<T::Error>> {
+-        exchange_session(t, &mut self.handler, self.hw_crc, self.fsc, apdu)
++        exchange_session(
++            t,
++            &mut self.handler,
++            self.hw_crc,
++            self.fsc,
++            self.base_fwt_ms,
++            apdu,
++        )
+     }
+ 
+     pub fn deselect<T: PcdTransceiver>(&mut self, t: &mut T) -> Result<(), PcdError<T::Error>> {
+@@ -298,6 +324,7 @@ impl<'t, T: PcdTransceiver> Pcd<'t, T> {
+                 hw_crc: session.hw_crc,
+                 fsc: session.fsc,
+                 handler: session.handler,
++                base_fwt_ms: session.base_fwt_ms,
+             },
+             ats,
+         ))
+@@ -312,6 +339,7 @@ impl<'t, T: PcdTransceiver> Pcd<'t, T> {
+             hw_crc: session.hw_crc,
+             fsc: session.fsc,
+             handler: session.handler,
++            base_fwt_ms: session.base_fwt_ms,
+         }
+     }
+ 
+@@ -366,6 +394,7 @@ impl<'t, T: PcdTransceiver> Pcd<'t, T> {
+             &mut self.handler,
+             self.hw_crc,
+             self.fsc,
++            self.base_fwt_ms,
+             apdu,
+         )
+     }
+@@ -383,6 +412,7 @@ impl<'t, T: PcdTransceiver> Pcd<'t, T> {
+             self.transceiver,
+             &mut self.handler,
+             self.hw_crc,
++            self.base_fwt_ms,
+             first,
+         )
+     }
+-- 
+2.43.0
+

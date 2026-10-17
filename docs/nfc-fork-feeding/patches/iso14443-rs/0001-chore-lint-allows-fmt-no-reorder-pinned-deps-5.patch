@@ -1,0 +1,57 @@
+From 268db7945ea9486f73df47a36533fcdc4c1301b8 Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@users.noreply.github.com>
+Date: Sun, 30 Aug 2026 00:03:36 +0200
+Subject: [PATCH] chore: lint allows + fmt(no-reorder) + pinned deps (#5)
+
+---
+ src/lib.rs         | 2 ++
+ src/type_a/pcd.rs  | 6 +-----
+ src/type_a/rats.rs | 2 +-
+ 3 files changed, 4 insertions(+), 6 deletions(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 50df183..8213218 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -38,6 +38,8 @@
+ //! `#![no_std]` by default (uses `heapless` with fixed-size buffers).
+ 
+ #![no_std]
++#![allow(dead_code)]
++#![allow(clippy::result_unit_err)]
+ 
+ #[cfg(feature = "alloc")]
+ extern crate alloc;
+diff --git a/src/type_a/pcd.rs b/src/type_a/pcd.rs
+index 77c1659..3269e97 100644
+--- a/src/type_a/pcd.rs
++++ b/src/type_a/pcd.rs
+@@ -510,11 +510,7 @@ mod tests {
+         }
+ 
+         fn try_enable_hw_crc(&mut self) -> Result<(), MockError> {
+-            if self.hw_crc {
+-                Ok(())
+-            } else {
+-                Err(MockError)
+-            }
++            if self.hw_crc { Ok(()) } else { Err(MockError) }
+         }
+     }
+ 
+diff --git a/src/type_a/rats.rs b/src/type_a/rats.rs
+index 0398298..e2ae32c 100644
+--- a/src/type_a/rats.rs
++++ b/src/type_a/rats.rs
+@@ -25,7 +25,7 @@ impl RatsParam {
+ 
+ impl From<&RatsParam> for u8 {
+     fn from(value: &RatsParam) -> Self {
+-        ((value.0 as u8) << 4) | (value.1 .0)
++        ((value.0 as u8) << 4) | (value.1.0)
+     }
+ }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,54 @@
+From c911904d71342fa2bca23fce694b8daa3ffa514c Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@localhost>
+Date: Mon, 15 Jun 2026 15:44:24 +0200
+Subject: [PATCH] fix(protocol): toggle block number before building R(ACK)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Per ISO 14443-4 §7.5.4, R(ACK) must carry the next expected block number
+(the toggled value), not the received I-block's number. The original code
+built R(ACK) before toggling, which sent the same BN — signalling
+'retransmit' to the PICC instead of 'acknowledge'. This caused duplicate
+data in chained responses from NTAG424 DNA cards.
+
+Adds test assertion verifying R(ACK) carries BN=1 when receiving BN=0.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)
+
+Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>
+---
+ src/type_a/protocol.rs | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/src/type_a/protocol.rs b/src/type_a/protocol.rs
+index 3126ec5..e174aaa 100644
+--- a/src/type_a/protocol.rs
++++ b/src/type_a/protocol.rs
+@@ -147,9 +147,11 @@ impl ProtocolHandler {
+         self.chain.try_extend(block.payload.as_slice())?;
+ 
+         if block.is_chaining() {
+-            // R(ACK) carries the received block's number (before toggle)
+-            let rack = self.build_rack()?;
++            // ISO 14443-4 §7.5.4: R(ACK) must carry the *next* expected BN
++            // (the toggled value). Sending the same BN as the received I-block
++            // would signal "retransmit" to the PICC.
+             self.toggle_block_number();
++            let rack = self.build_rack()?;
+             Ok(Action::Reply(rack))
+         } else {
+             self.toggle_block_number();
+@@ -321,6 +323,9 @@ mod tests {
+             Action::Reply(reply) => {
+                 assert_eq!(reply.block_type(), BlockType::RBlock);
+                 assert_eq!(reply.pcb.r_subtype, Some(RBlockSubtype::Ack));
++                // R(ACK) must carry the *next* expected BN (toggled), not the
++                // received BN. Receiving BN=0 → R(ACK) BN=1.
++                assert_eq!(reply.block_number(), 1);
+             }
+             other => panic!("expected Reply(R(ACK)), got {:?}", other),
+         }
+-- 
+2.43.0
+

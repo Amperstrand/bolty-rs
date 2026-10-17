@@ -1,0 +1,61 @@
+From 228714a797491fc0ca0b7d7b9a037da961261f6f Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@localhost>
+Date: Mon, 15 Jun 2026 15:46:13 +0200
+Subject: [PATCH] fix(pcd): re-send original block during chain recovery
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When recovering from a transceiver error during PICC-side chaining, re-send
+the original R(ACK) block instead of calling build_rack() again. Since
+process_iblock already toggled the block number, build_rack() would produce
+a block with the wrong BN, causing the card to retransmit the wrong I-block
+and producing duplicate data in the assembled response.
+
+Per ISO 14443-4 §7.5.5 Rule 5, re-sending the same R(ACK) requests
+retransmission of the last chained I-block, which is the correct recovery
+action.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)
+
+Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>
+---
+ src/type_a/pcd.rs | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/src/type_a/pcd.rs b/src/type_a/pcd.rs
+index 3a29203..77c1659 100644
+--- a/src/type_a/pcd.rs
++++ b/src/type_a/pcd.rs
+@@ -137,15 +137,20 @@ fn transceive_with_recovery_with<T: PcdTransceiver>(
+                 }
+                 retries += 1;
+ 
+-                let recovery = if receiving_chain {
+-                    handler.build_rack()?
++                if receiving_chain {
++                    // ISO 14443-4 §7.5.5 Rule 5: re-send the same R(ACK).
++                    // block_number was already toggled by process_iblock, so build_rack()
++                    // would produce wrong BN → card retransmits wrong I-block → duplicate data.
++                    match transceive_block_with(t, hw_crc, block) {
++                        Ok(resp) => return Ok(resp),
++                        Err(_) => continue,
++                    }
+                 } else {
+-                    handler.build_rnak()?
+-                };
+-
+-                match transceive_block_with(t, hw_crc, &recovery) {
+-                    Ok(resp) => return Ok(resp),
+-                    Err(_) => continue,
++                    let recovery = handler.build_rnak()?;
++                    match transceive_block_with(t, hw_crc, &recovery) {
++                        Ok(resp) => return Ok(resp),
++                        Err(_) => continue,
++                    }
+                 }
+             }
+         }
+-- 
+2.43.0
+
