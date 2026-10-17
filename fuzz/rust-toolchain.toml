@@ -1,0 +1,8 @@
+# Nightly exception, scoped to the fuzz crate only (see the root
+# rust-toolchain.toml header: "nightly for instrumented fuzzing" is the
+# documented structural exception). Without this, the root 1.99.0 pin
+# overrides CI's nightly default and cargo-fuzz's -Zsanitizer flags are
+# rejected by stable ("the option `Z` is only accepted on the nightly
+# compiler" — the 2026-10-17 fuzz-smoke red runs).
+[toolchain]
+channel = "nightly"
