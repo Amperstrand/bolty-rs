@@ -1,0 +1,45 @@
+---
+# Workflow: fuzz smoke — #86 phase 1 (parser/auth pure functions).
+#
+# Runs every cargo-fuzz target for a short bounded time so parser
+# regressions surface on PRs instead of in nightly-only sessions. The
+# differential-vs-ACR1252U leg (phase 2) is queued behind the rig lane's
+# reader ownership and is deliberately NOT here.
+#
+# nightly is the documented toolchain exception for instrumented fuzzing
+# (rust-toolchain.toml header); the fuzz crate is detached from the
+# stable workspace (fuzz/Cargo.toml [workspace]).
+
+name: fuzz-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *" # nightly: longer runs than PR smoke
+
+jobs:
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - picc_parse_url
+          - picc_decrypt_p
+          - picc_verify_c
+          - parse_ndef_uri
+          - standardize_url_template
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Fuzz ${{ matrix.target }} (60s)
+        working-directory: fuzz
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60 -rss_limit_mb=2560
