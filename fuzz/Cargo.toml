@@ -1,0 +1,52 @@
+[package]
+name = "bolty-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+bolty-ntag = { path = "../crates/bolty-ntag" }
+bolty-core = { path = "../crates/bolty-core" }
+# The fork we ship (bolty-rs pins rev 268db79)
+iso14443-fork = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "8145d9e", package = "iso14443", features = ["alloc"] }
+# Canonical upstream for the differential leg
+iso14443-upstream = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", package = "iso14443", features = ["alloc"] }
+
+[[bin]]
+name = "fuzz_parse_ndef_uri"
+path = "fuzz_targets/parse_ndef_uri.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_picc_url"
+path = "fuzz_targets/picc_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_iso14443_ats_fork"
+path = "fuzz_targets/iso14443_ats_fork.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_iso14443_ats_upstream"
+path = "fuzz_targets/iso14443_ats_upstream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_iso14443_ats_diff"
+path = "fuzz_targets/iso14443_ats_diff.rs"
+test = false
+doc = false
+bench = false
