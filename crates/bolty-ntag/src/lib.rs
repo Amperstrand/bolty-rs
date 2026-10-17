@@ -1026,3 +1026,55 @@ mod zeroize_tests {
         drop(keyed);
     }
 }
+
+/// The HIL suite's `_access_rights()` helper regexes inspect output for
+/// `access_rights: AccessRights \{([^}]+)\}` with per-field
+/// `(Free|Key\(Key\d\))` — the DERIVED Debug format of the ntag424 types
+/// is a cross-language output contract (tools/hil/tests/
+/// test_burn_lock_wipe.py; bolty-cli prints it at `NDEF file settings:
+/// {settings:?}`). A field rename or derive change would break the bench
+/// suite on hardware; this locks the shape host-side (#73 graduation
+/// candidate 2 — split, don't delete).
+#[cfg(test)]
+mod hil_output_contract_tests {
+    use super::*;
+    use alloc::format;
+    use ntag424::types::file_settings::{CommMode, FileSettingsView, FileType};
+
+    fn view(rights: AccessRights) -> FileSettingsView {
+        FileSettingsView {
+            file_type: FileType::StandardData,
+            file_size: 256,
+            comm_mode: CommMode::Plain,
+            access_rights: rights,
+            sdm: None,
+        }
+    }
+
+    #[test]
+    fn burned_access_rights_debug_shape_matches_hil_regex() {
+        let dbg = format!("{:?}", view(burned_ndef_access_rights()));
+        assert!(dbg.contains("access_rights: AccessRights {"), "{dbg}");
+        for needle in [
+            "read: Free",
+            "write: Key(Key0)",
+            "read_write: Key(Key0)",
+            "change: Key(Key0)",
+        ] {
+            assert!(dbg.contains(needle), "{needle} missing from {dbg}");
+        }
+    }
+
+    #[test]
+    fn factory_access_rights_debug_shape_matches_hil_regex() {
+        let dbg = format!("{:?}", view(factory_ndef_access_rights()));
+        for needle in [
+            "read: Free",
+            "write: Free",
+            "read_write: Free",
+            "change: Key(Key0)",
+        ] {
+            assert!(dbg.contains(needle), "{needle} missing from {dbg}");
+        }
+    }
+}

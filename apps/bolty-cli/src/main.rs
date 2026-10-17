@@ -9,6 +9,7 @@ mod keyver;
 #[cfg(test)]
 #[path = "mock_transport.rs"]
 mod mock_transport;
+mod output;
 mod picc;
 mod provision;
 mod scan_keys;

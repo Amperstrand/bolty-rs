@@ -132,13 +132,14 @@ fn decrypt_and_display_sdm(k1: &[u8; 16], k2: &[u8; 16], parsed: &NdefUri) {
     match picc_crypto::picc_decrypt_p(k1, p_hex) {
         Some(picc) => {
             println!(
-                "\nSDM PICC decrypted: UID={} counter={} CMAC_valid={}",
+                "\nSDM PICC decrypted: UID={} counter={} {}{}",
                 picc.uid
                     .as_ref()
                     .map(crate::to_hex)
                     .unwrap_or_else(|| "none (privacy mode)".to_string()),
                 picc.counter,
-                picc_crypto::picc_verify_c(k2, &picc, c_hex)
+                crate::output::CMAC_VALID_PREFIX,
+                picc_crypto::picc_verify_c(k2, &picc, c_hex),
             );
         }
         None => println!("\nSDM PICC decryption failed (wrong K1?)"),

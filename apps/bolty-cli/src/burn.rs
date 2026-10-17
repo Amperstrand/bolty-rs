@@ -325,7 +325,7 @@ where
         ),
         Some(provenance),
     );
-    println!("\n✅ Card burned and verified successfully!");
+    println!("\n{}", crate::output::BURN_OK);
     Ok(())
 }
 
