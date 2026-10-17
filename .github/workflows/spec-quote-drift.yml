@@ -5,13 +5,12 @@
 # crates/ match the boltcard spec (boltcard/boltcard docs/) verbatim, so
 # comments claiming spec behavior cannot silently drift from the spec.
 #
-# Tool: https://github.com/rustyrussell/greatspectations
-#
-# Local usage:
-#   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
-#   python -m greatspectations check --config specquotes.toml \
-#     --comment-start '// ' --comment-continue '//' -k \
-#     crates/bolty-core/src crates/bolty-ntag/src apps/bolty-cli/src
+# Tool: Amperstrand fork (issue #69), pinned by commit — the fork's
+# ai-experimental-slop branch moves; a quote red-run must mean quote drift,
+# never tool drift. Spec source pinned the same way (conformance-audit.md
+# §1 quote-lock rule): the weekly cron catches LOCAL drift against the
+# pinned bytes; UPSTREAM spec changes surface as a deliberate pin-bump
+# review that re-verifies every quote.
 #
 # NXP-layer facts (NTAG424 datasheet, AN12196) are intentionally not covered:
 # proprietary PDFs have no canonical text source; that layer is guarded by
@@ -24,7 +23,13 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 6 * * 1" # weekly: catch upstream spec changes
+    - cron: "0 6 * * 1" # weekly: local drift against the pinned spec bytes
+
+env:
+  # boltcard/boltcard docs @ 2026-08-19 (last upstream docs commit)
+  SPEC_PIN: b8f11ecd63ce884eeaf0185d8ce1846960b64b5f
+  # Amperstrand/greatspectations @ ai-experimental-slop (issue #69 fork)
+  GS_TOOL_PIN: 272c171
 
 jobs:
   spec-quote-drift:
@@ -34,10 +39,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install greatspectations
-        run: pip install git+https://github.com/rustyrussell/greatspectations.git
-      - name: Clone boltcard spec
-        run: git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+      - name: Install greatspectations (pinned fork)
+        run: pip install git+https://github.com/Amperstrand/greatspectations.git@${{ env.GS_TOOL_PIN }}
+      - name: Clone boltcard spec (pinned)
+        run: |
+          git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+          git -C spec fetch --depth=1 origin $SPEC_PIN
+          git -C spec checkout $SPEC_PIN
       - name: Spec-quote check
         run: |
           python -m greatspectations check --config specquotes.toml \

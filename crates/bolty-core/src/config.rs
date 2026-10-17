@@ -29,6 +29,8 @@ pub struct BoltyConfig {
     pub force_unsafe: bool,
 }
 
+// BOLT_DET: * `IssuerKey`: This 16-bytes key is used by an `LNUrl Withdraw Service` to setup all its BoltCards.
+
 /// Issuer material required to deterministically derive a card keyset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuerConfig {
