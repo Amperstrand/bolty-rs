@@ -19,7 +19,7 @@ use core::fmt::{self, Debug, Display, Formatter};
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
 use iso14443::type_a::{Ats, Cid, Fsdi, PcdError, activation};
-use iso14443_session::{PcdSession, TimeoutExt};
+use iso14443_session::PcdSession;
 use mfrc522::Error as Mfrc522Error;
 use ntag424::{Response, Transport};
 

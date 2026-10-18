@@ -63,6 +63,8 @@ const MAX_RETRIES: u8 = 2;
 /// happens; only the timeout extension is skipped). Hardware front-ends
 /// with a fixed FWT timer override this.
 pub trait TimeoutExt {
+    // Deliberate `()`: the optional hook carries no diagnostics — callers only test is_ok().
+    #[allow(clippy::result_unit_err)]
     fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
         Err(())
     }
@@ -95,10 +97,7 @@ impl PcdSession {
         let rats = RatsParam::new(fsdi, cid);
         let rats_byte = u8::from(&rats);
         let data = if hw_crc {
-            let mut v = FrameVec::new();
-            v.push(0xe0);
-            v.push(rats_byte);
-            v
+            vec![0xe0, rats_byte]
         } else {
             append_crc_a(&[0xe0, rats_byte])?
         };
