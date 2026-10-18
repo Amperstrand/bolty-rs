@@ -21,4 +21,5 @@ alloc = []
 workspace = true
 
 [dev-dependencies]
+serde_json = "1"
 proptest = "1"

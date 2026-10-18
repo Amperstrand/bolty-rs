@@ -98,3 +98,8 @@ status:
 	@if test -f tools/hil/results/history.jsonl; then \
 	  echo "  last run: $$(tail -1 tools/hil/results/history.jsonl | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f\"{d[\"ts\"]} exit={d[\"exit\"]} {d[\"passed\"]}p/{d[\"failed\"]}f/{d[\"skipped\"]}s\")' 2>/dev/null)"; \
 	fi
+
+# Reference-locked NTAG424 cross-language vector suite (ntag424-vectors)
+vectors-check:
+	@cd tests/fixtures/ntag424-vectors && awk '/^vectors.json sha256:/{print $$3"  "$$1}' LOCK | sha256sum -c -
+	@cargo test -p bolty-core --test ntag424_vectors
