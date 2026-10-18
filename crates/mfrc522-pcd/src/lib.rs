@@ -266,7 +266,9 @@ impl<I2C: I2c> PcdTransceiver for Mfrc522Transceiver<I2C> {
     fn try_enable_hw_crc(&mut self) -> Result<(), Self::Error> {
         Err(Mfrc522Error::Protocol)
     }
+}
 
+impl<I2C: I2c> iso14443_session::TimeoutExt for Mfrc522Transceiver<I2C> {
     fn try_set_timeout_ms(&mut self, ms: u32) -> Result<(), ()> {
         self.set_timeout_ms(ms).map_err(|_| ())
     }
