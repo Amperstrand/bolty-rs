@@ -357,7 +357,9 @@ class RecordingMutex(CardMutex):
 
 
 def test_dry_run_mode_a_end_to_end(tmp_path):
-    orch = build_dry_run_app(scaled(3.0), tmp_path, gate_ok=True)
+    # 8s not 3s: ResultsStore fsyncs per row/event; on slow CI disks that
+    # alone can overrun a 3s budget and dynamically shrink ROLE_GATE away.
+    orch = build_dry_run_app(scaled(8.0), tmp_path, gate_ok=True)
     rec = RecordingMutex()
     orch.mutex = rec
     orch.registry = LaneRegistry(orch.store, orch.clock)
@@ -386,7 +388,9 @@ def test_dry_run_mode_a_end_to_end(tmp_path):
 
 
 def test_dry_run_mode_b_fallback(tmp_path):
-    orch = build_dry_run_app(scaled(3.0), tmp_path, gate_ok=False)
+    # 8s not 3s: same CI-disk overrun risk as mode_a — the gate must run
+    # or mode_decision stays None (dynamic phase shrink skips it).
+    orch = build_dry_run_app(scaled(8.0), tmp_path, gate_ok=False)
     rc = orch.run()
     assert rc == 0
     state = ResultsStore.load(tmp_path / "results.json")
