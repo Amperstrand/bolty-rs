@@ -270,6 +270,7 @@ dependencies = [
  "cmac",
  "heapless 0.9.2",
  "proptest",
+ "serde_json",
  "zeroize",
 ]
 
