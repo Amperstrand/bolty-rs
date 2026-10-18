@@ -8,7 +8,8 @@ description = "MFRC522 NFC transport for ntag424"
 [dependencies]
 mfrc522-pcd = { path = "../mfrc522-pcd" }
 ntag424 = { workspace = true }
-iso14443 = { workspace = true }
+iso14443 = { workspace = true, features = ["std"] }
+iso14443-session = { path = "../iso14443-session" }
 mfrc522 = { workspace = true }
 embedded-hal = "=1.0.0"
 log = "=0.4.29"

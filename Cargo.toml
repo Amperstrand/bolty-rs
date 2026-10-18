@@ -10,7 +10,9 @@ members = [
 [workspace.dependencies]
 ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "afb7238516bcf5fac177eba1910565d1dde9354c", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
-iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "73db6d4", features = ["alloc"] }
+# Canonical upstream directly — the Amperstrand fork is retired; our session
+# API + WTX hook live consumer-side in crates/iso14443-session.
+iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", features = ["alloc"] }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

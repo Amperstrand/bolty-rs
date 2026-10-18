@@ -18,10 +18,8 @@ use core::fmt::{self, Debug, Display, Formatter};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::I2c;
-use iso14443::type_a::{
-    Ats, Cid, Fsdi, activation,
-    pcd::{PcdError, PcdSession},
-};
+use iso14443::type_a::{Ats, Cid, Fsdi, PcdError, activation};
+use iso14443_session::PcdSession;
 use mfrc522::Error as Mfrc522Error;
 use ntag424::{Response, Transport};
 
@@ -210,13 +208,10 @@ fn split_response<E>(response: &[u8]) -> Result<Response<Vec<u8>>, Error<E>> {
 }
 
 fn frame_wait_time_ms(ats: &Ats) -> u32 {
-    let fwi = ats.tb.fwi.value();
-    if fwi == 0 {
-        5
-    } else {
-        let fwt_us = 302u64 * (1u64 << fwi);
-        (fwt_us / 1000 + 10) as u32
-    }
+    // Upstream's Fwi::fwt() is the spec formula (256*16/fc * 2^FWI); our
+    // old .value() arithmetic produced the same numbers via 302us steps.
+    let us = ats.tb.fwi.fwt().as_micros() as u32;
+    if us == 0 { 5 } else { us / 1000 + 10 }
 }
 
 #[cfg(test)]

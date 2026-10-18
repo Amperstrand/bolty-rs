@@ -1,0 +1,9 @@
+[package]
+name = "iso14443-session"
+version = "0.1.0"
+edition = "2021"
+description = "Borrow-free ISO 14443-4 PCD session over the public upstream iso14443 API: caller-owned transceiver, S(WTX) timeout extension, Rule-5-correct chain recovery"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", features = ["alloc"] }

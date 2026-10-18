@@ -19,6 +19,9 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 bolty-core = { path = "../crates/bolty-core" }
 bolty-ntag = { path = "../crates/bolty-ntag" }
+# Canonical upstream directly — the Amperstrand fork is retired (the
+# fork-vs-upstream differential found its fix and closed itself out).
+iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", package = "iso14443", features = ["alloc"] }
 
 [[bin]]
 name = "picc_parse_url"
@@ -54,3 +57,18 @@ path = "fuzz_targets/standardize_url_template.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_picc_url"
+path = "fuzz_targets/picc_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "iso14443_ats"
+path = "fuzz_targets/iso14443_ats.rs"
+test = false
+doc = false
+bench = false
+
