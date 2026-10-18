@@ -2,6 +2,15 @@
 # Firmware-build gate: the pre-commit suite checks host crates only —
 # bolty-esp32 breakages (feature/cfg issues) must be caught before push.
 set -euo pipefail
+# 2026-10-18 incident: this gate's embuild step re-downloaded the ~2 GB
+# xtensa toolchain onto a 100%-full bench host and wedged every lane on it.
+# Require headroom for toolchain (~2 G) + extraction + build artifacts.
+free_kb=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
+if [ "$free_kb" -lt 8388608 ]; then
+  echo "pre-push: only $((free_kb / 1048576))G free under \$HOME — the esp32 gate needs ~8G (embuild may pull the xtensa toolchain)." >&2
+  echo "pre-push: free space or re-run with --no-verify; CI's esp32-build job runs the same gate." >&2
+  exit 1
+fi
 export PATH="$HOME/.cargo/bin:$PATH"
 cd "$(git rev-parse --show-toplevel)/apps/bolty-esp32"
 cargo +esp build --release --features board-m5stick
