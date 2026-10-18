@@ -36,7 +36,7 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     "https://github.com/Amperstrand/ntag424.git",
     "https://github.com/Amperstrand/mfrc522-rs.git",
-    "https://github.com/Amperstrand/iso14443-rs.git",
+    "https://github.com/Foundation-Devices/iso14443-rs.git",  # upstream direct — the Amperstrand fork is retired (#105)
     "https://github.com/Amperstrand/esp-idf-svc.git",
     "https://github.com/Amperstrand/ccid-firmware-rs.git",  # pn7160-nci (shared NCI core, rev-pinned)
 ]
