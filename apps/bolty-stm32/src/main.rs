@@ -76,6 +76,60 @@ mod stm32 {
     #[global_allocator]
     static ALLOC: embedded_alloc::Heap = embedded_alloc::Heap::empty();
 
+    // Hardware init behind the board feature (docs/stm32-nfc-frontend-plan.md,
+    // option A). Clock plan mirrors ccid-firmware-rs's F469 config; I2C1
+    // alt-map pins PB6/PB7 chosen to avoid every in-tree co-tenant claim
+    // (PINOUT-nfc.md). A raw bus scan is all we do until an MFRC522 is
+    // physically wired — no PCD register access, no card handling.
+    #[cfg(feature = "board-stm32f4-disco")]
+    mod board {
+        use stm32f4xx_hal::{i2c::I2c, pac, prelude::*};
+
+        pub struct Board {
+            pub _i2c: I2c<pac::I2C1>,
+        }
+
+        pub fn init(dp: pac::Peripherals) -> Board {
+            let mut rcc = dp.RCC.freeze(
+                stm32f4xx_hal::rcc::Config::hse(8.MHz())
+                    .sysclk(168.MHz())
+                    .pclk1(42.MHz())
+                    .pclk2(84.MHz())
+                    .require_pll48clk(),
+            );
+            defmt::info!("bolty-stm32: clocks ok (sysclk 168 MHz, hse 8 MHz)");
+
+            let gpiob = dp.GPIOB.split(&mut rcc);
+            // PB6 = SCL, PB7 = SDA for I2C1 (alt map; AF conversion is done
+            // by I2c::new — same call shape as the BSP touch init).
+            let mut i2c = I2c::new(dp.I2C1, (gpiob.pb6, gpiob.pb7), 100.kHz(), &mut rcc);
+            defmt::info!("bolty-stm32: i2c1 ok (pb6=scl pb7=sda, 100 kHz)");
+
+            // Bus scan (7-bit). With no NFC module wired yet this proves
+            // the bus is electrically sane and reports who else answers
+            // (co-tenant/onboard devices) — the plan's checklist item.
+            let mut found = 0u8;
+            let mut mfrc522 = false;
+            for addr in 1u8..=0x7F {
+                if i2c.write(addr, &[]).is_ok() {
+                    defmt::info!("bolty-stm32: i2c scan: device at 0x{:x}", addr);
+                    found += 1;
+                    mfrc522 |= addr == mfrc522_pcd::DEFAULT_I2C_ADDRESS;
+                }
+            }
+            if mfrc522 {
+                defmt::info!("bolty-stm32: nfc=mfrc522 detected at 0x28");
+            } else {
+                defmt::warn!(
+                    "bolty-stm32: nfc=mfrc522 NOT detected (expected until wiring; scan found {} other device(s))",
+                    found
+                );
+            }
+
+            Board { _i2c: i2c }
+        }
+    }
+
     #[entry]
     fn main() -> ! {
         // defmt requires a timestamp provider from the binary (no timers
@@ -98,12 +152,16 @@ mod stm32 {
 
         defmt::info!("bolty-stm32: heap initialized ({} bytes)", 64 * 1024);
 
+        #[cfg(feature = "board-stm32f4-disco")]
+        let _board = board::init(stm32f4xx_hal::pac::Peripherals::take().unwrap());
+
         // TODO: Hardware initialization
-        // 1. Initialize STM32 clocks (RCC)
-        // 2. Initialize I2C peripheral (for MFRC522)
-        // 3. Initialize UART (for serial console)
-        // 4. Create Mfrc522Transceiver from I2C
-        // 5. Create Mfrc522Transport
+        // 1. Initialize STM32 clocks (RCC)                  — done (board::init)
+        // 2. Initialize I2C peripheral (for MFRC522)        — done (board::init, scan only)
+        // 3. Initialize UART (for serial console)           — TODO (USART1 via ST-LINK VCP?)
+        // 4. Create Mfrc522Transceiver from I2C             — TODO (module not wired yet; needs
+        //                                                    an e-h 1.0 adapter for the hal's I2c)
+        // 5. Create Mfrc522Transport                        — TODO (with 4)
         //
         // The code below shows the intended API usage:
         //
