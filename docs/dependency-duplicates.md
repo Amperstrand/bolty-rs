@@ -7,7 +7,7 @@ re-triage when a listed owner issue closes.
 
 | Base | Versions | Root (invert evidence) | Decision | Owner |
 |---|---|---|---|---|
-| digest | 0.10.7 / 0.11.2 | 0.10: ntag424 fork → p224 0.13 → ecdsa 0.16. 0.11: bolty-core → cmac 0.8 | **defer** — collapses only via the ntag424 source decision (fork refresh vs upstream re-pin) | #109 |
+| digest | 0.10.7 / 0.11.2 | 0.10: ntag424 fork → p224 0.13 → ecdsa 0.16. 0.11: bolty-core → cmac 0.8 | **defer** — until p224 0.14 stable: the digest-0.11 generation exists only as `0.14.0-rc` (rc.15 2026-06-29; stable is 0.13.2/2023). #109 decided keep-fork+feed 2026-10-19; lever = fork-side p224 refresh. Re-check quarterly | #109 |
 | block-buffer | 0.10.4 / 0.12.0 | rides digest 0.10 / 0.11 | **defer** — collapses with digest | #109 |
 | crypto-common | 0.1.6 / 0.2.1 | rides digest 0.10 / 0.11 | **defer** — collapses with digest | #109 |
 | cpufeatures | 0.2.17 / 0.3.0 | rides digest 0.10 / 0.11 | **defer** — collapses with digest | #109 |
@@ -20,7 +20,11 @@ Notes:
 
 - The digest family (digest + 5 riders) is one decision, not six — all six
   flip together when the ntag424 fork's P-224 chain moves to digest 0.11
-  (or the fork is retired for an upstream that already did).
+  (or the fork is retired for an upstream that already did). 2026-10-19
+  (#109): upstream v0.1.1 pins the identical p224 0.13.2 chain, so re-pin
+  was investigated and rejected as a collapse route — RC-adoption of
+  p224 0.14 on the burn path is the only lever and is deferred until
+  stable.
 - syn 3 and webpki-roots 1.x are accepted *because* they are host-only
   (bolty CLI build/exec graph); if either ever enters a firmware graph,
   re-triage (size pressure on thumbv7em/xtensa).
