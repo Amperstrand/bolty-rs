@@ -6,4 +6,4 @@ description = "Borrow-free ISO 14443-4 PCD session over the public upstream iso1
 license = "GPL-3.0-or-later"
 
 [dependencies]
-iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", features = ["alloc"] }
+iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", rev = "216d1b919ca1fd4d30048a1c764f14379137f3c7", features = ["alloc"] }
