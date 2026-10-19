@@ -1,3 +1,4 @@
+use std::ffi::CString;
 use std::fmt;
 
 use bolty_ntag::{Response, Transport};
@@ -52,18 +53,40 @@ impl From<pcsc::Error> for PcscError {
 
 impl PcscTransport {
     /// Connect to the first available reader with a card present.
+    ///
+    /// Virtual readers (vpcd) are never auto-selected — their names contain
+    /// "PICC" and shadow the ACR1252's real PICC interface in the match
+    /// below. `BOLTY_READER=<substring>` pins the reader by stable identity.
     pub fn connect() -> Result<Self, PcscError> {
         let ctx = pcsc::Context::establish(pcsc::Scope::User)?;
         let readers = ctx.list_readers_owned()?;
 
-        let reader_cstr = readers
+        let virt = |s: &str| s.contains("Virtual") || s.contains("vpcd");
+        let candidates: Vec<&CString> = readers
             .iter()
-            .find(|r| r.to_str().map(|s| s.contains("PICC")).unwrap_or(false))
-            .or_else(|| {
-                readers
+            .filter(|r| r.to_str().map(|s| !virt(s)).unwrap_or(true))
+            .collect();
+        let reader_cstr = std::env::var("BOLTY_READER")
+            .ok()
+            .and_then(|want| {
+                candidates
                     .iter()
+                    .copied()
+                    .find(|r| r.to_str().map(|s| s.contains(&want)).unwrap_or(false))
+            })
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
+                    .find(|r| r.to_str().map(|s| s.contains("PICC")).unwrap_or(false))
+            })
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
                     .find(|r| r.to_str().map(|s| !s.contains("SAM")).unwrap_or(false))
             })
+            .or_else(|| candidates.first().copied())
             .or_else(|| readers.first())
             .ok_or(PcscError::NoReaders)?;
         let reader_name = reader_cstr.to_str().unwrap_or("(unknown)").to_string();

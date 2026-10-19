@@ -4,7 +4,7 @@
 # any labgrid-coordinator restart (or when acquire says "matches nothing").
 set -euo pipefail
 
-COORDINATOR="${LABGRID_COORDINATOR:-192.168.13.221:20408}"
+COORDINATOR="${LABGRID_COORDINATOR:-192.168.13.208:20408}"
 PLACE="bolty-rig"
 
 lg() { labgrid-client -x "$COORDINATOR" -p "$PLACE" "$@"; }
@@ -16,6 +16,8 @@ else
     echo "place $PLACE created"
 fi
 
-lg add-match 'ai-legion-small/m5stick-serial/NetworkSerialPort'
-lg add-match 'ai-legion-small/acr1252/NetworkSmartcardReader'
+# Post-2026-09-26 consolidation resource names (this host's exporter):
+# matches the rig's stick USB serial + the ACR1252 reference reader.
+lg add-match 'ai-legion-nfc/m5stick-usb/SerialPort'
+lg add-match 'ai-legion-nfc/ref-acr1252/USBDevice'
 lg show | sed -n '1,4p'

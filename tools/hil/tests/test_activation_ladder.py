@@ -55,7 +55,10 @@ def test_diagnose_roundtrip_is_repeatable(cli, coupled_card_uid: str, registry: 
     registry.require(coupled_card_uid, "read")
     ok = 0
     for _ in range(5):
-        out = cli.run("diagnose", timeout_s=60)
+        out = cli.run(
+            "diagnose", "--issuer-key", "00000000000000000000000000000001",
+            timeout_s=60,
+        )
         if "UID:" in out and coupled_card_uid in out.lower():
             ok += 1
     assert ok == 5, f"diagnose stable only {ok}/5 runs"

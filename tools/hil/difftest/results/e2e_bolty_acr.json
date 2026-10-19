@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-09-03T11:54:35.456741+00:00",
-  "bolty_cli": "/home/ubuntu/src/bolty-rs/target/debug/bolty-cli",
+  "timestamp": "2026-10-19T12:19:09.806459+00:00",
+  "bolty_cli": "/root/src/bolty-rs-bench2/target/debug/bolty-cli",
   "session1": {
     "reader_target": "PICC",
-    "timestamp": "2026-09-03T11:54:35.456704+00:00",
+    "timestamp": "2026-10-19T12:19:09.806436+00:00",
     "commands": [
       {
         "cmd": "uid",
         "rc": 0,
-        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nUID: 04c474fa967380",
+        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00\nUID: 04c474fa967380",
         "stderr": "",
-        "duration_ms": 165.6,
+        "duration_ms": 134.6,
         "success": true,
         "test_id": "uid",
         "reader_target": "PICC"
@@ -18,9 +18,9 @@
       {
         "cmd": "inspect --issuer-key 00000000000000000000000000000001 --verbose",
         "rc": 0,
-        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nUID: 04c474fa967380\nVersion: HW vendor=04 type=04 ver=30.00 | SW vendor=04 type=04 ver=01.02 | Batch=3475920457 CW19 21\nNDEF file settings: FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Free, read_write: Free, change: Key(Key0) }, sdm: Some(Sdm { picc_data: None, file_read: None, tamper_status: None }) }\nNDEF content (256 bytes): 0000d1014b5504626f6c7463617264706f632e707362742e6d652f3f703d303030303030303030303030303030303030303030303030303030303030303026633d3030303030303030303030303030303000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00\nUID: 04c474fa967380\nVersion: HW vendor=04 type=04 ver=30.00 | SW vendor=04 type=04 ver=01.02 | Batch=3475920457 CW19 21\nNDEF file settings: FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Key(Key0), read_write: Key(Key0), change: Key(Key0) }, sdm: Some(Sdm { picc_data: Encrypted { key: Key1, offset: Offset(30), content: Both(ReadCtrFeatures { limit: None, ret_access: NoAccess }) }, file_read: Some(MacOnly { key: Key2, window: MacWindow { input: Offset(65), mac: Offset(65) } }), tamper_status: None }) }\nNDEF content (256 bytes): 004fd1014b5504626f6c7463617264706f632e707362742e6d652f3f703d394244454338413936354431343932463335343530344137303035453346374326633d3735464435323833434346433941464100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\n\nNDEF URL: https://boltcardpoc.psbt.me/?p=9BDEC8A965D1492F354504A7005E3F7C&c=75FD5283CCFC9AFA\n\nDerived keys (version 1):\n  K0: 4712164871b802dbbefa2589cec67ec4\n  K1: 55da174c9608993dc27bb3f30a4a7314\n  K2: 4b316b8f7fa2c41c65f55327bdbf991d\n\nSDM PICC decrypted: UID=04c474fa967380 counter=383 CMAC_valid=true\nK0 auth: SUCCESS\n  (use `keyver` command for authenticated file settings read)",
         "stderr": "",
-        "duration_ms": 135.7,
+        "duration_ms": 133.3,
         "success": true,
         "test_id": "inspect",
         "reader_target": "PICC"
@@ -28,20 +28,20 @@
       {
         "cmd": "diagnose --issuer-key 00000000000000000000000000000001",
         "rc": 0,
-        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\n=== DIAGNOSE ===\n\nUID:            04c474fa967380\nVersion:        HW vendor=04 type=04 v=30.00 | SW vendor=04 type=04 v=01.02\nSDM active:     false\nFile settings:  FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Free, read_write: Free, change: Key(Key0) }, sdm: Some(Sdm { picc_data: None, file_read: None, tamper_status: None }) }\nNDEF:           256 bytes, no valid URI\n\nCard appears blank \u2014 trying factory K0...\n  Factory K0:    OK\n\n=== DIAGNOSIS ===\nCard state:     BLANK\nKey provenance:  FactoryDefault\n  Factory keys, no SDM, empty NDEF.\n  Ready to burn: bolty-cli burn --issuer-key <KEY> --url <URL>",
+        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00\n=== DIAGNOSE ===\n\nUID:            04c474fa967380\nVersion:        HW vendor=04 type=04 v=30.00 | SW vendor=04 type=04 v=01.02\nSDM active:     true\nFile settings:  FileSettingsView { file_type: StandardData, file_size: 256, comm_mode: Plain, access_rights: AccessRights { read: Free, write: Key(Key0), read_write: Key(Key0), change: Key(Key0) }, sdm: Some(Sdm { picc_data: Encrypted { key: Key1, offset: Offset(30), content: Both(ReadCtrFeatures { limit: None, ret_access: NoAccess }) }, file_read: Some(MacOnly { key: Key2, window: MacWindow { input: Offset(65), mac: Offset(65) } }), tamper_status: None }) }\nNDEF:           256 bytes, URL=https://boltcardpoc.psbt.me/?p=5F9EAC5A009F5E98672BD82A3B2B9757&c=B5DA4CD21C6AA722\n\nSDM params:     p=5F9EAC5A009F5E98672BD82A3B2B9757 c=B5DA4CD21C6AA722\nSDM verify:     uid_match=true, counter=384, mac=true\n\n=== DIAGNOSIS ===\nCard state:     PROVISIONED\nKey provenance:  DerivedIssuer(1)\n  SDM active, PICC decrypts and verifies with provided issuer key.",
         "stderr": "",
-        "duration_ms": 160.5,
+        "duration_ms": 115.1,
         "success": true,
         "test_id": "diagnose",
         "reader_target": "PICC"
       },
       {
         "cmd": "picc --issuer-key 00000000000000000000000000000001",
-        "rc": 1,
-        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 00 00\nCard UID:  04c474fa967380",
-        "stderr": "Error: NDEF content is not a valid URI record.\nCard may not be provisioned with SDM, or NDEF is empty/corrupt.",
-        "duration_ms": 134.3,
-        "success": false,
+        "rc": 0,
+        "stdout": "Connected to reader: ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00\nCard UID:  04c474fa967380\nNDEF URL: https://boltcardpoc.psbt.me/?p=F10649FE4CAF85A1C9C58279A244645B&c=11A6A7EAB711E846\n\nExtracted SDM parameters:\n  p = F10649FE4CAF85A1C9C58279A244645B\n  c = 11A6A7EAB711E846\n\nPICC data (decrypted with K1):\n  UID:            04c474fa967380\n  Read counter:   385\n  UID matches:    YES\n  CMAC valid:     YES\n\nSDM verification PASSED.",
+        "stderr": "",
+        "duration_ms": 108.1,
+        "success": true,
         "test_id": "picc",
         "reader_target": "PICC"
       }

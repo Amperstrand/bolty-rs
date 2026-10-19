@@ -447,7 +447,10 @@ def ensure_blank(cli, registry: CardRegistry, coupled_card_uid: str):
     def _ensure():
         registry.require(coupled_card_uid, "wipe")
         try:
-            diag = cli.run("diagnose", timeout_s=60)
+            diag = cli.run(
+                "diagnose", "--issuer-key", "00000000000000000000000000000001",
+                timeout_s=60,
+            )
             if "BLANK" in diag:
                 return
         except BoltyError:
