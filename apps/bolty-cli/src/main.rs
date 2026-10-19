@@ -34,12 +34,21 @@ struct Args {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Pin the reader by name substring (overrides BOLTY_READER; a pin
+    /// that matches nothing is a loud error — never a silent fall-back).
+    /// See `bolty-cli readers` for the inventory.
+    #[arg(long, global = true)]
+    reader: Option<String>,
+
     #[command(subcommand)]
     command: Cli,
 }
 
 #[derive(Parser)]
 enum Cli {
+    /// List PCSC readers with card presence (virtual readers marked)
+    Readers,
+
     /// Read and print the card UID
     Uid,
 
@@ -285,8 +294,15 @@ fn to_hex(bytes: impl AsRef<[u8]>) -> String {
     bolty_core::util::encode_hex(bytes.as_ref())
 }
 
+/// Reader pin from `--reader` (set once in `run()`; read by
+/// `connect_transport` for every subcommand — threading it through ~20
+/// command signatures would be churn without benefit). `None` here means
+/// "no flag", and `connect_with` then honors BOLTY_READER then auto.
+static READER_PIN: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
 fn connect_transport() -> anyhow::Result<audit::LoggingTransport<transport::PcscTransport>> {
-    let t = transport::PcscTransport::connect()?;
+    let pin = READER_PIN.get().and_then(|pin| pin.clone());
+    let t = transport::PcscTransport::connect_with(pin.as_deref())?;
     println!("Connected to reader: {}", t.reader_name());
     Ok(audit::LoggingTransport::new(t))
 }
@@ -326,9 +342,25 @@ fn exit_code_for(e: &anyhow::Error) -> i32 {
 async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
     let json_mode = args.json;
+    let _ = READER_PIN.set(args.reader);
     let cli = args.command;
 
     match cli {
+        Cli::Readers => {
+            let readers =
+                transport::list_readers_with_presence().map_err(|e| anyhow::anyhow!("{e}"))?;
+            for r in readers {
+                let presence = match r.card_present {
+                    Some(true) => "card",
+                    Some(false) => "empty",
+                    None => "?",
+                };
+                let virt = if r.virtual_reader { " [virtual]" } else { "" };
+                let name = r.name;
+                println!("{presence:5} {name}{virt}");
+            }
+        }
+
         Cli::Uid => {
             let mut transport = connect_transport()?;
             inspect::cmd_uid(&mut transport).await?;
