@@ -517,4 +517,107 @@ mod tests {
         assert_eq!(parse_command("probe"), Err(CommandError::UnknownCommand));
         assert_eq!(parse_command("   \n"), Err(CommandError::UnknownCommand));
     }
+
+    #[test]
+    fn pins_every_no_arg_command_byte_exactly() {
+        for word in [
+            "help",
+            "i2cscan",
+            "uid",
+            "status",
+            "burn",
+            "wipe",
+            "ndef",
+            "auth",
+            "ver",
+            "keyver",
+            "check",
+            "inspect",
+            "picc",
+            "diagnose",
+            "derivekeys",
+            "reset",
+            "hwinfo",
+        ] {
+            assert!(
+                parse_command(word).is_ok(),
+                "{word} must parse bare (contract: docs/serial-host-protocol.md)"
+            );
+            assert_eq!(
+                parse_command(&format!("{word} extra")),
+                Err(CommandError::InvalidArgs),
+                "{word} must reject surplus args"
+            );
+            let upper = word.to_ascii_uppercase();
+            assert_eq!(
+                parse_command(&upper),
+                parse_command(word),
+                "{word} is case-insensitive"
+            );
+        }
+    }
+
+    #[test]
+    fn token_command_alias_and_overflow_contract() {
+        for alias in ["off", "none", "clear"] {
+            assert_eq!(
+                parse_command(&format!("token {alias}")),
+                Ok(Command::SetToken(None))
+            );
+        }
+        assert_eq!(parse_command("token"), Err(CommandError::MissingArgs));
+        let ok_token = "t".repeat(64);
+        assert!(
+            parse_command(&format!("token {ok_token}")).is_ok(),
+            "token of exactly 64 bytes fits"
+        );
+        let long_token = "t".repeat(65);
+        assert_eq!(
+            parse_command(&format!("token {long_token}")),
+            Err(CommandError::InvalidArgs),
+            "token over 64 bytes is InvalidArgs (RestTokenString capacity)"
+        );
+    }
+
+    #[test]
+    fn fixed_capacity_limits_are_invalid_args_not_panics() {
+        let long_url = format!("https://example.com/{}", "a".repeat(256));
+        assert_eq!(
+            parse_command(&format!("url {long_url}")),
+            Err(CommandError::InvalidArgs)
+        );
+        let long_ssid = "s".repeat(33);
+        assert_eq!(
+            parse_command(&format!("wifi {long_ssid} pass")),
+            Err(CommandError::InvalidArgs),
+            "ssid over 32 bytes is InvalidArgs (WifiSsidString capacity)"
+        );
+        let long_pass = "p".repeat(65);
+        assert_eq!(
+            parse_command(&format!("wifi ssid {long_pass}")),
+            Err(CommandError::InvalidArgs),
+            "wifi password over 64 bytes is InvalidArgs (WifiPasswordString capacity)"
+        );
+    }
+
+    #[test]
+    fn hex_arguments_enforce_exact_16_byte_length() {
+        let short = "00".repeat(15);
+        let odd = "0".repeat(33);
+        let ok = "00".repeat(16);
+        assert_eq!(
+            parse_command(&format!("issuer {short}")),
+            Err(CommandError::InvalidArgs)
+        );
+        assert_eq!(
+            parse_command(&format!("issuer {odd}")),
+            Err(CommandError::InvalidArgs)
+        );
+        assert!(parse_command(&format!("issuer {ok}")).is_ok());
+        let four_keys = format!("{ok} {ok} {ok} {ok}");
+        assert_eq!(
+            parse_command(&format!("keys {four_keys}")),
+            Err(CommandError::MissingArgs)
+        );
+    }
 }

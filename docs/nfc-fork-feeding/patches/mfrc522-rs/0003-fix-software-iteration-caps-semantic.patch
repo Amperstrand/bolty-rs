@@ -1,0 +1,195 @@
+From: Amperstrand <Amperstrand@users.noreply.github.com>
+Subject: [PATCH] fix: software iteration cap on wait loops + eh02 test repair
+
+Semantic delta of fork commits e9ced1e + 1dd9f8d (history squashed: the
+intermediate tree accidentally committed target/, which 1dd9f8d untracked).
+Contains the src/ delta plus the 1dd9f8d .gitignore; the stray
+src/comm/comm/ duplicate and the tracked Cargo.lock artifact are excluded
+(neither belongs in an upstream submission).
+
+Refreshed 2026-10-19 (#108): .gitignore folded in so this patch closes the
+gap between the staged series and fork head — 0001+0002+0003 applied to an
+empty tree now reproduces the 1dd9f8d tree exactly except the fork-side
+Cargo.lock.
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..4fffb2f
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,2 @@
++/target
++/Cargo.lock
+diff --git a/src/comm/blocking/i2c.rs b/src/comm/blocking/i2c.rs
+index ef9474d..d89f1b0 100644
+--- a/src/comm/blocking/i2c.rs
++++ b/src/comm/blocking/i2c.rs
+@@ -62,6 +62,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::blocking::i2c::I2cInterface;
+     use crate::comm::Interface;
+diff --git a/src/comm/blocking/spi.rs b/src/comm/blocking/spi.rs
+index 27180fe..24f18b9 100644
+--- a/src/comm/blocking/spi.rs
++++ b/src/comm/blocking/spi.rs
+@@ -144,6 +144,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::blocking::spi::SpiInterface;
+     use crate::comm::Interface;
+diff --git a/src/comm/eh02/i2c.rs b/src/comm/eh02/i2c.rs
+index 04f3057..3efde33 100644
+--- a/src/comm/eh02/i2c.rs
++++ b/src/comm/eh02/i2c.rs
+@@ -63,6 +63,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::eh02::i2c::I2cInterface;
+     use crate::comm::Interface;
+diff --git a/src/comm/eh02/spi.rs b/src/comm/eh02/spi.rs
+index ec246dc..5bcaa9f 100644
+--- a/src/comm/eh02/spi.rs
++++ b/src/comm/eh02/spi.rs
+@@ -234,6 +234,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::eh02::spi::SpiInterface;
+     use crate::comm::Interface;
+diff --git a/src/lib.rs b/src/lib.rs
+index 4800182..d68cc7b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -447,6 +447,7 @@ impl<E, COMM: Interface<Error = E>> Mfrc522<COMM, Initialized> {
+         self.command(Command::MFAuthent)?;
+ 
+         let mut irq;
++        let mut iterations = 0u32;
+         loop {
+             irq = self.read(Register::ComIrqReg)?;
+ 
+@@ -455,6 +456,10 @@ impl<E, COMM: Interface<Error = E>> Mfrc522<COMM, Initialized> {
+             } else if irq & TIMER_IRQ != 0 {
+                 return Err(Error::Timeout);
+             }
++            iterations += 1;
++            if iterations >= 5000 {
++                return Err(Error::Timeout);
++            }
+         }
+ 
+         self.check_error_register()?;
+@@ -581,8 +586,12 @@ impl<E, COMM: Interface<Error = E>> Mfrc522<COMM, Initialized> {
+             (1 << 7) | ((rx_align_bits & 0b0111) << 4) | (tx_last_bits & 0b0111),
+         )?;
+ 
+-        // TODO timeout when connection to the MFRC522 is lost (?)
+         // wait for transmission + reception to complete
++        // Software iteration cap prevents infinite hang when the MFRC522
++        // hardware timer is not configured (e.g. after soft_reset resets
++        // timer registers).  At 100 kHz I2C each poll takes ~0.3 ms,
++        // so 5000 iterations ≈ 1.5 s worst-case timeout.
++        let mut iterations = 0u32;
+         loop {
+             let irq = self.read(Register::ComIrqReg)?;
+ 
+@@ -591,6 +600,10 @@ impl<E, COMM: Interface<Error = E>> Mfrc522<COMM, Initialized> {
+             } else if irq & TIMER_IRQ != 0 {
+                 return Err(Error::Timeout);
+             }
++            iterations += 1;
++            if iterations >= 5000 {
++                return Err(Error::Timeout);
++            }
+         }
+ 
+         self.check_error_register()?;
+diff --git a/src/tests.rs b/src/tests.rs
+index 8a438f0..6ebc6c1 100644
+--- a/src/tests.rs
++++ b/src/tests.rs
+@@ -1,4 +1,4 @@
+-#[cfg(all(test, feature = "eh02"))]
++#[cfg(all(test, feature = "eh02", feature = "std"))]
+ mod test_eh02_spi {
+     use crate::comm::eh02::spi::SpiInterface;
+     use crate::Mfrc522;
+@@ -35,6 +35,19 @@ mod test_eh02_spi {
+     #[test]
+     pub fn test_transceive() {
+         let expectations = [
++            SpiTransaction::write([0x02, 0x0F].to_vec()),
++            SpiTransaction::transfer([0x82, 0x00].to_vec(), [0x00, 0x00].to_vec()),
++            SpiTransaction::write([0x24, 0x00].to_vec()),
++            SpiTransaction::write([0x26, 0x00].to_vec()),
++            SpiTransaction::write([0x48, 0x26].to_vec()),
++            SpiTransaction::write([0x54, 0x80].to_vec()),
++            SpiTransaction::write([0x56, 0xA9].to_vec()),
++            SpiTransaction::write([0x58, 0x0F].to_vec()),
++            SpiTransaction::write([0x5A, 0xA0].to_vec()),
++            SpiTransaction::write([0x2A, 0x40].to_vec()),
++            SpiTransaction::write([0x22, 0x3D].to_vec()),
++            SpiTransaction::transfer([0xA8, 0x00].to_vec(), [0x00, 0x00].to_vec()),
++            SpiTransaction::write([0x28, 0x03].to_vec()),
+             SpiTransaction::write([0x02, 0x00].to_vec()),
+             SpiTransaction::write([0x08, 0x7f].to_vec()),
+             SpiTransaction::write([0x14, 0x80].to_vec()),
+@@ -71,7 +84,7 @@ mod test_eh02_spi {
+     }
+ }
+ 
+-#[cfg(all(test, feature = "eh02"))]
++#[cfg(all(test, feature = "eh02", feature = "std"))]
+ mod test_eh02_i2c {
+     use crate::comm::eh02::i2c::I2cInterface;
+     use crate::Mfrc522;
+@@ -108,6 +121,19 @@ mod test_eh02_i2c {
+     #[test]
+     pub fn test_transceive() {
+         let expectations = [
++            I2cTransaction::write(0x2C, [0x01, 0x0F].to_vec()),
++            I2cTransaction::write_read(0x2C, [0x01].to_vec(), [0x00].to_vec()),
++            I2cTransaction::write(0x2C, [0x12, 0x00].to_vec()),
++            I2cTransaction::write(0x2C, [0x13, 0x00].to_vec()),
++            I2cTransaction::write(0x2C, [0x24, 0x26].to_vec()),
++            I2cTransaction::write(0x2C, [0x2A, 0x80].to_vec()),
++            I2cTransaction::write(0x2C, [0x2B, 0xA9].to_vec()),
++            I2cTransaction::write(0x2C, [0x2C, 0x0F].to_vec()),
++            I2cTransaction::write(0x2C, [0x2D, 0xA0].to_vec()),
++            I2cTransaction::write(0x2C, [0x15, 0x40].to_vec()),
++            I2cTransaction::write(0x2C, [0x11, 0x3D].to_vec()),
++            I2cTransaction::write_read(0x2C, [0x14].to_vec(), [0x00].to_vec()),
++            I2cTransaction::write(0x2C, [0x14, 0x03].to_vec()),
+             I2cTransaction::write(0x2C, [0x01, 0x00].to_vec()),
+             I2cTransaction::write(0x2C, [0x04, 0x7f].to_vec()),
+             I2cTransaction::write(0x2C, [0x0A, 0x80].to_vec()),
+@@ -141,7 +167,7 @@ mod test_eh02_i2c {
+     }
+ }
+ 
+-#[cfg(test)]
++#[cfg(all(test, feature = "std"))]
+ mod test_eh1_spi {
+     use crate::comm::blocking::spi::SpiInterface;
+     use crate::Mfrc522;
+@@ -302,7 +328,7 @@ mod test_eh1_spi {
+     }
+ }
+ 
+-#[cfg(test)]
++#[cfg(all(test, feature = "std"))]
+ mod test_eh1_i2c {
+     use crate::comm::blocking::i2c::I2cInterface;
+     use crate::Mfrc522;
