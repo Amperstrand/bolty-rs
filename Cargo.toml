@@ -12,7 +12,11 @@ ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "afb723851
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
 # Canonical upstream directly — the Amperstrand fork is retired; our session
 # API + WTX hook live consumer-side in crates/iso14443-session.
-iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", features = ["alloc"] }
+# Rev-pinned per fork-policy §2 rule 1 (rev-pinned builds must resolve to the
+# same bytes forever; the unpinned entry from #105 let any `cargo update`
+# float an MCU firmware dependency). Bump procedure (§2 rule 2): explicit,
+# reviewed commit that moves this rev AND the matching Cargo.lock entry.
+iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", rev = "216d1b919ca1fd4d30048a1c764f14379137f3c7", features = ["alloc"] }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
