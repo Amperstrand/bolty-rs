@@ -27,6 +27,11 @@ defmt-rtt = "0.4"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 embedded-alloc = "0.5"
 embedded-hal = "1.0"
+# Same fork/rev ccid-firmware-rs pins (F469 support); features kept minimal
+# (no usb_fs/framebuffer — bolty has no USB/display role yet).
+stm32f4xx-hal = { git = "https://github.com/Amperstrand/stm32f4xx-hal", rev = "05d999d600d457f99aeb23ff93275d2c8f998908", features = ["stm32f469"] }
+pn532-transport = { path = "../../crates/pn532-transport", optional = true }
+bolty-pn532 = { path = "../../crates/bolty-pn532", optional = true }
 
 [target.'cfg(not(all(target_arch = "arm", target_os = "none")))'.dependencies]
 # Host-side stubs for testing
@@ -38,5 +43,8 @@ default = []
 # Board selection (mutually exclusive)
 board-stm32f4-disco = []
 
-# NFC frontend
+# NFC frontends
 nfc-mfrc522 = []
+# PN532 revival (compile-spike for the F469 until the module arrives;
+# per docs/stm32-nfc-frontend-plan.md option B).
+nfc-pn532 = ["dep:pn532-transport", "dep:bolty-pn532"]

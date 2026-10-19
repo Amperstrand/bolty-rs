@@ -3,5 +3,18 @@
 # hosted-style ELF with no vector table (the "host-green, target-broken"
 # class issue #111 guards; see docs/cortex-m-rt-linkx.md). The cfg gate
 # keeps host builds untouched.
+#
+# -Tdefmt.x: without it the release linker (--gc-sections) drops the
+# .defmt_rtt control block — defmt-rtt is then silently absent from the
+# ELF and probe-rs shows no RTT output at all. Found on first F469
+# hardware bring-up (2026-10-19); same wiring ccid-firmware-rs uses.
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-rustflags = ["-C", "link-arg=-Tlink.x"]
+rustflags = ["-C", "link-arg=-Tlink.x", "-C", "link-arg=-Tdefmt.x"]
+
+# defmt-macros filters log statements AT COMPILE TIME, env_logger-style:
+# without DEFMT_LOG the default is Error-only, so info!() compiles to
+# NOTHING (found during the 2026-10-19 F469 bring-up — the skeleton
+# booted but its three info lines never reached RTT). Mirror
+# ccid-firmware-rs: bake "info" into every build.
+[env]
+DEFMT_LOG = "info"

@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 extern crate alloc;
 
@@ -22,10 +23,32 @@ where
         Self { device, uid: None }
     }
 
+    /// Convenience activation using the target's default delay — only
+    /// usable where `Pn532Device::init` has an implementation (xtensa
+    /// today). Non-xtensa callers (host tests, the STM32 port) must use
+    /// [`Self::activate_with_delay`].
     pub fn activate(&mut self) -> Result<(), Error> {
         if !self.device.is_initialized() {
             self.device.init().map_err(Error::Device)?;
         }
+        self.finish_activation()
+    }
+
+    /// Delay-injected activation: runs the RST settle ladder + chip init
+    /// with the caller's BlockingMs, then detects a card. Portable entry
+    /// point (gap found by the 2026-10-19 loopback tests: activate()
+    /// alone can never work where init() has no delay implementation).
+    pub fn activate_with_delay(
+        &mut self,
+        delay: &mut impl pn532_transport::BlockingMs,
+    ) -> Result<(), Error> {
+        if !self.device.is_initialized() {
+            self.device.init_with_delay(delay).map_err(Error::Device)?;
+        }
+        self.finish_activation()
+    }
+
+    fn finish_activation(&mut self) -> Result<(), Error> {
         if !self.device.detect_card() {
             return Err(Error::NoCard);
         }
@@ -97,4 +120,199 @@ fn split_response(response: &[u8]) -> Result<Response<Vec<u8>>, Error> {
     let sw2 = response.get(split + 1).copied().unwrap_or(0);
 
     Ok(Response { data, sw1, sw2 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::collections::VecDeque;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::convert::Infallible;
+    use core::future::Future;
+    use core::pin::Pin;
+    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use pn532_transport::{BlockingMs, Error as DeviceError, Pn532Ops};
+
+    type InlistOutcome = Result<Option<(u8, Vec<u8>)>, DeviceError>;
+
+    fn block_on<F: Future>(mut fut: F) -> F::Output {
+        // Same minimal no_std block_on the app crate uses.
+        fn noop(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(core::ptr::null(), &VTABLE)
+        }
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
+        let waker = unsafe { Waker::from_raw(RawWaker::new(core::ptr::null(), &VTABLE)) };
+        let mut cx = Context::from_waker(&waker);
+        // SAFETY: the future is not moved and lives until polled to done.
+        let mut fut = unsafe { Pin::new_unchecked(&mut fut) };
+        loop {
+            if let Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+        }
+    }
+
+    struct MockPn532 {
+        firmware_results: VecDeque<Result<(u8, u8), DeviceError>>,
+        sam_results: VecDeque<Result<(), DeviceError>>,
+        inlist_results: VecDeque<InlistOutcome>,
+        exchange_results: VecDeque<Result<Vec<u8>, DeviceError>>,
+        released: Vec<u8>,
+    }
+
+    impl MockPn532 {
+        fn with_card() -> Self {
+            let mut m = MockPn532 {
+                firmware_results: VecDeque::new(),
+                sam_results: VecDeque::new(),
+                inlist_results: VecDeque::new(),
+                exchange_results: VecDeque::new(),
+                released: Vec::new(),
+            };
+            m.firmware_results.push_back(Ok((7, 0x16)));
+            m.sam_results.push_back(Ok(()));
+            m.inlist_results
+                .push_back(Ok(Some((1, Vec::from([0x04, 0xC4, 0x74])))));
+            m
+        }
+    }
+
+    impl Pn532Ops for MockPn532 {
+        fn get_firmware_version(&mut self) -> Result<(u8, u8), DeviceError> {
+            self.firmware_results.pop_front().unwrap_or(Ok((7, 0x16)))
+        }
+        fn configure_sam(&mut self) -> Result<(), DeviceError> {
+            self.sam_results.pop_front().unwrap_or(Ok(()))
+        }
+        fn inlist_passive_target(&mut self) -> Result<Option<(u8, Vec<u8>)>, DeviceError> {
+            self.inlist_results.pop_front().unwrap_or(Ok(None))
+        }
+        fn in_data_exchange(
+            &mut self,
+            _target_num: u8,
+            _data: &[u8],
+        ) -> Result<Vec<u8>, DeviceError> {
+            self.exchange_results
+                .pop_front()
+                .unwrap_or(Ok(Vec::from([0x90, 0x00])))
+        }
+        fn in_release(&mut self, target_num: u8) -> Result<(), DeviceError> {
+            self.released.push(target_num);
+            Ok(())
+        }
+    }
+
+    struct FakePin;
+    impl embedded_hal::digital::ErrorType for FakePin {
+        type Error = Infallible;
+    }
+    impl embedded_hal::digital::OutputPin for FakePin {
+        fn set_low(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    struct FakeDelay;
+    impl BlockingMs for FakeDelay {
+        fn delay_ms(&mut self, _ms: u32) {}
+    }
+
+    fn transport(mock: MockPn532) -> Pn532Transport<MockPn532, FakePin> {
+        Pn532Transport::new(pn532_transport::Pn532Device::new(mock, FakePin))
+    }
+
+    #[test]
+    fn activate_initializes_device_and_captures_uid() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        assert_eq!(t.device().uid(), Some(&[0x04, 0xC4, 0x74][..]));
+    }
+
+    #[test]
+    fn activate_reports_no_card_when_field_empty() {
+        let mut mock = MockPn532::with_card();
+        mock.inlist_results.clear();
+        let mut t = transport(mock);
+        assert!(matches!(
+            t.activate_with_delay(&mut FakeDelay),
+            Err(Error::NoCard)
+        ));
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "xtensa"))]
+    fn bare_activate_is_unportable_and_fails_loudly() {
+        // Guards the API gap the loopback tests found: activate() without
+        // a delay only exists on xtensa — on host (and, until ported, the
+        // STM32) it must error instead of half-activating.
+        let mut t = transport(MockPn532::with_card());
+        assert!(matches!(
+            t.activate(),
+            Err(Error::Device(DeviceError::NotInitialized))
+        ));
+        assert!(!t.device().is_initialized());
+    }
+
+    #[test]
+    fn transmit_splits_status_word_from_data() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        t.device_mut()
+            .raw_pn532_mut()
+            .exchange_results
+            .push_back(Ok(Vec::from([0x6F, 0x10, 0x90, 0x00])));
+        let rsp = block_on(t.transmit(&[0x00, 0xA4, 0x04, 0x00])).unwrap();
+        assert_eq!(rsp.data, Vec::from([0x6F, 0x10]));
+        assert_eq!((rsp.sw1, rsp.sw2), (0x90, 0x00));
+    }
+
+    #[test]
+    fn transmit_rejects_short_response() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        t.device_mut()
+            .raw_pn532_mut()
+            .exchange_results
+            .push_back(Ok(Vec::from([0x90])));
+        assert!(matches!(
+            block_on(t.transmit(&[0x00])),
+            Err(Error::InvalidResponseLength(1))
+        ));
+    }
+
+    #[test]
+    fn transmit_maps_device_errors() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        t.device_mut()
+            .raw_pn532_mut()
+            .exchange_results
+            .push_back(Err(DeviceError::Communication));
+        assert!(matches!(
+            block_on(t.transmit(&[0x00])),
+            Err(Error::Device(DeviceError::Communication))
+        ));
+    }
+
+    #[test]
+    fn release_returns_the_card_to_the_chip() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        t.release();
+        assert_eq!(t.device().raw_pn532().released, vec![1]);
+        assert!(!t.device().card_present());
+    }
+
+    #[test]
+    fn get_uid_after_activate_matches_detection() {
+        let mut t = transport(MockPn532::with_card());
+        t.activate_with_delay(&mut FakeDelay).unwrap();
+        let uid = block_on(t.get_uid()).unwrap();
+        assert_eq!(uid, Vec::from([0x04, 0xC4, 0x74]));
+    }
 }
