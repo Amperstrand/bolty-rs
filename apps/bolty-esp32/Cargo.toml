@@ -23,6 +23,10 @@ board-nucula = ["nfc-pn7160"]
 wifi = []
 rest = ["wifi"]
 ota = ["wifi", "dep:ed25519-dalek"]
+# OTA seat server (:3232, ccid wire protocol) — bench recovery door for
+# board-nucula: keeps OTA pushes bidirectional after bolty is flashed
+# (issue #115). Requires wifi.
+ota-server = ["wifi"]
 # BLE is opt-in — has NO authentication by default. See issue #34.
 # Enable with: --features "board-m5stick,ble"
 ble = []

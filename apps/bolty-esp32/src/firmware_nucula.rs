@@ -23,10 +23,17 @@
 
 use core::fmt::Write as _;
 
+#[cfg(feature = "wifi")]
+use bolty_core::config::{WifiPasswordString, WifiSsidString};
 use bolty_pn7160::{BusPins, EspPn7160Transport, NUCULA, Pn7160Driver, Pn7160Transport};
 use esp_idf_hal::{delay::FreeRtos, peripherals::Peripherals};
 use esp_idf_svc::log::EspLogger;
 use heapless::String;
+
+#[cfg(feature = "ota-server")]
+use crate::ota_server;
+#[cfg(feature = "wifi")]
+use crate::wifi::WifiManager;
 
 use crate::block_on;
 
@@ -36,10 +43,138 @@ const SERIAL_FD_IN: i32 = 0;
 const SERIAL_FD_OUT: i32 = 1;
 const MAX_LINE_LEN: usize = 256;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
+#[cfg(feature = "ota-server")]
+const NVS_NAMESPACE: &str = "bultynv";
 
 /// Reader stack: `EspPn7160Transport` (I2C + IRQ + VEN) under the NCI
 /// driver, wrapped in the `ntag424::Transport` bridge.
 type Reader = Pn7160Transport<EspPn7160Transport>;
+
+/// Wifi + OTA-seat state (feature `wifi`/`ota-server`): the bench
+/// recovery door — with the OTA server up, every future image (bolty or
+/// otherwise) can be pushed over the seat without serial.
+#[cfg(feature = "wifi")]
+struct Network {
+    manager: Option<WifiManager>,
+    #[cfg(feature = "ota-server")]
+    ota_spawned: bool,
+}
+
+#[cfg(feature = "wifi")]
+impl Network {
+    fn new(modem: esp_idf_hal::modem::Modem<'static>) -> Self {
+        let manager = match WifiManager::new(modem) {
+            Ok(manager) => Some(manager),
+            Err(err) => {
+                log::warn!("wifi manager init failed: {err:?}");
+                None
+            }
+        };
+        Self {
+            manager,
+            #[cfg(feature = "ota-server")]
+            ota_spawned: false,
+        }
+    }
+
+    /// Connect with the given credentials, persist them, and bring up
+    /// the OTA server once the station has an address.
+    fn connect(&mut self, console: &mut Console, ssid: &str, password: &str) {
+        let Some(manager) = self.manager.as_mut() else {
+            console.fail("wifi manager unavailable");
+            return;
+        };
+        let (Ok(ssid_str), Ok(pass_str)) = (
+            WifiSsidString::try_from(ssid),
+            WifiPasswordString::try_from(password),
+        ) else {
+            console.fail("ssid too long (max 32) or password too long (max 64)");
+            return;
+        };
+        match manager.connect(&ssid_str, &pass_str) {
+            Ok(()) => {
+                save_wifi_creds(&ssid_str, &pass_str);
+                self.report(console, true);
+            }
+            Err(err) => console.fail(&format!("wifi connect failed: {err:?}")),
+        }
+    }
+
+    /// Boot-time autoconnect from persisted credentials.
+    fn autoconnect(&mut self, console: &mut Console) {
+        let Some((ssid, password)) = load_wifi_creds() else {
+            console.line("wifi: no stored credentials (use: wifi <ssid> <pass>)");
+            return;
+        };
+        self.connect(console, ssid.as_str(), password.as_str());
+    }
+
+    fn report(&mut self, console: &mut Console, verbose: bool) {
+        let Some(manager) = self.manager.as_ref() else {
+            console.line("wifi: manager unavailable");
+            return;
+        };
+        match manager.ip() {
+            Some(ip) => {
+                console.ok(&format!("wifi: connected ip={ip}"));
+                #[cfg(feature = "ota-server")]
+                {
+                    if !self.ota_spawned {
+                        ota_server::spawn();
+                        self.ota_spawned = true;
+                        if verbose {
+                            console.line("ota: server listening on :3232");
+                        }
+                    }
+                }
+            }
+            None => console.fail("wifi: no ip (not connected)"),
+        }
+    }
+}
+
+#[cfg(not(feature = "wifi"))]
+struct Network;
+
+#[cfg(not(feature = "wifi"))]
+impl Network {
+    fn new() -> Self {
+        Self
+    }
+    fn autoconnect(&mut self, _console: &mut Console) {}
+}
+
+/// Persisted wifi credentials (namespace `bultynv`) so the OTA door
+/// survives reboots. A truncated or missing pair is treated as absent.
+#[cfg(feature = "wifi")]
+fn save_wifi_creds(ssid: &WifiSsidString, password: &WifiPasswordString) {
+    use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
+    let Ok(partition) = EspDefaultNvsPartition::take() else {
+        log::warn!("nvs: default partition unavailable");
+        return;
+    };
+    let Ok(mut nvs) = EspNvs::new(partition, NVS_NAMESPACE, false) else {
+        log::warn!("nvs: namespace open failed");
+        return;
+    };
+    let _ = nvs.set_blob("ssid", ssid.as_bytes());
+    let _ = nvs.set_blob("pass", password.as_bytes());
+}
+
+#[cfg(feature = "wifi")]
+fn load_wifi_creds() -> Option<(WifiSsidString, WifiPasswordString)> {
+    use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
+
+    let partition = EspDefaultNvsPartition::take().ok()?;
+    let nvs = EspNvs::new(partition, NVS_NAMESPACE, true).ok()?;
+    let mut ssid_buf = [0u8; 32];
+    let mut pass_buf = [0u8; 64];
+    let ssid = nvs.get_blob("ssid", &mut ssid_buf).ok()??;
+    let password = nvs.get_blob("pass", &mut pass_buf).ok()??;
+    let ssid = WifiSsidString::try_from(core::str::from_utf8(ssid).ok()?).ok()?;
+    let password = WifiPasswordString::try_from(core::str::from_utf8(password).ok()?).ok()?;
+    Some((ssid, password))
+}
 
 pub fn main() {
     esp_idf_sys::link_patches();
@@ -57,6 +192,13 @@ pub fn main() {
             return;
         }
     };
+
+    // Wifi modem goes to the network stack before the NFC block claims
+    // its pins (Peripherals::take is single-shot; the split is by field).
+    #[cfg(feature = "wifi")]
+    let mut network = Network::new(peripherals.modem);
+    #[cfg(not(feature = "wifi"))]
+    let mut network = Network::new();
 
     // Bench-proven bring-up order (ccid #149 P1, verdict B): I2C bus first,
     // then the VEN power cycle, probe inside the post-VEN ACK window, then
@@ -89,10 +231,12 @@ pub fn main() {
         };
 
     let mut line = String::<MAX_LINE_LEN>::new();
+    network.autoconnect(&mut console);
     loop {
         while let Some(byte) = console.read_byte_nonblocking() {
             if byte == b'\r' || byte == b'\n' {
-                let handled = handle_line(line.as_str(), reader.as_mut(), &mut console);
+                let handled =
+                    handle_line(line.as_str(), reader.as_mut(), &mut network, &mut console);
                 if !handled {
                     console.ok(&format!("unknown command: {}", line.as_str()));
                 }
@@ -107,7 +251,12 @@ pub fn main() {
 
 /// Dispatch one console line. Returns false for unknown commands (so the
 /// caller can echo) and true for everything recognized, including failures.
-fn handle_line(input: &str, reader: Option<&mut Reader>, console: &mut Console) -> bool {
+fn handle_line(
+    input: &str,
+    reader: Option<&mut Reader>,
+    network: &mut Network,
+    console: &mut Console,
+) -> bool {
     let command = input.trim();
     if command.is_empty() {
         return true;
@@ -119,7 +268,7 @@ fn handle_line(input: &str, reader: Option<&mut Reader>, console: &mut Console) 
 
     match head.to_ascii_lowercase().as_str() {
         "help" | "?" => {
-            console.line("commands: help | ver | status | poll | uid | inspect");
+            console.line("commands: help | ver | status | poll | uid | inspect | wifi | ip");
             true
         }
         "ver" => {
@@ -201,6 +350,34 @@ fn handle_line(input: &str, reader: Option<&mut Reader>, console: &mut Console) 
                     }
                 }
                 None => console.fail("nfc unavailable"),
+            }
+            true
+        }
+        "wifi" => {
+            let Some(rest) = rest else {
+                console.fail("usage: wifi <ssid> <password>");
+                return true;
+            };
+            let Some((ssid, password)) = rest.split_once(' ') else {
+                console.fail("usage: wifi <ssid> <password>");
+                return true;
+            };
+            #[cfg(feature = "wifi")]
+            network.connect(console, ssid.trim(), password.trim());
+            #[cfg(not(feature = "wifi"))]
+            {
+                let _ = network;
+                console.fail("wifi not compiled into this build");
+            }
+            true
+        }
+        "ip" => {
+            #[cfg(feature = "wifi")]
+            network.report(console, true);
+            #[cfg(not(feature = "wifi"))]
+            {
+                let _ = network;
+                console.fail("wifi not compiled into this build");
             }
             true
         }

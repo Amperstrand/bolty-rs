@@ -83,11 +83,12 @@ case "$BOARD" in
     m5stick-min) FEATURES="board-m5stick";               TRIPLE="xtensa-esp32-espidf" ;;
     m5atom)      FEATURES="board-m5atom";                TRIPLE="xtensa-esp32-espidf" ;;
     m5stick-ble) FEATURES="board-m5stick,ble";           TRIPLE="xtensa-esp32-espidf" ;;
-    # ESP32-C3 nucula (issue #115): riscv32 triple, console-only reader
-    # frontend. CARGO_BUILD_TARGET (exported below) selects the triple in
-    # .cargo/config.toml's [target.*] sections; [build] stays xtensa for
-    # the m5 boards.
-    nucula)      FEATURES="board-nucula";                TRIPLE="riscv32imc-esp-espidf" ;;
+    # ESP32-C3 nucula (issue #115): riscv32 triple, reader frontend +
+    # wifi + OTA seat server (the bench recovery door — without it every
+    # OTA push of a bolty image is one-way). CARGO_BUILD_TARGET (exported
+    # below) selects the triple in .cargo/config.toml's [target.*]
+    # sections; [build] stays xtensa for the m5 boards.
+    nucula)      FEATURES="board-nucula,wifi,ota-server"; TRIPLE="riscv32imc-esp-espidf" ;;
     *)           usage ;;
 esac
 

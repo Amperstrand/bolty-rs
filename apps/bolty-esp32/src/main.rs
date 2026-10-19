@@ -15,9 +15,15 @@ pub(crate) fn block_on<F: Future>(fut: F) -> F::Output {
     }
 }
 
-#[cfg(target_arch = "xtensa")]
-#[cfg(feature = "wifi")]
+#[cfg(all(any(target_arch = "xtensa", target_arch = "riscv32"), feature = "wifi"))]
 mod wifi;
+
+// OTA seat server (:3232) — the bench recovery door (issue #115).
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    feature = "ota-server"
+))]
+mod ota_server;
 
 #[cfg(target_arch = "xtensa")]
 #[cfg(feature = "rest")]
