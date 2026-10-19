@@ -11,11 +11,13 @@ use crate::common::{gen_rnd_a, record_auth_failure};
 pub async fn cmd_scan_keys<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
+    attempts: u32,
     json_mode: bool,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
+    let attempts = attempts.clamp(1, 1000);
     let uid = Session::default()
         .get_selected_uid(transport)
         .await
@@ -48,7 +50,8 @@ where
     ];
 
     if !json_mode {
-        println!("Scanning {} key candidates...\n", candidates.len());
+        println!("Scanning {} key candidates...", candidates.len());
+        println!("Delay ladder: up to {attempts} rapid retries per candidate.\n");
     }
 
     for (i, (label, key)) in candidates.iter().enumerate() {
@@ -57,7 +60,7 @@ where
         }
         audit::log_event(&format!("scan-keys: trying {label}"));
 
-        match try_auth(transport, key).await {
+        match try_auth(transport, key, attempts).await {
             AuthResult::Success => {
                 let key_hex = crate::to_hex(key);
                 audit::log_event(&format!("scan-keys: ACCEPTED {label} = {key_hex}"));
@@ -92,7 +95,7 @@ where
                     );
                 } else {
                     println!("  ⚠️  auth delay (91AD) — stopping scan");
-                    println!("  Use try-key to clear delay (rapid retry within same connection).");
+                    println!("  Raise --attempts (delay ladder exhausted) or clear with try-key.");
                 }
                 anyhow::bail!("auth delay triggered during scan");
             }
@@ -128,26 +131,38 @@ enum AuthResult {
     Error(String),
 }
 
-async fn try_auth<T: Transport>(transport: &mut T, key: &[u8; 16]) -> AuthResult
+/// One candidate with the 91AD keep-trying ladder: while the card is in
+/// auth delay, retries spend the delay (within this same connection) —
+/// a delayed card must not abort the scan before ANY candidate is
+/// evaluated (the 2026-10-19 recovery hit exactly that: delay spent at
+/// attempt ~21-25, which the old single-shot scan could never survive).
+async fn try_auth<T: Transport>(transport: &mut T, key: &[u8; 16], attempts: u32) -> AuthResult
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let rnd_a = match gen_rnd_a() {
-        Ok(r) => r,
-        Err(e) => return AuthResult::Error(format!("RNG: {e}")),
-    };
-
-    match Session::default()
-        .authenticate_aes(transport, KeyNumber::Key0, key, rnd_a)
-        .await
-    {
-        Ok(_) => AuthResult::Success,
-        Err(bolty_ntag::SessionError::ErrorResponse(
-            bolty_ntag::ResponseStatus::AuthenticationError,
-        )) => AuthResult::WrongKey,
-        Err(bolty_ntag::SessionError::ErrorResponse(
-            bolty_ntag::ResponseStatus::AuthenticationDelay,
-        )) => AuthResult::AuthDelay,
-        Err(e) => AuthResult::Error(format!("{e:?}")),
+    for attempt in 1..=attempts {
+        let rnd_a = match gen_rnd_a() {
+            Ok(r) => r,
+            Err(e) => return AuthResult::Error(format!("RNG: {e}")),
+        };
+        match Session::default()
+            .authenticate_aes(transport, KeyNumber::Key0, key, rnd_a)
+            .await
+        {
+            Ok(_) => return AuthResult::Success,
+            Err(bolty_ntag::SessionError::ErrorResponse(
+                bolty_ntag::ResponseStatus::AuthenticationError,
+            )) => return AuthResult::WrongKey,
+            Err(bolty_ntag::SessionError::ErrorResponse(
+                bolty_ntag::ResponseStatus::AuthenticationDelay,
+            )) => {
+                if attempt == attempts {
+                    return AuthResult::AuthDelay;
+                }
+                continue;
+            }
+            Err(e) => return AuthResult::Error(format!("{e:?}")),
+        }
     }
+    AuthResult::AuthDelay
 }

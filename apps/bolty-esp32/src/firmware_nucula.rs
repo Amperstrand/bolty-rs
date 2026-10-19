@@ -44,7 +44,7 @@ const SERIAL_FD_OUT: i32 = 1;
 const MAX_LINE_LEN: usize = 256;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
 #[cfg(feature = "ota-server")]
-const NVS_NAMESPACE: &str = "bultynv";
+const NVS_NAMESPACE: &str = "boltnv";
 
 /// Reader stack: `EspPn7160Transport` (I2C + IRQ + VEN) under the NCI
 /// driver, wrapped in the `ntag424::Transport` bridge.

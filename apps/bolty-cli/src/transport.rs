@@ -19,6 +19,7 @@ pub struct PcscTransport {
 pub enum PcscError {
     NoReaders,
     NoCardInReader(String),
+    PinUnmatched(String),
     Pcsc(pcsc::Error),
     Transmit(String),
 }
@@ -30,6 +31,12 @@ impl fmt::Display for PcscError {
             PcscError::NoCardInReader(name) => {
                 write!(f, "no card present in reader: {name}")
             }
+            PcscError::PinUnmatched(want) => write!(
+                f,
+                "reader pin '{want}' matches no PCSC reader (see `bolty-cli readers`) \
+                 — refusing to silently fall back to auto-selection for a \
+                 mutation-capable tool"
+            ),
             PcscError::Pcsc(e) => write!(f, "PCSC error: {e}"),
             PcscError::Transmit(msg) => write!(f, "transmit error: {msg}"),
         }
@@ -51,55 +58,103 @@ impl From<pcsc::Error> for PcscError {
     }
 }
 
+/// Virtual-reader detector: vpcd/virtual readers shadow the ACR1252's real
+/// PICC interface in name-based matching and must never be auto-selected.
+fn is_virtual(name: &str) -> bool {
+    name.contains("Virtual") || name.contains("vpcd")
+}
+
+/// Pure reader-selection policy, unit-tested without pcsc:
+///
+/// - An explicit pin (CLI `--reader` or `BOLTY_READER`) MUST match exactly
+///   one candidate substring-wise — a set-but-unmatched pin is a LOUD
+///   error, never a silent fall-back to auto-selection (this tool burns
+///   and wipes cards; a typo must not retarget it). A pin may select a
+///   virtual reader — explicit user intent beats the auto-exclusion.
+/// - Auto-selection considers only non-virtual readers: prefer a "PICC"
+///   interface, then any non-"SAM" slot, then any candidate. Virtual-only
+///   benches error NoReaders instead of silently grabbing a vpcd.
+pub fn select_reader<'a>(names: &[&'a str], pin: Option<&str>) -> Result<&'a str, PcscError> {
+    if let Some(want) = pin {
+        return names
+            .iter()
+            .copied()
+            .find(|n| n.contains(want))
+            .ok_or_else(|| PcscError::PinUnmatched(want.to_string()));
+    }
+    let candidates: Vec<&str> = names.iter().copied().filter(|n| !is_virtual(n)).collect();
+    candidates
+        .iter()
+        .copied()
+        .find(|n| n.contains("PICC"))
+        .or_else(|| candidates.iter().copied().find(|n| !n.contains("SAM")))
+        .or_else(|| candidates.first().copied())
+        .ok_or(PcscError::NoReaders)
+}
+
+/// Reader inventory row for the `readers` command.
+pub struct ReaderStatus {
+    pub name: String,
+    pub virtual_reader: bool,
+    pub card_present: Option<bool>,
+}
+
+/// List all readers with a best-effort card-presence probe (connect
+/// attempt per reader; errors map to None = unknown).
+pub fn list_readers_with_presence() -> Result<Vec<ReaderStatus>, PcscError> {
+    let ctx = pcsc::Context::establish(pcsc::Scope::User)?;
+    let readers = ctx.list_readers_owned()?;
+    let mut out = Vec::new();
+    for reader in &readers {
+        let name = reader.to_str().unwrap_or("(unknown)").to_string();
+        let presence = ctx
+            .connect(reader, pcsc::ShareMode::Shared, pcsc::Protocols::T1)
+            .or_else(|_| ctx.connect(reader, pcsc::ShareMode::Shared, pcsc::Protocols::RAW))
+            .or_else(|_| ctx.connect(reader, pcsc::ShareMode::Shared, pcsc::Protocols::T0))
+            .map(|_| true)
+            .or_else(|e| {
+                if matches!(e, pcsc::Error::NoSmartcard) {
+                    Ok(false)
+                } else {
+                    Err(e)
+                }
+            })
+            .ok();
+        out.push(ReaderStatus {
+            virtual_reader: is_virtual(&name),
+            name,
+            card_present: presence,
+        });
+    }
+    Ok(out)
+}
+
 impl PcscTransport {
-    /// Connect to the first available reader with a card present.
-    ///
-    /// Virtual readers (vpcd) are never auto-selected — their names contain
-    /// "PICC" and shadow the ACR1252's real PICC interface in the match
-    /// below. `BOLTY_READER=<substring>` pins the reader by stable identity.
-    pub fn connect() -> Result<Self, PcscError> {
+    /// Connect with an explicit reader pin (`--reader`), falling back to
+    /// the `BOLTY_READER` env pin (#121), then auto-selection.
+    pub fn connect_with(pin: Option<&str>) -> Result<Self, PcscError> {
         let ctx = pcsc::Context::establish(pcsc::Scope::User)?;
         let readers = ctx.list_readers_owned()?;
-
-        let virt = |s: &str| s.contains("Virtual") || s.contains("vpcd");
-        let candidates: Vec<&CString> = readers
+        let names: Vec<&str> = readers
             .iter()
-            .filter(|r| r.to_str().map(|s| !virt(s)).unwrap_or(true))
+            .map(|r| r.to_str().unwrap_or("(unknown)"))
             .collect();
-        let reader_cstr = std::env::var("BOLTY_READER")
-            .ok()
-            .and_then(|want| {
-                candidates
-                    .iter()
-                    .copied()
-                    .find(|r| r.to_str().map(|s| s.contains(&want)).unwrap_or(false))
-            })
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .copied()
-                    .find(|r| r.to_str().map(|s| s.contains("PICC")).unwrap_or(false))
-            })
-            .or_else(|| {
-                candidates
-                    .iter()
-                    .copied()
-                    .find(|r| r.to_str().map(|s| !s.contains("SAM")).unwrap_or(false))
-            })
-            .or_else(|| candidates.first().copied())
-            .or_else(|| readers.first())
-            .ok_or(PcscError::NoReaders)?;
-        let reader_name = reader_cstr.to_str().unwrap_or("(unknown)").to_string();
+        let effective_pin = pin
+            .map(|p| p.to_string())
+            .or_else(|| std::env::var("BOLTY_READER").ok());
+        let selected = select_reader(&names, effective_pin.as_deref())?;
+        let reader_cstr = CString::new(selected).unwrap_or_default();
+        let reader_name = selected.to_string();
 
         let (card, protocol) = ctx
-            .connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T1)
+            .connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T1)
             .map(|c| (c, pcsc::Protocols::T1))
             .or_else(|_| {
-                ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::RAW)
+                ctx.connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::RAW)
                     .map(|c| (c, pcsc::Protocols::RAW))
             })
             .or_else(|_| {
-                ctx.connect(reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0)
+                ctx.connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0)
                     .map(|c| (c, pcsc::Protocols::T0))
             })
             .map_err(|e| match e {
@@ -209,5 +264,75 @@ impl Transport for PcscTransport {
         }
 
         Ok(response.data)
+    }
+}
+
+#[cfg(test)]
+mod select_tests {
+    use super::PcscError;
+    use super::select_reader;
+
+    const BENCH: &[&str] = &[
+        "ACS ACR1252 Dual Reader [ACR1252 Dual Reader SAM] 02 00",
+        "ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00",
+        "Nucula CCID via broker 01 00",
+        "Virtual PICC boltcard vpcd 00 00",
+        "Virtual PICC boltcard vpcd 00 01",
+    ];
+
+    #[test]
+    fn auto_prefers_picc_and_skips_virtuals() {
+        assert_eq!(
+            select_reader(BENCH, None).unwrap(),
+            "ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00"
+        );
+    }
+
+    #[test]
+    fn pin_selects_by_substring() {
+        assert_eq!(
+            select_reader(BENCH, Some("Nucula")).unwrap(),
+            "Nucula CCID via broker 01 00"
+        );
+    }
+
+    #[test]
+    fn pin_may_explicitly_target_a_virtual_reader() {
+        assert_eq!(
+            select_reader(BENCH, Some("vpcd 00 01")).unwrap(),
+            "Virtual PICC boltcard vpcd 00 01"
+        );
+    }
+
+    #[test]
+    fn unmatched_pin_is_a_loud_error_not_a_fallback() {
+        assert!(matches!(
+            select_reader(BENCH, Some("typo-reader")),
+            Err(PcscError::PinUnmatched(w)) if w == "typo-reader"
+        ));
+    }
+
+    #[test]
+    fn virtual_only_bench_errors_instead_of_grabbing_vpcd() {
+        assert!(matches!(
+            select_reader(&["Virtual PICC boltcard vpcd 00 00"], None),
+            Err(PcscError::NoReaders)
+        ));
+    }
+
+    #[test]
+    fn sam_only_real_readers_still_selectable() {
+        assert_eq!(
+            select_reader(&["Some Reader SAM 00 00", "Other Reader 01 00"], None).unwrap(),
+            "Other Reader 01 00"
+        );
+    }
+
+    #[test]
+    fn empty_bench_is_no_readers() {
+        assert!(matches!(
+            select_reader(&[], None),
+            Err(PcscError::NoReaders)
+        ));
     }
 }

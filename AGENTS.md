@@ -125,7 +125,8 @@ BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
 - ACR1252 health (2026-10-19): the 2026-10-17 firmware-wedge (#101) did
   NOT reproduce — full Phase-1 cycle + 3/3 S20-HCE round-trips through
   it (session log in docs/hil-runbook-2026-10-13.md). Reader selection in
-  bolty-cli skips virtual vpcd readers and honors `BOLTY_READER` (#121).
+  bolty-cli skips virtual vpcd readers and honors `BOLTY_READER` (#121) /
+  `--reader` (loud error on an unmatched pin) / `bolty-cli readers` (#134).
 
 ## Card Recovery: UID 043365FA967380 — RESOLVED 2026-10-19
 

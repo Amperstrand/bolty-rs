@@ -74,26 +74,34 @@ fn parse_golden_matrix() -> Vec<GoldenRow> {
             continue;
         };
         // ("id", "apdu", "response", "sw", "description"),
-        let mut fields = Vec::new();
+        let mut fields = Vec::<String>::new();
         let mut rest = rest;
         while let Some(close) = rest.find("\", \"") {
-            fields.push(rest[..close].to_string());
-            rest = &rest[close + 4..];
+            if let Some(head) = rest.get(..close) {
+                fields.push(head.to_string());
+            }
+            rest = rest.get(close + 4..).unwrap_or("");
         }
         // Last field before the closing `")` of the description tuple.
         let Some(close) = rest.find("\")") else {
             continue;
         };
-        fields.push(rest[..close].to_string());
+        if let Some(head) = rest.get(..close) {
+            fields.push(head.to_string());
+        }
         if fields.len() != 5 {
             continue;
         }
-        let sw = u16::from_str_radix(&fields[3], 16)
-            .unwrap_or_else(|e| panic!("bad SW {:?}: {e}", fields[3]));
+        let sw_field = fields.get(3).map(String::as_str).unwrap_or("");
+        let sw = u16::from_str_radix(sw_field, 16)
+            .unwrap_or_else(|e| panic!("bad SW {sw_field:?}: {e}"));
+        let test_id = fields.first().cloned().unwrap_or_default();
+        let apdu = fields.get(1).map(String::as_str).unwrap_or("");
+        let response = fields.get(2).map(String::as_str).unwrap_or("");
         rows.push(GoldenRow {
-            test_id: fields[0].clone(),
-            apdu: decode_hex(&fields[1]),
-            response: decode_hex(&fields[2]),
+            test_id,
+            apdu: decode_hex(apdu),
+            response: decode_hex(response),
             sw,
         });
     }
@@ -101,9 +109,14 @@ fn parse_golden_matrix() -> Vec<GoldenRow> {
 }
 
 fn decode_hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("golden hex is well-formed"))
+    let (chunks, remainder) = s.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty(), "golden hex has an odd length: {s}");
+    chunks
+        .iter()
+        .map(|pair| {
+            let pair = core::str::from_utf8(pair).expect("golden hex is ASCII");
+            u8::from_str_radix(pair, 16).expect("golden hex is well-formed")
+        })
         .collect()
 }
 

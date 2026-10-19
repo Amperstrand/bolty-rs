@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Amperstrand
 //
-// SPDX-License-Identifier:: Apache-2.0
+// SPDX-License-Identifier: Apache-2.0
+
+// Test contract: malformed fixtures fail LOUDLY — panic/unwrap/expect on
+// bad vector data is the correct behavior here (the suite's job is to
+// prove the vendored bytes, not to survive them). The workspace's
+// production lints are dialed back accordingly for this integration
+// test crate (same posture as the bin crate's cfg(test) allow).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::indexing_slicing, clippy::string_slice)]
 
 //! Cross-language NTAG424 conformance suite from
 //! <https://github.com/Amperstrand/ntag424-vectors> (vendored at
@@ -13,10 +21,10 @@
 //! - `sv2_build`     — `picc::sdm_build_sv2` / `sdm_build_sv2_no_uid`
 //! - `picc_decrypt`  — `picc::picc_decrypt_p` (UID + counter mirrors)
 //! - `sun_mac`       — `crypto::aes_cmac` over the `picc::sdm_build_sv2`
-//!                     chain (ks = CMAC(K2, SV2); ct = odd bytes of
-//!                     CMAC(ks, empty)) — same shape `picc_verify_c` checks
+//!   chain (ks = CMAC(K2, SV2); ct = odd bytes of CMAC(ks, empty)) —
+//!   same shape `picc_verify_c` checks
 //! - `sdm_full`      — `picc::picc_parse_url` (decrypt + SUN verify);
-//!                     negative vectors MUST be rejected
+//!   negative vectors MUST be rejected
 //! - `derive_keys`   — `derivation::BoltcardDeterministicDeriver::derive_keys`
 //!
 //! Nothing is skipped: every op in the suite is expressible here.
@@ -35,7 +43,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn hex_bytes(s: &str) -> Vec<u8> {
-    assert!(s.len() % 2 == 0, "odd-length hex");
+    assert!(s.len().is_multiple_of(2), "odd-length hex");
     (0..s.len() / 2)
         .map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex"))
         .collect()

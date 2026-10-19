@@ -357,8 +357,7 @@ mod tests {
 #[cfg(test)]
 mod exchange_tests {
     use super::*;
-    use iso14443::type_a::{Block, Frame, PcdTransceiver};
-    use std::sync::mpsc::{channel, Receiver, Sender};
+    use iso14443::type_a::{Frame, PcdTransceiver};
 
     #[derive(Debug)]
     struct ChanErr;
@@ -391,16 +390,6 @@ mod exchange_tests {
         fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
             Ok(())
         }
-    }
-
-    fn wrap(iblock_body: &[u8]) -> Vec<u8> {
-        // add a plausible PCB + the body; CRC is appended by the session
-        let mut v = vec![0x02u8]; // I-block, no CID, BN=0, no chaining
-        v.extend_from_slice(iblock_body);
-        let (c1, c2) = crc_a(&v);
-        v.push(c1);
-        v.push(c2);
-        v
     }
 
     #[test]
