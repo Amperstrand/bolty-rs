@@ -27,8 +27,16 @@ indexing_slicing = "warn"
 string_slice = "warn"
 
 [profile.release]
+# debug = 2: defmt 0.3.100 stores interned format strings in DWARF —
+# without debug info probe-rs cannot decode RTT frames at all (silently
+# shows nothing). Same setting ccid-firmware-rs uses. Flash image size is
+# unaffected (DWARF is not loaded to the target).
+debug = 2
 opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
+# no `strip`: probe-rs locates the defmt-RTT control block via the ELF's
+# _SEGGER_RTT symbol — stripping the symtab makes `probe-rs run` silently
+# show no RTT output (found during the 2026-10-19 F469 bring-up; the flash
+# image is unaffected — only host-side debug symbols are kept).

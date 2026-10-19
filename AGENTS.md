@@ -1,5 +1,14 @@
 # AGENTS.md — bolty-rs Project Knowledge Base
 
+## STM32 (bolty-stm32) bench notes
+
+First hardware bring-up (2026-10-19, F469I-DISCO via place `stm32-ccid`)
+PASSED at skeleton scope — full session entry with the four build-config
+rules that silently kill RTT (`strip`, `-Tdefmt.x`, compile-time
+`DEFMT_LOG` filtering, `debug = 2` for defmt string storage), the
+st-flash flash/verify commands, and the open probe-rs-vs-WFI finding:
+**docs/stm32-bringup-2026-10-19.md**. Read it before any STM32 bench work.
+
 ## Hardware Testing (shared Amperstrand bench, 2026-10-09)
 
 Bolt-card hardware testing uses the SAME labgrid-coordinated bench as
