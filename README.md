@@ -133,7 +133,10 @@ cargo build --release -p bolty-stm32 --target thumbv7em-none-eabihf \
 ```
 
 The link script (`-Tlink.x`, `memory.x`) is wired through the workspace
-`.cargo/config.toml` — build from the workspace root.
+`.cargo/config.toml` — build from the workspace root. That wiring is
+load-bearing and its absence fails *silently* (exit-0 broken ELF); see
+`docs/cortex-m-rt-linkx.md` for the failure mode, the evidence, and the
+conditions under which our compensating docs can shrink.
 
 Exactly one board feature must be enabled for firmware builds.
 
