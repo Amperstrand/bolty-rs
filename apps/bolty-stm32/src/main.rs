@@ -63,20 +63,14 @@ fn main() {
     println!("Build for STM32 with: cargo build --target thumbv7em-none-eabihf --features board-stm32f4-disco");
 }
 
-#[cfg(all(target_arch = "arm", target_os = "none"))]
-#[defmt::panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    cortex_m::asm::udf();
-}
-
 // ── STM32 entry point ───────────────────────────────────────────────
 
 #[cfg(all(target_arch = "arm", target_os = "none"))]
 mod stm32 {
-    use super::block_on;
-    use alloc::boxed::Box;
     use cortex_m_rt::entry;
     use defmt_rtt as _;
+    // panic-probe (print-defmt) provides the #[panic_handler]; combined
+    // with defmt-rtt this is the standard probe-rs panic path.
     use panic_probe as _;
 
     #[global_allocator]
@@ -84,13 +78,22 @@ mod stm32 {
 
     #[entry]
     fn main() -> ! {
+        // defmt requires a timestamp provider from the binary (no timers
+        // are initialized in the skeleton yet — report a constant).
+        defmt::timestamp!("{=u64:us}", 0u64);
+
         defmt::info!("bolty-stm32: initializing...");
 
         {
             use core::mem::MaybeUninit;
             const HEAP_SIZE: usize = 64 * 1024;
             static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-            unsafe { ALLOC.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) };
+            unsafe {
+                ALLOC.init(
+                    (&raw const HEAP_MEM) as *const MaybeUninit<u8> as usize,
+                    HEAP_SIZE,
+                )
+            };
         }
 
         defmt::info!("bolty-stm32: heap initialized ({} bytes)", 64 * 1024);

@@ -6,7 +6,10 @@ license = "GPL-3.0-or-later"
 description = "NTAG424 card operations (burn, wipe, inspect) and ntag424 facade"
 
 [dependencies]
-bolty-core = { path = "../bolty-core" }
+# default-features = false: bolty-ntag is #![no_std]; pulling bolty-core's
+# default `std` here used to force std into no_std consumer graphs (the
+# apps/bolty-stm32 thumbv7em build, issue #111).
+bolty-core = { path = "../bolty-core", default-features = false }
 ntag424 = { workspace = true }
 
 [lints]

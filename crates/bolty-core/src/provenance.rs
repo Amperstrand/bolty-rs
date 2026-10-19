@@ -1,3 +1,9 @@
+// no_std: String/format come from alloc when the `std` prelude is absent
+// (the extern crate is declared in lib.rs under alloc/std).
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+
 /// Provenance of a key, tracking where it originated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyProvenance {

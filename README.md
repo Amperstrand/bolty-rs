@@ -121,6 +121,20 @@ Custom partition tables are supplied at flash time
 in `sdkconfig.defaults` does not work with esp-idf-sys cargo builds
 (esp-rs/esp-idf-sys#395).
 
+## STM32 build (bolty-stm32 skeleton)
+
+Compile-only today (hardware init pending — see ROADMAP); CI guards the
+target in `stm32-check.yml` (clippy + release build on every PR/push):
+
+```bash
+rustup target add thumbv7em-none-eabihf   # once, on the pinned toolchain
+cargo build --release -p bolty-stm32 --target thumbv7em-none-eabihf \
+  --features board-stm32f4-disco,nfc-mfrc522
+```
+
+The link script (`-Tlink.x`, `memory.x`) is wired through the workspace
+`.cargo/config.toml` — build from the workspace root.
+
 Exactly one board feature must be enabled for firmware builds.
 
 ## Desktop CLI (bolty-cli)

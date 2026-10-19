@@ -30,7 +30,7 @@
 - [x] WiFi + HTTPS REST API (self-signed TLS, bearer token auth, 11 endpoints)
 - [x] OTA firmware update (Ed25519 signed — tools/ota-sign.py for keygen/sign)
 - [x] PN532 NFC reader support (pn532-transport + bolty-pn532 crates)
-- [x] STM32 skeleton (apps/bolty-stm32 — compiles, hardware init pending)
+- [x] STM32 skeleton (apps/bolty-stm32 — compiles, hardware init pending; CI-enforced for thumbv7em by stm32-check.yml since #111)
 - [x] Button support (GPIO37 front + GPIO39 side, simple + legacy modes)
 - [x] Display mode bars + battery indicator (AXP192 voltage reading)
 - [x] `hwtest` command — interactive hardware self-test with display feedback
