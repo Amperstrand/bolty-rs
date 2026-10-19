@@ -135,3 +135,62 @@ def test_coupled_card_uid_skips_on_checkin_wedge():
     assert conftest._wedge_skip_reason("ok") is None
     assert conftest._wedge_skip_reason("absent") is None
     assert conftest._wedge_skip_reason("no-service") is None
+
+
+def test_pcscd_reader_wrapper_releases_reader_before_bench(monkeypatch):
+    conftest = _load_conftest()
+    if conftest.PcscdDomainHeldError is None:
+        pytest.skip("tollgate-lab predates the pcscd domain lock")
+    order = []
+
+    class FakeBench:
+        def release(self):
+            order.append("bench")
+
+    class FakeReader:
+        holder = {"project": "x"}
+
+        def release(self):
+            order.append("reader")
+
+    monkeypatch.setattr(conftest, "acquire_pcscd_reader", lambda **k: FakeReader())
+    wrapped = conftest._wrap_pcscd_reader(FakeBench())
+    wrapped.release()
+    assert order == ["reader", "bench"]
+
+
+def test_pcscd_reader_wrapper_loud_refusal_no_bench_leak(monkeypatch):
+    conftest = _load_conftest()
+    if conftest.PcscdDomainHeldError is None:
+        pytest.skip("tollgate-lab predates the pcscd domain lock")
+
+    class FakeBench:
+        released = False
+
+        def release(self):
+            self.released = True
+
+    def held(**k):
+        raise conftest.PcscdDomainHeldError(
+            holder={"role": "disturbance", "project": "flash-lane"}
+        )
+
+    class FakeExit(Exception):
+        pass
+
+    def fake_exit(msg, returncode=None):
+        raise FakeExit(msg)
+
+    monkeypatch.setattr(conftest, "acquire_pcscd_reader", held)
+    monkeypatch.setattr(conftest.pytest, "exit", staticmethod(fake_exit))
+    bench = FakeBench()
+    with pytest.raises(FakeExit, match="flash-lane"):
+        conftest._wrap_pcscd_reader(bench)
+    assert bench.released
+
+
+def test_pcscd_reader_wrapper_passthrough_when_unavailable(monkeypatch):
+    conftest = _load_conftest()
+    monkeypatch.setattr(conftest, "acquire_pcscd_reader", None)
+    inner = object()
+    assert conftest._wrap_pcscd_reader(inner) is inner

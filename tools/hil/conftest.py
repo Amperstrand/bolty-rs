@@ -45,10 +45,16 @@ from hil.labgrid_state import note_rig_state
 # place/flock-only is exactly the #199 collision class this closes).
 try:
     from tollgate_lab import BenchLockHeldError, acquire_bench_lock
+    from tollgate_lab.hardware import (
+        PcscdDomainHeldError,
+        acquire_pcscd_reader,
+    )
     _BENCH_LOCK_AVAILABLE = True
 except ImportError:  # host CI collection — never drives hardware
     BenchLockHeldError = None
+    PcscdDomainHeldError = None
     acquire_bench_lock = None
+    acquire_pcscd_reader = None
     _BENCH_LOCK_AVAILABLE = False
 
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -122,6 +128,41 @@ def _sign_hold_identity(config):
     except Exception:
         sha = "nogit"
     os.environ["LG_USERNAME"] = f"bolty-hil~mark={'-'.join(markexpr.split())}~sha={sha}"
+
+
+def _wrap_pcscd_reader(bench_lock):
+    """B32/tollgate-lab #15: reader sessions hold the pcscd domain in the
+    SHARED role so disturbance sessions (stick flash, USB replug, pcscd
+    restart via pcscd-ctl) cannot overlap them. Delegates .release() —
+    reader role released BEFORE the bench flock (acquisition order
+    reversed on teardown, AB-BA safe). No-op where tollgate-lab predates
+    the domain lock; a held domain is a loud refusal, not a silent race."""
+    if acquire_pcscd_reader is None:
+        return bench_lock
+
+    class _BenchLockWithReader:
+        def __init__(self, inner, reader_lock):
+            self._inner = inner
+            self._reader = reader_lock
+
+        def release(self) -> None:
+            if self._reader is not None:
+                try:
+                    self._reader.release()
+                finally:
+                    self._reader = None
+            self._inner.release()
+
+    try:
+        reader_lock = acquire_pcscd_reader(
+            project="bolty-hil",
+            reason="rig_lock: reader session (pcscd consumers)",
+        )
+    except PcscdDomainHeldError as exc:
+        bench_lock.release()
+        pytest.exit(f"pcscd domain held: {exc}", returncode=3)
+    print("[pcscd-domain] reader role acquired (usb/pcscd disturbances excluded)")
+    return _BenchLockWithReader(bench_lock, reader_lock)
 
 
 def _acr_checkin(session) -> None:
@@ -275,6 +316,7 @@ def rig_lock(request):
         )
     except BenchLockHeldError as exc:
         pytest.exit(f"bench flock held: {exc}", returncode=3)
+    bench_lock = _wrap_pcscd_reader(bench_lock)
 
     # Pattern 15 (docs/labgrid-bench-sharing.md P1): mirror rig state onto
     # the place tags once the session owns the bench — best-effort. Suite
