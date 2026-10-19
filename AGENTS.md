@@ -107,24 +107,38 @@ BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
   the coordinator is down (conftest rig_lock / sessionstart — B26).
 - Cards: registry `tools/hil/cards.toml` is the contract (burn tests are
   parametrized per burn-allowed card; non-coupled auto-skip). Placement is
-  volatile — verify what is coupled before mutating (2026-10-19: ACR field
-  carried `04C474FA967380` for the Phase-1 cycle, then the Samsung S20
-  (phone-s20 place, `com.amperstrand.boltcard.hce` HCE rig app) was
-  stacked on the ACR antenna for the boltcard-rig vertical round-trip —
-  physical card since removed; `04455FFA967380` last seen on the stick
-  antenna).
+  volatile — verify what is coupled before mutating (2026-10-19 evening:
+  `043365FA967380` — recovered-static-key, see the recovery section — on
+  the ACR antenna; one unidentified boltcard on the nucula PN7160 antenna;
+  earlier the Samsung S20 HCE rig was stacked on the ACR for the
+  boltcard-rig vertical round-trip, and `04C474FA967380` / `04455FFA967380`
+  are off-reader at unknown positions).
 - ACR1252 health (2026-10-19): the 2026-10-17 firmware-wedge (#101) did
   NOT reproduce — full Phase-1 cycle + 3/3 S20-HCE round-trips through
   it (session log in docs/hil-runbook-2026-10-13.md). Reader selection in
   bolty-cli skips virtual vpcd readers and honors `BOLTY_READER` (#121).
 
-## Card Recovery: UID 043365FA967380
+## Card Recovery: UID 043365FA967380 — RESOLVED 2026-10-19
 
-### Status: RECOVERABLE (use "keep trying" — rapid AuthFirst in same connection)
+### Status: RECOVERED — factory-blank, back in burn service (registry alias `recovered-static-key`)
 
-A test card with UID `043365FA967380` is stuck in an unknown key state. It cannot
-be authenticated with derived keys. The most likely cause: the card was burned by
-the **M5StickC Plus firmware with static test keys**, not by bolty-cli.
+The stuck-key card was recovered live on 2026-10-19 (PR #129), confirming
+the original root cause: burned by the **M5StickC Plus firmware with static
+test keys** (K0 = `0x11`×16). Recovery sequence, now the playbook for this
+class:
+
+1. `bolty-cli try-key --key <candidate> --attempts 150` — deep-delay ladder
+   (this card's 91AD delay spent at attempt ~21-25; the historical "zeros →
+   91AD" table entry was a MASKED test — delay blocks key evaluation, so
+   91AD ≠ wrong key; only 91AE after delay-spend disproves a candidate).
+2. `bolty-cli wipe --raw-keys 1111..+2222..+3333..+4444..+5555.. \
+   --confirm-uid <uid> --skip-preverify` — static-keyset wipe; the DET
+   pre-verify gate can't parse a half-wiped NDEF, and a try-key-PROVEN K0
+   provides the wrong-key protection it exists for.
+3. Post-wipe `try-key --key 0000...0` — ACCEPTED = genuinely factory-blank.
+
+The historical recovery notes below are retained for the counter mechanics
+(budget discipline still applies: TotFailCtr 1000 = permanent key lock).
 
 ### What We Know
 
@@ -197,7 +211,8 @@ Three per-key counters track authentication failures:
 Remove card from reader, wait 2 seconds, place back. **This does NOT clear
 SeqFailCtr** (non-volatile). Instead, use "keep trying" — send AuthFirst
 repeatedly within the same PCSC connection (2-5 attempts clears the delay).
-The bolty-cli `try-key` command does this automatically (up to 20 rapid retries).
+The bolty-cli `try-key` command does this automatically (default 20 rapid
+retries; `--attempts` raises the ladder for deep-delay cards).
 
 **Step 2 — Try static test key FIRST:**
 ```bash

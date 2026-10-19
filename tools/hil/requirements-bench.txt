@@ -1,0 +1,13 @@
+# Bench-host Python deps for the HIL harness (tools/hil).
+# Install on the bench host (ai-legion-small) with:
+#   pip install --user --break-system-packages -r tools/hil/requirements-bench.txt
+# plus the sibling infra package (editable, provides BenchLock + the pcscd
+# domain lock + pcscd-ctl):
+#   pip install --user --break-system-packages -e ~/src/tollgate-lab
+# Host CI does NOT need these (conftest guards every bench-only import).
+pytest>=8.0
+pytest-timeout>=2.3
+pytest-rerunfailures>=14
+pytest-json-report>=1.5
+allure-pytest>=2.13
+pyscard>=2.0
