@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 extern crate alloc;
 
@@ -277,5 +278,238 @@ mod stub_impl {
         fn in_release(&mut self, _target: u8) -> Result<(), Error> {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::collections::VecDeque;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::convert::Infallible;
+
+    /// Scripted Pn532Ops mock: outcomes are queueable so a test can
+    /// replay a full chip session (the mock/hardware-divergence rule:
+    /// model the transport's contract, incl. error paths).
+    type InlistOutcome = Result<Option<(u8, Vec<u8>)>, Error>;
+
+    #[derive(Default)]
+    struct MockPn532 {
+        firmware_results: VecDeque<Result<(u8, u8), Error>>,
+        sam_results: VecDeque<Result<(), Error>>,
+        inlist_results: VecDeque<InlistOutcome>,
+        exchange_results: VecDeque<Result<Vec<u8>, Error>>,
+        exchanged: Vec<(u8, Vec<u8>)>,
+        released: Vec<u8>,
+        inlist_calls: usize,
+    }
+
+    impl MockPn532 {
+        fn happy() -> Self {
+            let mut m = MockPn532::default();
+            m.firmware_results.push_back(Ok((7, 0x16)));
+            m.sam_results.push_back(Ok(()));
+            m.inlist_results
+                .push_back(Ok(Some((1, Vec::from([0x04, 0xA3, 0x94])))));
+            m.exchange_results
+                .push_back(Ok(Vec::from([0x00, 0x90, 0x00])));
+            m
+        }
+    }
+
+    impl Pn532Ops for MockPn532 {
+        fn get_firmware_version(&mut self) -> Result<(u8, u8), Error> {
+            self.firmware_results.pop_front().unwrap_or(Ok((7, 0x16)))
+        }
+        fn configure_sam(&mut self) -> Result<(), Error> {
+            self.sam_results.pop_front().unwrap_or(Ok(()))
+        }
+        fn inlist_passive_target(&mut self) -> Result<Option<(u8, Vec<u8>)>, Error> {
+            self.inlist_calls += 1;
+            self.inlist_results.pop_front().unwrap_or(Ok(None))
+        }
+        fn in_data_exchange(&mut self, target_num: u8, data: &[u8]) -> Result<Vec<u8>, Error> {
+            self.exchanged.push((target_num, data.to_vec()));
+            self.exchange_results.pop_front().unwrap_or(Ok(Vec::new()))
+        }
+        fn in_release(&mut self, target_num: u8) -> Result<(), Error> {
+            self.released.push(target_num);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakePin {
+        low: usize,
+        high: usize,
+    }
+
+    impl embedded_hal::digital::ErrorType for FakePin {
+        type Error = Infallible;
+    }
+
+    impl embedded_hal::digital::OutputPin for FakePin {
+        fn set_low(&mut self) -> Result<(), Self::Error> {
+            self.low += 1;
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), Self::Error> {
+            self.high += 1;
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeDelay {
+        spent_ms: u32,
+    }
+
+    impl BlockingMs for FakeDelay {
+        fn delay_ms(&mut self, ms: u32) {
+            self.spent_ms += ms;
+        }
+    }
+
+    #[test]
+    fn new_device_is_uninitialized() {
+        let dev = Pn532Device::new(MockPn532::default(), FakePin::default());
+        assert!(!dev.is_initialized());
+        assert!(!dev.card_present());
+        assert!(dev.uid().is_none());
+    }
+
+    #[test]
+    fn init_runs_reset_ladder_and_chip_setup() {
+        let mut mock = MockPn532::happy();
+        mock.inlist_results.clear();
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        assert!(dev.is_initialized());
+        // RST low then high, with the documented settle windows.
+        assert_eq!((dev.rst_pin().low, dev.rst_pin().high), (1, 1));
+        assert_eq!(delay.spent_ms, 100 + 500);
+        // init must not touch the field (no card detection side effects).
+        assert_eq!(dev.raw_pn532().inlist_calls, 0);
+    }
+
+    #[test]
+    fn init_propagates_firmware_version_error() {
+        let mut mock = MockPn532::default();
+        mock.firmware_results.push_back(Err(Error::Communication));
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        assert!(matches!(
+            dev.init_with_delay(&mut delay),
+            Err(Error::Communication)
+        ));
+        assert!(!dev.is_initialized());
+    }
+
+    #[test]
+    fn init_propagates_sam_configuration_error() {
+        let mut mock = MockPn532::default();
+        mock.firmware_results.push_back(Ok((7, 0x16)));
+        mock.sam_results.push_back(Err(Error::Communication));
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        assert!(matches!(
+            dev.init_with_delay(&mut delay),
+            Err(Error::Communication)
+        ));
+        assert!(!dev.is_initialized());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "xtensa"))]
+    fn non_xtensa_bare_init_reports_not_initialized() {
+        // The RST/delay ladder needs a BlockingMs; the no-arg init() only
+        // exists for xtensa. On host there is no default delay, so init()
+        // must fail loudly instead of silently half-initializing.
+        let mut dev = Pn532Device::new(MockPn532::happy(), FakePin::default());
+        assert!(matches!(dev.init(), Err(Error::NotInitialized)));
+    }
+
+    #[test]
+    fn detect_card_is_inert_until_initialized() {
+        let mut mock = MockPn532::happy();
+        mock.inlist_results.clear();
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        assert!(!dev.detect_card());
+        assert_eq!(dev.raw_pn532().inlist_calls, 0);
+    }
+
+    #[test]
+    fn detect_card_captures_target_and_uid() {
+        let mut dev = Pn532Device::new(MockPn532::happy(), FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        assert!(dev.detect_card());
+        assert!(dev.card_present());
+        assert_eq!(dev.uid(), Some(&[0x04, 0xA3, 0x94][..]));
+    }
+
+    #[test]
+    fn detect_card_none_clears_previous_state() {
+        let mut mock = MockPn532::happy();
+        mock.inlist_results.push_back(Ok(None));
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        assert!(dev.detect_card());
+        assert!(!dev.detect_card());
+        assert!(!dev.card_present());
+        assert!(dev.uid().is_none());
+    }
+
+    #[test]
+    fn exchange_apdu_requires_initialization() {
+        let mut dev = Pn532Device::new(MockPn532::happy(), FakePin::default());
+        assert!(matches!(
+            dev.exchange_apdu(&[0x00]),
+            Err(Error::NotInitialized)
+        ));
+    }
+
+    #[test]
+    fn exchange_apdu_requires_a_detected_card() {
+        let mut mock = MockPn532::happy();
+        mock.inlist_results.clear();
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        assert!(matches!(dev.exchange_apdu(&[0x00]), Err(Error::NoCard)));
+    }
+
+    #[test]
+    fn exchange_apdu_routes_to_detected_target() {
+        let mut mock = MockPn532::happy();
+        mock.exchange_results.clear();
+        mock.exchange_results.push_back(Ok(Vec::from([0x90, 0x00])));
+        let mut dev = Pn532Device::new(mock, FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        dev.detect_card();
+        let rsp = dev.exchange_apdu(&[0x00, 0xA4, 0x04, 0x00]).unwrap();
+        assert_eq!(rsp, Vec::from([0x90, 0x00]));
+        assert_eq!(
+            dev.raw_pn532().exchanged,
+            vec![(1, Vec::from([0x00, 0xA4, 0x04, 0x00]))]
+        );
+    }
+
+    #[test]
+    fn release_card_releases_target_and_clears_state() {
+        let mut dev = Pn532Device::new(MockPn532::happy(), FakePin::default());
+        let mut delay = FakeDelay::default();
+        dev.init_with_delay(&mut delay).unwrap();
+        dev.detect_card();
+        dev.release_card();
+        assert!(!dev.card_present());
+        assert_eq!(dev.raw_pn532().released, vec![1]);
+        // Releasing with no card must not talk to the chip.
+        dev.release_card();
+        assert_eq!(dev.raw_pn532().released.len(), 1);
     }
 }
