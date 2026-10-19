@@ -1,6 +1,7 @@
-# cortex-m-rt 0.7 does not pass its link script itself: without -Tlink.x
-# the thumbv7em link silently produces a hosted-style ELF with no vector
-# table (exactly the "host-green, target-broken" class issue #111 guards).
-# The cfg gate keeps host builds untouched.
+# cortex-m-rt never passes its own link script to the linker (true since
+# 0.5.x): without -Tlink.x the thumbv7em link silently produces a
+# hosted-style ELF with no vector table (the "host-green, target-broken"
+# class issue #111 guards; see docs/cortex-m-rt-linkx.md). The cfg gate
+# keeps host builds untouched.
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 rustflags = ["-C", "link-arg=-Tlink.x"]
