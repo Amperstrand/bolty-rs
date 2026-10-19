@@ -107,3 +107,32 @@ labgrid-client -p bolty-rig release    # manual release after
 - Phase 2 green → IDF v5.5.5 gets its first hardware KNOWN-GOOD stamp.
 - Phase 3 → BLE verdict (either direction) documented in lessons-learned.
 - Everything appended to `results/history.jsonl` automatically.
+
+## Session log — 2026-10-19 (bolty-108 lane, post-#121)
+
+- **Phase 1 GREEN** @ `8028932` (pre-#121 tree + the four unblock fixes
+  that became PR #121, merged `7fde51d`): activation ladder **20/20** uid
+  reads + **5/5** diagnose on registered card `04C474FA967380` (owner
+  placed it on the ACR; a J3R180 JavaCard found on the field cannot run
+  NTAG paths — set aside); `test_bolty_acr` PASS, bolty-acr phase **4/4**
+  commands (uid/inspect/diagnose/picc) — artifact refreshed 3/4 → 4/4.
+  Transcript: /tmp/opencode/bolty-108-bench/*.log + /tmp/bolty-audit.log.
+  This is the Phase-1 ACR cycle covering the firmware-affecting #117
+  (FWT parse) merge per the device-release rule.
+- **ACR1252 UN-WEDGED**: the 2026-10-17 firmware-wedge (#101) did not
+  reproduce — reader healthy through the full cycle and the rig round-trip
+  below. Forensics record stands as the raw-usbfs hazard note.
+- **S20 HCE ↔ ACR vertical round-trip PASS** (boltcard-rig #101 leg):
+  phone-as-virtual-bolt-card (`com.amperstrand.boltcard.hce`) stacked on
+  the ACR antenna → `roundtrip.py` **3/3 PASS** — physical card-tap via
+  ACR PICC, bolty-core `picc_parse_url` valid (uid `04C474FA967380`,
+  SDM counter 387→388→389 rotating per read), local worker LNURLW HTTP
+  200 `withdrawRequest`, tamper negative rejected 403. First RF pairing
+  of the S20 leg on the ACR (nucula coil was the original). Cross-ref:
+  boltcard-rig RUNBOOK "S20 FE HCE card leg".
+- Environment notes: `tollgate-lab` pip-installed --user on the bench
+  host (flock layer, #85); `bolty-rig` labgrid place recreated with
+  post-consolidation matches (`make labgrid-place` fixed by #121); bench
+  worktrees should keep an isolated `target/` — the shared
+  /root/.cargo-target binary was overwritten by a concurrent lane twice
+  on 2026-10-19.

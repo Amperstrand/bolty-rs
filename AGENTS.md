@@ -106,8 +106,17 @@ BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
 - Rig exclusivity: coordinator place acquisition first, flock fallback when
   the coordinator is down (conftest rig_lock / sessionstart — B26).
 - Cards: registry `tools/hil/cards.toml` is the contract (burn tests are
-  parametrized per burn-allowed card; non-coupled auto-skip). Current
-  placement: `04C474FA967380` on ACR, `04455FFA967380` on stick antenna.
+  parametrized per burn-allowed card; non-coupled auto-skip). Placement is
+  volatile — verify what is coupled before mutating (2026-10-19: ACR field
+  carried `04C474FA967380` for the Phase-1 cycle, then the Samsung S20
+  (phone-s20 place, `com.amperstrand.boltcard.hce` HCE rig app) was
+  stacked on the ACR antenna for the boltcard-rig vertical round-trip —
+  physical card since removed; `04455FFA967380` last seen on the stick
+  antenna).
+- ACR1252 health (2026-10-19): the 2026-10-17 firmware-wedge (#101) did
+  NOT reproduce — full Phase-1 cycle + 3/3 S20-HCE round-trips through
+  it (session log in docs/hil-runbook-2026-10-13.md). Reader selection in
+  bolty-cli skips virtual vpcd readers and honors `BOLTY_READER` (#121).
 
 ## Card Recovery: UID 043365FA967380
 
