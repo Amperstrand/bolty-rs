@@ -19,8 +19,13 @@ reader_hint  = "ACR1252"
 ops          = ["read", "burn", "wipe"]
 state        = "any"
 
-# Cards seen in lab history that must NEVER be mutated:
+# Recovery-case card, RECOVERED 2026-10-19: M5StickC static-key burn
+# confirmed via try-key (K0=0x11*16), wiped to factory with
+# `wipe --raw-keys` (+ try-key-proven --skip-preverify); factory K0
+# accepted post-wipe. Returned to burn service per the recovery plan
+# (AGENTS "Card Recovery" Step 3).
 [cards.043365fa967380]
-alias        = "recovery-case-do-not-burn"   # unknown-key state, AGENTS recovery plan
+alias        = "recovered-static-key"
 reader_hint  = "any"
-ops          = ["read"]                       # read-only: auth attempts cost budget
+ops          = ["read", "burn", "wipe"]
+state        = "any"

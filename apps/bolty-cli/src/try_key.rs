@@ -9,6 +9,7 @@ pub async fn cmd_try_key<T: Transport>(
     transport: &mut T,
     key: &[u8; 16],
     key_no: u8,
+    attempts: u32,
     json_mode: bool,
 ) -> anyhow::Result<()>
 where
@@ -42,7 +43,8 @@ where
         Some(KeyProvenance::UnknownExternal),
     );
 
-    for attempt in 1..=20u32 {
+    let attempts = attempts.clamp(1, 1000);
+    for attempt in 1..=attempts {
         let rnd_a = gen_rnd_a()?;
         match Session::default()
             .authenticate_aes(transport, target_key, key, rnd_a)
@@ -86,7 +88,7 @@ where
                 bolty_ntag::ResponseStatus::AuthenticationDelay,
             )) => {
                 if !json_mode && (attempt <= 3 || attempt % 5 == 0) {
-                    println!("  Auth delay (91AD) — keep trying ({attempt}/20)...");
+                    println!("  Auth delay (91AD) — keep trying ({attempt}/{attempts})...");
                 }
                 continue;
             }
@@ -97,15 +99,15 @@ where
     }
 
     audit::log_event_with_provenance(
-        "try-key: auth delay persists after 20 attempts",
+        "try-key: auth delay persists after N attempts",
         Some(KeyProvenance::UnknownExternal),
     );
     if json_mode {
         println!(
-            r#"{{"ok":false,"uid":"{uid_hex}","error":"auth_delay_persistent","attempts":20}}"#
+            r#"{{"ok":false,"uid":"{uid_hex}","error":"auth_delay_persistent","attempts":{attempts}}}"#
         );
     } else {
-        println!("⚠️  Auth delay persists after 20 rapid attempts.");
+        println!("⚠️  Auth delay persists after {attempts} rapid attempts.");
         println!("The card may need a different key or have extensive TotFailCtr.");
     }
     Ok(())
