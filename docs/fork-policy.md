@@ -118,7 +118,7 @@ Codeberg are both non-member).
 |---|---|---|
 | `mfrc522` | `docs/nfc-fork-feeding/` (#108): LEDGER + patches 0001–0004 + COVER.md | Register access API, REQA timer widening, iteration caps — split-ready against upstream 0.8.0; upstream = **gitlab.com/jspngh/mfrc522** (corrected 2026-10-19) |
 | `iso14443` | **none — retired** (#105) | The old `upstream/pcd-session` / `upstream/wtx` pointer branches in the retired fork are dead; remaining deltas live consumer-side in `crates/iso14443-session` |
-| `ntag424` | fork branch `upstream/lencap` → `6f39a47` | LenCap=0x03 wire-form fix (+ `Sdm::disabled()`); Codeberg delta table + decision done 2026-10-19 (#109) — feed packet staged, owner post parked |
+| `ntag424` | fork branch `upstream/lencap` → `6f39a47` | LenCap=0x03 wire-form fix (+ `Sdm::disabled()`); Codeberg delta table + decision done 2026-10-19 (#109) — feed packet staged, ccid co-sign resolved same day, owner post parked |
 
 Rules:
 
@@ -152,8 +152,18 @@ none of theirs. Owner decision:
   discretion per "never blocking"): paste-ready Codeberg PR text +
   `git format-patch f540830..upstream/lencap` series. bolty-side
   hardware evidence exists (burn cycles green on the LenCap=0x03 form
-  since 2026-06; KNOWN-GOOD stamps 2026-08-27/28); ccid-firmware-rs
-  co-sign to be confirmed via ccid-firmware-rs#142 before posting.
+  since 2026-06; KNOWN-GOOD stamps 2026-08-27/28). **ccid co-sign
+  RESOLVED 2026-10-19 (in-issue record): LenCap=0x03 is independently
+  hardware-proven on the ccid side by
+  `ccid-firmware-rs/host-tools/boltwipe.py:197`** — AuthEv2First
+  `90 71 00 00 05 <keyno> 03 …` (byte-exact bolt-card-programmer port,
+  "hardware-proven 2026-08-25, full wipe of a live card" over PC/SC);
+  everything else in the packet is N/A-by-structure since ccid-firmware-rs
+  consumes no `ntag424` crate (single-consumer fork; its VENDOR_PATCH_AUDIT
+  fork layer = mfrc522 + iso14443 only — the earlier ccid#142 pointer was
+  a mis-reference). Upstream post is owner-cleared pending only the post
+  itself; packet series re-verified applying cleanly to `f540830` on
+  2026-10-19.
 - **Digest family** (docs/dependency-duplicates.md): the only collapse
   lever is a fork-side p224 refresh; the digest-0.11 generation exists
   only as `p224 0.14.0-rc` (rc.15 2026-06-29, no stable — 0.13.2 is a
@@ -169,4 +179,4 @@ none of theirs. Owner decision:
 |---|---|---|
 | `iso14443` | **retired** (#105, #110) — upstream direct, rev-pinned | none (template for future retirements) |
 | `mfrc522` | fork consumed @ `e9ced1e`; packet staged (#108); fork head `1dd9f8d` idle since 2026-08-29 | **owner decision: feed vs retire** (LEDGER.md checkpoint) |
-| `ntag424` | fork consumed @ `afb7238` (head `02f23f5`); **decided 2026-10-19: keep + feed, post parked** (#109) | pin bump `afb7238→02f23f5` rides PR #106's lane; feed packet staged for the owner |
+| `ntag424` | fork consumed @ `02f23f5` (bumped from `afb7238` via #120); **decided 2026-10-19: keep + feed, post parked, co-sign resolved** (#109) | owner posts the staged feed packet (only remaining action) |
