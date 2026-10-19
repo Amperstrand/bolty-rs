@@ -89,7 +89,16 @@ def test_gate_refuses_unregistered_card(cycle):
         cycle.gate(spy, "113522ba", "read", "acr")
 
 
-def test_gate_refuses_read_only_card_for_burn(cycle):
+def test_gate_refuses_read_only_card_for_burn(cycle, tmp_path):
+    # Hermetic registry: the REAL cards.toml no longer carries a read-only
+    # card (043365fa967380 was recovered 2026-10-19, c12a8d2 — ops widened
+    # to read/burn/wipe), so the test declares its own read-only entry
+    # instead of depending on live registry policy.
+    ro_registry = tmp_path / "cards-ro.toml"
+    ro_registry.write_text(
+        f"[cards.{nc.CARD_RO}]\nops = [\"read\"]\n"
+    )
+    cycle.registry = CardRegistry(ro_registry)
     spy = SpyCli(nc.CARD_RO)
     with pytest.raises(Exception):
         cycle.gate(spy, nc.CARD_RO, "burn", "acr")
