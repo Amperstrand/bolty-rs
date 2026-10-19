@@ -13,7 +13,10 @@ bench = false
 [dependencies]
 bolty-core = { path = "../../crates/bolty-core", default-features = false, features = ["alloc"] }
 bolty-ntag = { path = "../../crates/bolty-ntag" }
-bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
+# default-features = false: this app is no_std — bolty-mfrc522's default
+# `std` feature pulls iso14443/std (Fwi::fwt Duration API), which does not
+# exist on thumbv7em (#111).
+bolty-mfrc522 = { path = "../../crates/bolty-mfrc522", default-features = false }
 mfrc522-pcd = { path = "../../crates/mfrc522-pcd" }
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]

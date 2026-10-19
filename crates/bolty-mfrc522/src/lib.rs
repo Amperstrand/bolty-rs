@@ -207,11 +207,24 @@ fn split_response<E>(response: &[u8]) -> Result<Response<Vec<u8>>, Error<E>> {
     })
 }
 
+#[cfg(feature = "std")]
 fn frame_wait_time_ms(ats: &Ats) -> u32 {
     // Upstream's Fwi::fwt() is the spec formula (256*16/fc * 2^FWI); our
     // old .value() arithmetic produced the same numbers via 302us steps.
     let us = ats.tb.fwi.fwt().as_micros() as u32;
     if us == 0 { 5 } else { us / 1000 + 10 }
+}
+
+#[cfg(not(feature = "std"))]
+fn frame_wait_time_ms(_ats: &Ats) -> u32 {
+    // no_std: upstream iso14443 gates Fwi::fwt() (Duration) behind "std" and
+    // exposes no raw-FWI accessor (Fwi(pub(crate) u8)), so the declared FWT
+    // is unreadable here. Use the ISO 14443-4 default (FWI=4 -> 302us*2^4
+    // = 4832us), i.e. exactly what the std path computes for FWI=4:
+    // 4832/1000 + 10 = 14 ms. The only no_std consumer today is the
+    // apps/bolty-stm32 skeleton (hardware init pending), so no runtime
+    // behavior depends on a card-declared FWT yet.
+    14
 }
 
 #[cfg(test)]

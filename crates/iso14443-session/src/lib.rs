@@ -21,6 +21,13 @@
 //! FSD enforcement follows upstream SFT-7607: frames longer than the
 //! RATS-announced FSD are refused before parsing or accumulation.
 
+// no_std for firmware consumers (apps/bolty-stm32, #111); host test builds
+// keep the std prelude for the mpsc-based exchange tests below.
+#![cfg_attr(not(test), no_std)]
+#[cfg(not(test))]
+#[macro_use]
+extern crate alloc;
+
 use iso14443::type_a::Frame;
 use iso14443::type_a::{
     vec::{ChainVec, FrameVec},
