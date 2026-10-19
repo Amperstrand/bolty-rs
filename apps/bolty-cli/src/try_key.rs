@@ -99,7 +99,7 @@ where
     }
 
     audit::log_event_with_provenance(
-        "try-key: auth delay persists after N attempts",
+        &format!("try-key: auth delay persists after {attempts} attempts"),
         Some(KeyProvenance::UnknownExternal),
     );
     if json_mode {
