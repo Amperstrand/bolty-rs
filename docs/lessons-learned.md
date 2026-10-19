@@ -734,3 +734,74 @@ ble-gated bugs were fixed along the way (heapless::String type confusion in
 `process_ble_command`, and a `MutexGuard` reborrow in its dispatch path).
 RADIO behavior (advertising, GATT, pairing) remains unproven until Phase 3
 of docs/hil-runbook-2026-10-13.md runs on hardware.
+
+## B32 — ACR1252 CCID wedge has TWO classes; the shallow one heals through pcscd reconnect — recovery is a ladder, and the trigger is us (#101, 2026-10-19)
+
+Evidence: 2026-10-19 bench day — audit-log burn/wipe cycle ~12:28 local;
+pcscd restart 12:47; wedge 13:10:56 (`ccid_usb.c WriteUSB() write failed
+(1/122): LIBUSB_ERROR_NO_DEVICE` + `InterruptRead() libusb_submit_transfer
+failed: LIBUSB_ERROR_NO_DEVICE`); dmesg shows **no USB disconnect** — the
+reader (072f:223b, usb 1-4) stayed enumerated; `lsusb -v` control-transfer
+probe answered; live pyscard probe ~14:35 completed connect → T=1 → ATR
+`3B 81 80 01 80 80` → vendor attribs **without any replug**. Deep-wedge
+contrast case: #101 (owner physical replug required). Access audit: lsof
+showed ONLY pcscd holding `/dev/bus/usb/001/*` — the labgrid `ref-acr1252`
+export is match-only (no standing usbfs claim, no dual-access cause).
+
+**Signature** (how to recognize it in 30 seconds): pcscd journal logs
+`LIBUSB_ERROR_NO_DEVICE` on WriteUSB/InterruptRead, `lsusb` still lists the
+reader, dmesg has NO `usb disconnect` line for it, and `lsusb -v` (real
+control transfers) answers. That is a hung CCID bulk pipe under a live
+control endpoint — not a USB-level device loss.
+
+**The wedge taxonomy** (B29 doctrine applied):
+
+| Class | Symptom | Recovery |
+|---|---|---|
+| Shallow (2026-10-19) | NO_DEVICE under pcscd; control ep alive; no kernel disconnect | close all client sessions → `systemctl restart pcscd` → reconnect. **Proven: reader fully functional hours later, no replug.** |
+| Deep (#101) | bulk pipe hung through pcscd restart attempts | **physical power removal only** (replug; the AGENTS "what does NOT work" list applies — pcscd restart, unbind/bind, SCARD_UNPOWER_CARD do not cut VBUS on this reader) |
+
+**Recovery ladder** (escalate in order; stop at the first pass):
+
+```bash
+# 0. PROBE (also the B29 check-in probe for this reader — no card auth,
+#    connect+status only):
+python3 -c "
+from smartcard.scard import *
+rc, ctx = SCardEstablishContext(SCARD_SCOPE_USER)
+rc, h, p = SCardConnect(ctx, 'ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00',
+                        SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0|SCARD_PROTOCOL_T1)
+rc, rn, st, pr, atr = SCardStatus(h)
+print('connect+status:', SCardGetErrorMessage(rc), 'ATR:', atr.hex())
+SCardDisconnect(h, SCARD_LEAVE_CARD); SCardReleaseContext(ctx)"
+# 1. SHALLOW HEAL: end every session holding the reader, then
+systemctl restart pcscd        # then run the probe again
+# 2. USBDEVFS_RESET ioctl on /dev/bus/usb/001/<dev> (UNTESTED here —
+#    record the result the first time it's tried)
+# 3. authorized toggle: echo 0 > /sys/bus/usb/devices/1-4/authorized; \
+#    sleep 2; echo 1 > /sys/bus/usb/devices/1-4/authorized  (UNTESTED here)
+# 4. POWER REMOVAL: physical replug today; once the reader sits behind a
+#    switchable hub (planned, uhubctl-compatible), `uhubctl --cycle`
+#    replaces the human.
+```
+
+**Ceiling** (B29 rule 3): steps 1–3 cannot fix a device that fails the
+RESET/re-enumeration handshake — if the probe still fails after step 3,
+it is the deep class; go straight to power removal, do not loop software
+heals.
+
+**The trigger is us**: the wedge follows CCID exchanges aborted
+mid-bulk-transfer — harness timeouts/kills during card auth-delay (`91AD`)
+windows when responses are legitimately slow. Prevention: keep the bolty-cli
+backoff+circuit-breaker discipline (6d08cbb); HIL harnesses must tear down
+gracefully — never SIGKILL mid-APDU; treat a 91AD card as slow, not dead.
+
+**Firmware**: IFD_VERSION attrib reads `0.0.0.1` (v1.x line; exact build
+string needs the proper Le in the FF 00 50 pseudo-APDU). No public ACS
+changelog attributes a CCID-hang fix to any ACR1252U firmware; an upgrade
+is owner-only (Windows updater from the ACS SDK), changes the reference
+oracle (Phase-1 revalidation + provenance note required), and is
+low-confidence — **the switchable hub is the actual fix**: it turns every
+future deep wedge into one command. If wedges persist after that, capture
+a usbmon trace of one and draft an ACS technical-support report
+(owner-only channel).
