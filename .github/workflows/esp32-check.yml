@@ -59,6 +59,18 @@ jobs:
           . ${HOME}/export-esp.sh
           cd apps/bolty-esp32
           cargo +esp build --release --features "board-m5atom"
+      - name: Build firmware (board-nucula — ESP32-C3/riscv32, #115)
+        # The riscv32 triple rides the same espup toolchain via -Zbuild-std
+        # (no rustup target component exists for espup toolchains — the
+        # xtensa targets build the same way); build.sh nucula owns the
+        # triple + IDF-pin gate + sdkconfig freshness checks, so CI calls
+        # it instead of raw cargo. Rot class this closes: nothing compiled
+        # board-nucula between authoring and this lane — the exact gap
+        # esp32-check/stm32-check exist for.
+        run: |
+          . ${HOME}/export-esp.sh
+          cd apps/bolty-esp32
+          ./build.sh nucula
       # The `board-m5stick,ble` config is deliberately absent: enabling
       # Bluedroid compiles the esp-idf-svc 0.52.x fork's bt module, which is
       # blocked on the esp-idf-rs generation, not on the IDF pin (v5.5.5 now
