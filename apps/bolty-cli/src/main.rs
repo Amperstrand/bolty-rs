@@ -238,8 +238,10 @@ enum Cli {
         issuer_key: String,
     },
 
-    /// Power-cycle the card to clear auth delay (SCARD_UNPOWER_CARD).
-    /// Resets SeqFailCtr (volatile). Does NOT reset TotFailCtr.
+    /// Clear auth delay via 'keep trying' (rapid AuthFirst in one
+    /// connection — 20 attempts; SeqFailCtr is NON-volatile, so power
+    /// cycling does nothing). Does NOT reset TotFailCtr. For deep delay,
+    /// try-key --attempts <N> carries a bigger ladder.
     ResetCard,
 
     /// Verify ChangeKey implementation — round-trip key 1 zero→test→zero.

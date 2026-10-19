@@ -31,6 +31,9 @@ sudo install -m 644 tools/hil/bolty-console.service /etc/systemd/system/
 # edit the unit if the repo lives elsewhere than ~/src/bolty-rs
 sudo systemctl daemon-reload && sudo systemctl enable --now bolty-console
 python3 tools/hil/bolty-ctl.py PING   # -> alive hb_age=2s ...
+# harness Python deps (pytest plugins, pyscard) + sibling infra package:
+pip install --user --break-system-packages -r tools/hil/requirements-bench.txt
+pip install --user --break-system-packages -e ~/src/tollgate-lab
 ```
 
 ## Usage
