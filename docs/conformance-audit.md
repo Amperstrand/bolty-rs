@@ -37,8 +37,8 @@ convenience:
 | BOLT-card protocol (p/c decrypt+verify, counter, key roles, deterministic derivation, privacy) | boltcard/boltcard `docs/{SPEC,DETERMINISTIC,CARD_PRIVACY}.md` | **Quote-lock** — `BOLT_SPEC` / `BOLT_DET` / `BOLT_PRIV` markers, CI-checked | ✅ live (`specquotes.toml`) |
 | NTAG424 / SUN framing + crypto vectors | NXP NTAG424 DNA datasheet, AN12196 — proprietary PDFs, no canonical text source | **Byte-exact fixture vectors** (PDF layer is guarded by fixtures, not quotes). If a PDF fact needs prose in-tree, transcribe verbatim into `docs/quote-sources/*.md` with §/page cites (ccid `UM11495` precedent, drift-check only) | ✅ fixtures live |
 | MFRC522 PCD (registers, timing, activation ladder) | `Amperstrand/mfrc522-rs` @ `ai-experiments`, pinned `e9ced1e` | **Link** — quote-locks land fork-side (ccid #142); bolty consumes and deletes any local duplicates | ✅ pinned |
-| ISO 14443-4 protocol core (PCD session, S(WTX), R(ACK), chaining) | `Amperstrand/iso14443-rs` @ `ai-experiments`, pinned `268db79` | **Link** — same fork-side lock discipline | ✅ pinned |
-| NTAG424 command layer (Rust API, `Sdm`, LenCap fix) | `Amperstrand/ntag424` @ `ai-experiments`, pinned `afb7238` | **Link** — `docs/fork-policy.md` governs upstream flow | ✅ pinned |
+| ISO 14443-4 protocol core (PCD session, S(WTX), R(ACK), chaining) | `Foundation-Devices/iso14443-rs` **upstream direct** @ `216d1b9` (fork retired 2026-10-18, #105; rev-pinned #110); our session API/WTX hook live consumer-side in `crates/iso14443-session` | **Link** — same fork-side/upstream lock discipline | ✅ pinned |
+| NTAG424 command layer (Rust API, `Sdm`, LenCap fix) | `Amperstrand/ntag424` @ `ai-experiments`, pinned `02f23f5` (bumped from `afb7238` with the vectors-convergence lane; keep-fork+feed decision recorded in `docs/fork-policy.md` §4) | **Link** — `docs/fork-policy.md` governs upstream flow | ✅ pinned |
 | Paywalled ISO 14443 parts | ccid #140 proxy ladder (libnfc + PN532/MFRC522 manuals + EMV Book 1) | **Monitor + consume** — no ISO citation in bolty without a tracked quote in the fork/reference layer | ⏳ follows ccid #140 |
 | Sibling boltcard implementations | boltcard/bolt-card-programmer (issue #71), Go boltcard proxy | **Read-only cross-audit** — `Audited <date> against <impl>` comments at the audited site; upstream findings are report-only (CHANNEL rule: agents never post on non-member repos) | ✅ pattern live (2026-08-31 A5 audit) |
 
@@ -67,8 +67,8 @@ Intake invariants:
 | ccid [#137] timing lane | timeout-arithmetic lessons | audit OUR serial/burn timeouts: any fixed protocol timeout must be ≥ the window the parameters we advertise imply |
 | ccid #135/#136/#138/#139/#141 | reader-role domains | monitor-only (role separation) |
 | `Amperstrand/mfrc522-rs` | commits on `ai-experiments` past our pin `e9ced1e` | explicit reviewed rev-bump commit (`build(deps): align …`, fork-policy rule 2) + `make difftest` |
-| `Amperstrand/iso14443-rs` | commits past `268db79` | same |
-| `Amperstrand/ntag424` | commits past `afb7238` | same |
+| `Foundation-Devices/iso14443-rs` (upstream direct since #105) | commits past `216d1b9` | same bump discipline; fork-policy §2 rule 1 |
+| `Amperstrand/ntag424` | commits past `02f23f5` | same |
 | boltcard/bolt-card-programmer | fixes to the #71 findings (A5-2 compressed-prefix offsets, A5-4 `indexOf p=` false-match) | awareness + cross-impl parity notes; **never push upstream** (report-only, CHANNEL rule) |
 | boltcard/boltcard (spec repo) | edits to SPEC/DETERMINISTIC/CARD_PRIVACY | `spec-quote-drift.yml` catches quote drift against a fresh clone; re-audit affected normative lines |
 
@@ -115,10 +115,19 @@ never closed by host tests alone):
       #69 dogfooding of MUST-line coverage is tracked on #69
 - [ ] `reference/README.md` index — create when the first quote-only
       copy lands (provenance shape: ccid `dc835bb`)
-- [ ] Protocol-constants sweep (MFRC522 registers, ISO 14443 codes,
-      serial framing) — follow-up pass using §3's checklist
+      **2026-10-19: condition checked — no `reference/` and no
+      `docs/quote-sources/` exists yet; correctly not created**
+      (determination recorded on ops #19)
+- [x] Protocol-constants sweep (MFRC522 registers, ISO 14443 codes,
+      serial framing) — first pass 2026-10-19:
+      `docs/protocol-constants-sweep.md` (no unsourced production
+      constant; 3 findings: F1 ISO-citation ladder + upstream `crc_a`
+      `pub(crate)`, F2 test-only register mirrors, F3 serial-doc drift
+      check unwired)
 - [ ] Consume ccid #142's fork quote-locks + delete local duplicates —
-      blocked on that lane landing
+      blocked on that lane landing **(2026-10-19: still blocked — fork
+      feeding is owner-parked, see `docs/nfc-fork-feeding/LEDGER.md`
+      decision checkpoint)**
 
 [#134]: https://github.com/Amperstrand/ccid-firmware-rs/issues/134
 [#137]: https://github.com/Amperstrand/ccid-firmware-rs/issues/137
