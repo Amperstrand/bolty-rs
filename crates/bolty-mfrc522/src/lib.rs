@@ -301,31 +301,81 @@ mod tests {
         }
     }
 
+    // T0 presence bits — ISO 14443-4 §5.2.3; identical in upstream
+    // Format::try_from (src/type_a/ats.rs @ 216d1b9) and in proxmark3's
+    // ATS decoder (client/src/cmdhf14a.c: ta1 = ats[1] & 0x10, tb1 = ats[1]
+    // & 0x20, tc1 = ats[1] & 0x40):
+    //   0b0001_0000 = TA(1) present
+    //   0b0010_0000 = TB(1) present
+    //   0b0100_0000 = TC(1) present
+    // Interface bytes always follow T0 in the order TA(1), TB(1), TC(1).
+    // TB carries FWI 8 (0x80); markers: TA = 0x5A, TC = 0x03, hist = AA BB.
     #[test]
-    fn parser_skips_ta_and_reads_tb_when_both_present() {
-        let ats = Ats::from_crc_verified(&[0x04, 0x30, 0x80, 0x50]).unwrap();
-        assert_eq!(fwi_from_ats(&ats), Some(5));
-    }
+    fn parser_walks_t0_presence_combinations() {
+        let tb = 0x80u8; // FWI 8, SFGI 0
+        for (t0, ta, tc) in [
+            (0x20u8, None, None),                 // TB only
+            (0x30u8, Some(0x5Au8), None),         // TA + TB
+            (0x60u8, None, Some(0x03u8)),         // TB + TC (TA absent)
+            (0x70u8, Some(0x5Au8), Some(0x03u8)), // TA + TB + TC
+            (0x72u8, Some(0x5Au8), Some(0x03u8)), // same, FSCI 2 in low nibble
+        ] {
+            let mut body = Vec::new();
+            body.push(t0);
+            if let Some(ta_byte) = ta {
+                body.push(ta_byte);
+            }
+            body.push(tb);
+            if let Some(tc_byte) = tc {
+                body.push(tc_byte);
+            }
+            body.extend_from_slice(&[0xAA, 0xBB]); // historical bytes
 
-    #[test]
-    fn parser_handles_full_interface_bytes_plus_history() {
-        let ats =
-            Ats::from_crc_verified(&[0x08, 0x70, 0x80, 0xA0, 0x02, 0xAA, 0xBB, 0xCC]).unwrap();
-        assert_eq!(fwi_from_ats(&ats), Some(0xA));
-    }
+            let mut with_tl = Vec::with_capacity(body.len() + 1);
+            with_tl.push((body.len() + 1) as u8);
+            with_tl.extend_from_slice(&body);
 
-    #[test]
-    fn absent_tb_falls_back_to_default_fwi_and_matches_std_path() {
-        // TB(1) not transmitted, and the shortest legal ATS (no T0 at all).
-        let no_tb = Ats::from_crc_verified(&[0x03, 0x10, 0x80]).unwrap();
-        let shortest = Ats::from_crc_verified(&[0x01]).unwrap();
-        for ats in [&no_tb, &shortest] {
-            assert_eq!(fwi_from_ats(ats), None);
-            let fwi = fwi_from_ats(ats).unwrap_or(4);
-            let ms = (302u64 * (1u64 << fwi) / 1000) as u32 + 10;
-            assert_eq!(ms, 14);
-            // std path sees Tb::default() -> Fwi(4) for the same frames.
-            assert_eq!(ms, frame_wait_time_ms(ats));
+            let ats = Ats::from_crc_verified(&with_tl).unwrap();
+            // Ground truth of the constructed frame: TB(1) = 0x80 -> FWI 8.
+            assert_eq!(fwi_from_ats(&ats), Some(8), "T0 = {t0:#04x}");
+            // Oracle: upstream's parsed Fwi must agree (302us * 2^8).
+            assert_eq!(ats.tb.fwi.fwt().as_micros() as u64, 302 * (1u64 << 8));
         }
+    }
+
+    #[test]
+    fn parser_returns_none_whenever_tb_is_absent() {
+        for (t0, ta, tc) in [
+            (0x00u8, None, None),
+            (0x10u8, Some(0x5Au8), None),         // TA only
+            (0x40u8, None, Some(0x03u8)),         // TC only
+            (0x50u8, Some(0x5Au8), Some(0x03u8)), // TA + TC
+        ] {
+            let mut body = Vec::new();
+            body.push(t0);
+            if let Some(ta_byte) = ta {
+                body.push(ta_byte);
+            }
+            if let Some(tc_byte) = tc {
+                body.push(tc_byte);
+            }
+            body.push(0xAA);
+
+            let mut with_tl = Vec::new();
+            with_tl.push((body.len() + 1) as u8);
+            with_tl.extend_from_slice(&body);
+
+            let ats = Ats::from_crc_verified(&with_tl).unwrap();
+            assert_eq!(fwi_from_ats(&ats), None, "T0 = {t0:#04x}");
+            // Fallback parity: FWI=4 default must equal the std path (14 ms).
+            let ms = (302u64 * (1u64 << fwi_from_ats(&ats).unwrap_or(4)) / 1000) as u32 + 10;
+            assert_eq!(ms, 14);
+            assert_eq!(ms, frame_wait_time_ms(&ats));
+        }
+
+        // The shortest legal ATS (TL = 1, no T0 at all) also falls back.
+        let shortest = Ats::from_crc_verified(&[0x01]).unwrap();
+        assert_eq!(fwi_from_ats(&shortest), None);
+        assert_eq!(frame_wait_time_ms(&shortest), 14);
     }
 }
