@@ -216,15 +216,38 @@ fn frame_wait_time_ms(ats: &Ats) -> u32 {
 }
 
 #[cfg(not(feature = "std"))]
-fn frame_wait_time_ms(_ats: &Ats) -> u32 {
+fn frame_wait_time_ms(ats: &Ats) -> u32 {
     // no_std: upstream iso14443 gates Fwi::fwt() (Duration) behind "std" and
     // exposes no raw-FWI accessor (Fwi(pub(crate) u8)), so the declared FWT
-    // is unreadable here. Use the ISO 14443-4 default (FWI=4 -> 302us*2^4
-    // = 4832us), i.e. exactly what the std path computes for FWI=4:
-    // 4832/1000 + 10 = 14 ms. The only no_std consumer today is the
-    // apps/bolty-stm32 skeleton (hardware init pending), so no runtime
-    // behavior depends on a card-declared FWT yet.
-    14
+    // is unreadable through the parsed Ats. Recover TB(1) from the
+    // serialized ATS (to_bytes() is public no_std API) and apply the same
+    // spec formula locally, so cards declaring FWI != 4 get their real FWT
+    // here too. Falls back to the ISO 14443-4 default FWI=4 (14 ms) when
+    // TB(1) is absent, matching the std path.
+    //
+    // Upstream fix proposed in
+    // https://github.com/Foundation-Devices/iso14443-rs/pull/8
+    // (core::time::Duration needs no std). Once that merges and we re-pin,
+    // delete this cfg split and keep only the fwt()-based path above.
+    let fwi = fwi_from_ats(ats).unwrap_or(4);
+    let us = 302u64 * (1u64 << fwi);
+    (us / 1000) as u32 + 10
+}
+
+/// FWI as declared in TB(1) of the serialized ATS (high nibble), or None
+/// when TB(1) is absent or the ATS is too short to carry one.
+#[cfg(any(not(feature = "std"), test))]
+fn fwi_from_ats(ats: &Ats) -> Option<u8> {
+    let bytes = ats.to_bytes().ok()?;
+    let t0 = *bytes.get(1)?;
+    let mut i = 2usize;
+    if t0 & 0b0001_0000 != 0 {
+        i += 1; // TA(1)
+    }
+    if t0 & 0b0010_0000 == 0 {
+        return None; // TB(1) not transmitted -> default FWI
+    }
+    Some(*bytes.get(i)? >> 4)
 }
 
 #[cfg(test)]
@@ -261,5 +284,48 @@ mod tests {
         assert_eq!(ACTIVATION_SETTLE_MS, 15);
         assert_eq!(mfrc522_pcd::FIELD_OFF_DWELL_MS, 50);
         assert_eq!(mfrc522_pcd::FIELD_ON_SETTLE_MS, 5);
+    }
+
+    #[test]
+    fn no_std_fwt_parser_matches_upstream_fwt() {
+        for fwi in 0..=14u8 {
+            for sfgi in [0u8, 5] {
+                let ats = Ats::from_crc_verified(&[0x03, 0x20, (fwi << 4) | sfgi]).unwrap();
+                let parsed = fwi_from_ats(&ats);
+                assert_eq!(parsed, Some(fwi));
+                // The exact expression the no_std path uses must agree with
+                // upstream's spec formula (fwt() is available under std).
+                let us = 302u64 * (1u64 << parsed.unwrap());
+                assert_eq!(us, ats.tb.fwi.fwt().as_micros() as u64);
+            }
+        }
+    }
+
+    #[test]
+    fn parser_skips_ta_and_reads_tb_when_both_present() {
+        let ats = Ats::from_crc_verified(&[0x04, 0x30, 0x80, 0x50]).unwrap();
+        assert_eq!(fwi_from_ats(&ats), Some(5));
+    }
+
+    #[test]
+    fn parser_handles_full_interface_bytes_plus_history() {
+        let ats =
+            Ats::from_crc_verified(&[0x08, 0x70, 0x80, 0xA0, 0x02, 0xAA, 0xBB, 0xCC]).unwrap();
+        assert_eq!(fwi_from_ats(&ats), Some(0xA));
+    }
+
+    #[test]
+    fn absent_tb_falls_back_to_default_fwi_and_matches_std_path() {
+        // TB(1) not transmitted, and the shortest legal ATS (no T0 at all).
+        let no_tb = Ats::from_crc_verified(&[0x03, 0x10, 0x80]).unwrap();
+        let shortest = Ats::from_crc_verified(&[0x01]).unwrap();
+        for ats in [&no_tb, &shortest] {
+            assert_eq!(fwi_from_ats(ats), None);
+            let fwi = fwi_from_ats(ats).unwrap_or(4);
+            let ms = (302u64 * (1u64 << fwi) / 1000) as u32 + 10;
+            assert_eq!(ms, 14);
+            // std path sees Tb::default() -> Fwi(4) for the same frames.
+            assert_eq!(ms, frame_wait_time_ms(ats));
+        }
     }
 }
