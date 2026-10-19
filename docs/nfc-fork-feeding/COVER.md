@@ -60,8 +60,11 @@ LICENSING.md, the stray `src/comm/comm/` duplicate, tracked `Cargo.lock`.
 - Submission artifact: `git apply` of 0004 onto the unpacked upstream
   crates.io 0.8.0 source applies cleanly; the resulting `src/` +
   `.gitignore` equal fork head modulo the excluded stray `src/comm/comm/`.
-- Upstream tarball: crates.io API download, sha-checked by cargo-style
-  tarball layout (`Cargo.toml.orig` used as the true manifest for diffs).
+- Upstream tarball provenance: crates.io API download, sha256
+  `543f2c392f438e427aa9009338710434884b0dc95d0c39110f456846be0aa352` ==
+  the crates.io registry checksum for 0.8.0 (re-verified 2026-10-19
+  during PR review; `Cargo.toml.orig` used as the true manifest for
+  diffs).
 
 ## Fork-side cleanup candidates (next fork commit, any lane)
 
