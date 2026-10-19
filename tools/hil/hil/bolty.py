@@ -6,6 +6,7 @@ before reporting failure, matching the "one retry after 2s always parses"
 pattern from the role-switch boot-noise learnings (§178).
 """
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,14 +30,16 @@ class BoltyError(RuntimeError):
 class BoltyCli:
     binary: Path = DEFAULT_CLI
     timeout_s: int = 300
+    reader: str | None = None
 
     def run(self, *args: str, timeout_s: int | None = None) -> str:
         """Run bolty-cli; return stdout; raise BoltyError on nonzero exit."""
         cmd = [str(self.binary), *args]
+        env = dict(os.environ, BOLTY_READER=self.reader) if self.reader else None
         try:
             out = subprocess.run(
                 cmd, capture_output=True, text=True,
-                timeout=timeout_s or self.timeout_s,
+                timeout=timeout_s or self.timeout_s, env=env,
             )
         except subprocess.TimeoutExpired as e:
             raise BoltyError(f"bolty-cli {' '.join(args)} timed out", -1, "") from e

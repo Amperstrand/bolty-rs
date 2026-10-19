@@ -39,6 +39,14 @@ test-hil:
 report:
 	bash tools/hil/report.sh
 
+# Nucula extensive bench cycle (visit-gated; see tools/hil/nucula_cycle.py).
+# VISIT: v1|v2|v3|v4|status — VARIANT: full|minimal — extra: WITH_NEGATIVE=1 WITH_RO=1 DRY_RUN=1
+nucula-cycle:
+	mkdir -p tools/hil/results
+	python3 tools/hil/nucula_cycle.py --visit $(VISIT) --variant $(VARIANT) \
+	  $(if $(WITH_NEGATIVE),--with-negative) $(if $(WITH_RO),--with-ro) \
+	  $(if $(DRY_RUN),--dry-run)
+
 # Full labgrid plugin path: place acquisition + env/target fixtures (#79).
 # Auto-skips the labgrid test without coordinator reachability issues only
 # via rig_lock's flock fallback — this target requires the coordinator up.
