@@ -1,6 +1,6 @@
 use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
-use bolty_core::derivation::BoltcardDeterministicDeriver;
+use bolty_core::derivation::{BoltcardDeterministicDeriver, CardKeySet};
 use bolty_core::provenance::KeyProvenance;
 use bolty_core::secret::{AesKey, CardKeys};
 use bolty_core::uid::CardUid;
@@ -12,12 +12,15 @@ use crate::common::{
     record_auth_failure,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
-    issuer_key: &[u8; 16],
+    issuer_key: Option<&[u8; 16]>,
+    raw_keys: Option<&[[u8; 16]; 5]>,
     version: u8,
     verbose: bool,
     dry_run: bool,
+    skip_preverify: bool,
     confirm_uid: Option<&[u8; 7]>,
 ) -> anyhow::Result<()>
 where
@@ -39,20 +42,45 @@ where
         println!("  ✓ UID confirmed");
     }
 
-    let keys = BoltcardDeterministicDeriver::derive_keys(
-        issuer_key,
-        CardUid::new(uid_fixed),
-        version as u32,
-    );
+    let (keys, provenance) = match (issuer_key, raw_keys) {
+        (Some(issuer_key), None) => (
+            BoltcardDeterministicDeriver::derive_keys(
+                issuer_key,
+                CardUid::new(uid_fixed),
+                version as u32,
+            ),
+            KeyProvenance::DerivedIssuer { version },
+        ),
+        (None, Some(raw)) => {
+            // Recovery path: known static keyset (e.g. M5StickC test keys).
+            // card_key/card_id stay zero — pre-verification only touches
+            // them when the NDEF carries live p/c, and a static-key card's
+            // NDEF carries placeholders (early-skip path).
+            let mk = |b: &[u8; 16]| AesKey::new(*b);
+            (
+                CardKeySet {
+                    card_key: mk(&FACTORY_KEY),
+                    k0: mk(&raw[0]),
+                    k1: mk(&raw[1]),
+                    k2: mk(&raw[2]),
+                    k3: mk(&raw[3]),
+                    k4: mk(&raw[4]),
+                    card_id: [0u8; 16],
+                },
+                KeyProvenance::UnknownExternal,
+            )
+        }
+        _ => unreachable!("clap enforces issuer-key/raw-keys exclusivity"),
+    };
     if verbose || dry_run {
-        println!("Derived K0: {}", crate::to_hex(keys.k0.as_bytes()));
+        println!("K0 in use: {}", crate::to_hex(keys.k0.as_bytes()));
     }
 
     if dry_run {
         println!("\n=== DRY RUN — no card modifications ===");
         println!("Version:   {version}");
         println!("\nPlanned steps:");
-        println!("  [1] Authenticate (factory K0 or derived K0)");
+        println!("  [1] Authenticate (K0: factory, derived, or raw)");
         println!("  [2] Clear SDM file settings");
         println!("  [3] Write empty NDEF (NLEN=0)");
         println!("  [4] Reset K1 to factory");
@@ -130,12 +158,20 @@ where
     // interface) skip the gate; hex values that fail decryption or the SUN
     // MAC refuse the wipe (wrong issuer key / version — the DET:72 brick guard).
     println!("{}", crate::output::WIPE_PREVERIFY);
-    pre_verify_pc(transport, &keys, &uid_fixed).await?;
+    if skip_preverify {
+        println!("Pre-verification SKIPPED (--skip-preverify) — keyset must be try-key proven.");
+        audit::log_event_with_provenance(
+            "wipe: p/c pre-verification skipped by explicit flag",
+            Some(provenance),
+        );
+    } else {
+        pre_verify_pc(transport, &keys, &uid_fixed).await?;
+    }
 
-    // Derived K0 auth with AuthRetry (handles auth delay backoff).
+    // K0 auth with AuthRetry (handles auth delay backoff).
     // The library re-authenticates internally, but we probe first to get
     // past any auth delay and give a clear error message on failure.
-    println!("Authenticating with derived K0...");
+    println!("Authenticating with K0...");
     {
         let mut retry = AuthRetry::new();
         let result = loop {
@@ -158,7 +194,9 @@ where
             }
         };
         if !result {
-            anyhow::bail!("derived K0 authentication failed — wrong issuer key or card not burned");
+            anyhow::bail!(
+                "K0 authentication failed — wrong issuer key, wrong raw keyset, or card not burned"
+            );
         }
     }
 
@@ -172,7 +210,6 @@ where
     };
 
     let rnd_a = AesKey::new(gen_rnd_a()?);
-    let provenance = KeyProvenance::DerivedIssuer { version };
     println!("\nWiping card...");
     audit::log_event_with_provenance(
         &format!(
@@ -382,7 +419,17 @@ mod tests {
         let issuer_key = [0x42u8; 16];
         let mut transport = provisioned_with_sdm_p_c(&issuer_key, "deadbeefdeadbeef").await;
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let result = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            false,
+            false,
+            None,
+        )
+        .await;
         let err = result.expect_err("wipe must refuse on SUN MAC mismatch");
         assert!(
             err.to_string().contains("SUN MAC"),
@@ -424,7 +471,17 @@ mod tests {
         let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c={c_hex}");
         transport.replace_ndef(ndef_file_with_url(&url_with_hex));
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let result = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            false,
+            false,
+            None,
+        )
+        .await;
         assert!(
             result.is_ok(),
             "wipe with valid p/c must succeed: {:?}",
@@ -461,7 +518,17 @@ mod tests {
         let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c={c_hex}");
         transport.replace_ndef(ndef_file_with_url(&url_with_hex));
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let result = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            false,
+            false,
+            None,
+        )
+        .await;
         assert!(
             result.is_ok(),
             "wipe of a privacy card with valid p/c must succeed: {:?}",
@@ -497,7 +564,17 @@ mod tests {
         let url_with_hex = format!("https://card.bolt.local/lnurl?p={p_hex}&c=deadbeefdeadbeef");
         transport.replace_ndef(ndef_file_with_url(&url_with_hex));
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let result = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            false,
+            false,
+            None,
+        )
+        .await;
         let err = result.expect_err("privacy-card wipe must refuse on SUN MAC mismatch");
         assert!(
             err.to_string().contains("SUN MAC"),
@@ -529,7 +606,17 @@ mod tests {
         let ndef_before = transport.ndef().to_vec();
         let settings_before = transport.file_settings().to_vec();
 
-        let result = cmd_wipe(&mut transport, &issuer_key, 1, false, true, None).await;
+        let result = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            true,
+            false,
+            None,
+        )
+        .await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
 
         assert_eq!(
@@ -573,7 +660,17 @@ mod tests {
         )
         .await;
         let _ = std::fs::remove_file(&tmp_path);
-        let _ = cmd_wipe(&mut transport, &issuer_key, 1, false, false, None).await;
+        let _ = cmd_wipe(
+            &mut transport,
+            Some(&issuer_key),
+            None,
+            1,
+            false,
+            false,
+            false,
+            None,
+        )
+        .await;
 
         let content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
         assert!(

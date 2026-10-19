@@ -131,8 +131,15 @@ enum Cli {
 
     /// Wipe card: clear SDM, reset all keys to factory defaults
     Wipe {
+        /// Issuer key to derive the card keyset from (standard path)
         #[arg(long)]
-        issuer_key: String,
+        issuer_key: Option<String>,
+
+        /// Raw keyset k0+k1+k2+k3+k4 (5 × 32 hex, '+'-separated) — recovery
+        /// path for cards burned with known static keys (e.g. M5StickC test
+        /// keys). Mutually exclusive with --issuer-key.
+        #[arg(long)]
+        raw_keys: Option<String>,
 
         #[arg(long, default_value = "1")]
         version: u8,
@@ -144,6 +151,14 @@ enum Cli {
         /// Preview planned actions without sending any APDUs
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip the DET:57-59 p/c pre-verification gate. ONLY for recovery
+        /// with a try-key-PROVEN keyset: pre-verify protects against wiping
+        /// with a wrong key, and a raw keyset whose K0 just authenticated
+        /// provides that proof directly (a half-wiped card's NDEF can be
+        /// unreadable — that refusal is a false positive for this path).
+        #[arg(long)]
+        skip_preverify: bool,
 
         /// Require this UID (14 hex chars) before proceeding — safety against wrong card
         #[arg(long)]
@@ -206,6 +221,13 @@ enum Cli {
         /// Key slot to test (0-4, default 0 = master key)
         #[arg(long, default_value = "0")]
         key_no: u8,
+
+        /// Rapid-retry budget for the 91AD keep-trying ladder (datasheet:
+        /// "keep trying until full delay is spent"). Deep-delay cards
+        /// (SeqFailCtr grown by historical polling abuse) need far more
+        /// than 20.
+        #[arg(long, default_value_t = 20)]
+        attempts: u32,
     },
 
     /// Scan all likely key candidates against K0 (read-only, no writes).
@@ -223,6 +245,28 @@ enum Cli {
     /// Verify ChangeKey implementation — round-trip key 1 zero→test→zero.
     /// Requires BLANK card (factory K0 = zeros).
     TestCk,
+}
+
+fn parse_raw_keyset(s: &str) -> anyhow::Result<[[u8; 16]; 5]> {
+    let parts: Vec<&str> = s.split('+').collect();
+    if parts.len() != 5 {
+        anyhow::bail!(
+            "--raw-keys needs exactly 5 keys joined by '+' (k0+k1+k2+k3+k4), got {}",
+            parts.len()
+        );
+    }
+    let parsed: anyhow::Result<Vec<[u8; 16]>> = parts
+        .iter()
+        .enumerate()
+        .map(|(slot, part)| {
+            parse_hex_16(part).map_err(|e| anyhow::anyhow!("--raw-keys: k{slot}: {e}"))
+        })
+        .collect();
+    let parsed = parsed?;
+    let keyset: [[u8; 16]; 5] = parsed.try_into().map_err(|v: Vec<[u8; 16]>| {
+        anyhow::anyhow!("--raw-keys: needed 5 keys, got {}", v.len())
+    })?;
+    Ok(keyset)
 }
 
 fn parse_hex_16(s: &str) -> anyhow::Result<[u8; 16]> {
@@ -385,20 +429,37 @@ async fn run() -> anyhow::Result<()> {
 
         Cli::Wipe {
             issuer_key,
+            raw_keys,
             version,
             verbose,
             dry_run,
+            skip_preverify,
             confirm_uid,
         } => {
-            let issuer_key = parse_hex_16(&issuer_key)?;
             let confirm_uid = confirm_uid.map(|s| parse_hex_7(&s)).transpose()?;
+            let issuer_key = match (&issuer_key, &raw_keys) {
+                (Some(ik), None) => Some(parse_hex_16(ik)?),
+                (None, Some(_)) => None,
+                (None, None) => {
+                    anyhow::bail!("wipe requires --issuer-key or --raw-keys")
+                }
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("--issuer-key and --raw-keys are mutually exclusive")
+                }
+            };
+            let raw_keys = match &raw_keys {
+                Some(rk) => Some(parse_raw_keyset(rk)?),
+                None => None,
+            };
             let mut transport = connect_transport()?;
             wipe::cmd_wipe(
                 &mut transport,
-                &issuer_key,
+                issuer_key.as_ref(),
+                raw_keys.as_ref(),
                 version,
                 verbose,
                 dry_run,
+                skip_preverify,
                 confirm_uid.as_ref(),
             )
             .await?;
@@ -475,7 +536,17 @@ async fn run() -> anyhow::Result<()> {
             .await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
-            wipe::cmd_wipe(&mut transport, &issuer_key, version, verbose, false, None).await?;
+            wipe::cmd_wipe(
+                &mut transport,
+                Some(&issuer_key),
+                None,
+                version,
+                verbose,
+                false,
+                false,
+                None,
+            )
+            .await?;
 
             println!("\n═══ CYCLE: RE-BURN ═══");
             burn::cmd_burn(
@@ -493,10 +564,14 @@ async fn run() -> anyhow::Result<()> {
             println!("\n🎉 Full cycle completed successfully!");
         }
 
-        Cli::TryKey { key, key_no } => {
+        Cli::TryKey {
+            key,
+            key_no,
+            attempts,
+        } => {
             let key = parse_hex_16(&key)?;
             let mut transport = connect_transport()?;
-            try_key::cmd_try_key(&mut transport, &key, key_no, json_mode).await?;
+            try_key::cmd_try_key(&mut transport, &key, key_no, attempts, json_mode).await?;
         }
 
         Cli::ScanKeys { issuer_key } => {
@@ -511,7 +586,7 @@ async fn run() -> anyhow::Result<()> {
                 println!("Clearing auth delay via 'keep trying' (rapid AuthFirst)...");
                 println!("Per NT4H2421Gx datasheet: 'Keep trying until full delay is spent'");
             }
-            try_key::cmd_try_key(&mut transport, &[0u8; 16], 0, json_mode).await?;
+            try_key::cmd_try_key(&mut transport, &[0u8; 16], 0, 20, json_mode).await?;
         }
 
         Cli::TestCk => {
