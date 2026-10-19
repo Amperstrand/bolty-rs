@@ -38,6 +38,7 @@ allow-git = [
     "https://github.com/Amperstrand/mfrc522-rs.git",
     "https://github.com/Foundation-Devices/iso14443-rs.git",  # upstream direct — the Amperstrand fork is retired (#105)
     "https://github.com/Amperstrand/ccid-firmware-rs.git",  # pn7160-nci (shared NCI core, rev-pinned)
+    "https://github.com/Amperstrand/stm32f4xx-hal.git",  # F469 bring-up fork, rev-pinned (#128)
 ]
 # Removed (issue #110): Amperstrand/esp-idf-svc.git — the fork was retired by
 # #95 (apps/bolty-esp32 uses crates.io esp-idf-svc); no manifest references
