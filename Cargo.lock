@@ -1960,7 +1960,7 @@ dependencies = [
 [[package]]
 name = "ntag424"
 version = "0.1.0"
-source = "git+https://github.com/Amperstrand/ntag424.git?rev=afb7238516bcf5fac177eba1910565d1dde9354c#afb7238516bcf5fac177eba1910565d1dde9354c"
+source = "git+https://github.com/Amperstrand/ntag424.git?rev=02f23f51fc352f5abad8812550dc1e0361afe514#02f23f51fc352f5abad8812550dc1e0361afe514"
 dependencies = [
  "aes",
  "arrayvec",

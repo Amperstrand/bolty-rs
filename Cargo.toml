@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "afb7238516bcf5fac177eba1910565d1dde9354c", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
+ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "02f23f51fc352f5abad8812550dc1e0361afe514", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
 # Canonical upstream directly — the Amperstrand fork is retired; our session
 # API + WTX hook live consumer-side in crates/iso14443-session.
