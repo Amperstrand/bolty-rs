@@ -29,24 +29,23 @@ fn main() {
         );
         std::process::exit(2);
     }
-
-    let k1 = match decode_hex(&args[0]).map(|v| <[u8; 16]>::try_from(v)) {
-        Ok(Ok(k)) => k,
-        _ => {
+    let k1 = args
+        .first()
+        .and_then(|a| decode_hex(a).ok())
+        .unwrap_or_else(|| {
             eprintln!("k1 must be 32 hex chars (16 bytes)");
             std::process::exit(2);
-        }
-    };
-    let k2 = match decode_hex(&args[1]).map(|v| <[u8; 16]>::try_from(v)) {
-        Ok(Ok(k)) => k,
-        _ => {
+        });
+    let k2 = args
+        .get(1)
+        .and_then(|a| decode_hex(a).ok())
+        .unwrap_or_else(|| {
             eprintln!("k2 must be 32 hex chars (16 bytes)");
             std::process::exit(2);
-        }
-    };
+        });
 
     let mut any_invalid = false;
-    for url in &args[2..] {
+    for url in args.iter().skip(2) {
         let picc = picc_parse_url(&k1, &k2, url);
         println!("{url} -> {picc:?}");
         if !picc.valid {

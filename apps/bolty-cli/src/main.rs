@@ -241,10 +241,15 @@ enum Cli {
 
     /// Scan all likely key candidates against K0 (read-only, no writes).
     /// Tries factory zeros, derived K0 v0-v3, static test keys, and card key.
-    /// Stops on first match or auth delay.
+    /// Stops on first match or when a candidate's delay ladder is spent.
     ScanKeys {
         #[arg(long)]
         issuer_key: String,
+
+        /// Rapid-retry budget per candidate for the 91AD keep-trying
+        /// ladder (same semantics as try-key --attempts).
+        #[arg(long, default_value_t = 20)]
+        attempts: u32,
     },
 
     /// Clear auth delay via 'keep trying' (rapid AuthFirst in one
@@ -608,10 +613,13 @@ async fn run() -> anyhow::Result<()> {
             try_key::cmd_try_key(&mut transport, &key, key_no, attempts, json_mode).await?;
         }
 
-        Cli::ScanKeys { issuer_key } => {
+        Cli::ScanKeys {
+            issuer_key,
+            attempts,
+        } => {
             let issuer_key = parse_hex_16(&issuer_key)?;
             let mut transport = connect_transport()?;
-            scan_keys::cmd_scan_keys(&mut transport, &issuer_key, json_mode).await?;
+            scan_keys::cmd_scan_keys(&mut transport, &issuer_key, attempts, json_mode).await?;
         }
 
         Cli::ResetCard => {
