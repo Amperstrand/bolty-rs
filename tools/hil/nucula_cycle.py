@@ -338,6 +338,7 @@ def place_guard(cycle: Cycle, place_name: str):
         _audit(f"released place {place_name}")
 
 
+@contextmanager
 def bench_lock(cycle: Cycle):
     if cycle.dry_run:
         yield None

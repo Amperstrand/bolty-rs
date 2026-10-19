@@ -183,3 +183,10 @@ def test_boltycli_reader_env_injection(monkeypatch):
     assert captured["env"]["BOLTY_READER"] == "Nucula"
     nc.BoltyCli().run("uid")
     assert captured["env"] is None
+
+
+def test_bench_lock_is_context_manager(tmp_path, monkeypatch):
+    monkeypatch.setattr(nc, "STATE_PATH", tmp_path / "s.json")
+    c = nc.Cycle(tmp_path, dry_run=True)
+    with nc.bench_lock(c) as lock:
+        assert lock is None
