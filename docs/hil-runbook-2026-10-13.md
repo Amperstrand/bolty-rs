@@ -136,3 +136,23 @@ labgrid-client -p bolty-rig release    # manual release after
   worktrees should keep an isolated `target/` — the shared
   /root/.cargo-target binary was overwritten by a concurrent lane twice
   on 2026-10-19.
+
+## Session log — 2026-10-19/20 overnight (bolty-bench-acr-phase1, V1 attempt)
+
+- **V1 (nucula-cycle) NOT GREEN — blocked pre-mutation.** Transcript:
+  `/root/bench-evidence/nucula-cycle/v1_run_overnight.log` (+ CHECKPOINTS.md,
+  build/boot/gate-probe logs in the same dir; runner hotfix PR #137).
+- Staging validation: nucula PN7160 coil **NoCard** (boot-log evidence after
+  board restoration); ACR carries an NTAG424 (ATR-verified) whose card session
+  is not connectable (PROTO_MISMATCH / internal error at connect — reader
+  session-state anomaly, candidate: stale pcscd session or the static
+  `acr1252-if0` entry after re-enumeration; needs a fresh check next session).
+- **Board recovered from app-brick** (interrupted flash ~20:58, `invalid
+  segment length 0xffffffff`) — `board-nucula` from main `af7c449` built
+  (heavy, IDF v5.5.5 pin green) and serial-flashed; boots, PN7160/NCI alive.
+- **Firmware finding (bolty-rs#115)**: console RX wedges after boot.
+- Registry note: `043365fa967380` recovered + re-registered burn-allowed by
+  `c12a8d2` — the registry is the contract; gates follow it.
+- Zero mutations all window; gates + abort-before-mutation verified on
+  hardware; places released clean; broker left stopped (no CCID backend on
+  console firmware).
