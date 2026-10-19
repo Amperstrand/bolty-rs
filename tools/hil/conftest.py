@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from hil import BoltyCli, BoltyError, CardRegistry
+from hil.acr_probe import heal_hint, probe_isolated
 from hil.bolty import DEFAULT_CONSOLE_CTL
 from hil.labgrid_state import note_rig_state
 
@@ -123,6 +124,37 @@ def _sign_hold_identity(config):
     os.environ["LG_USERNAME"] = f"bolty-hil~mark={'-'.join(markexpr.split())}~sha={sha}"
 
 
+def _acr_checkin(session) -> None:
+    """B29 rule 1 / B32: probe the ACR1252 the moment the session owns the
+    bench. 'wedge' prints the heal ladder; the deep class is owner-replug
+    (no switched hub on this bench — owner decision 2026-10-19), so burning
+    session minutes on a wedged reader is the failure this prevents.
+    BOLTY_ACR_AUTOHEAL=1 opts into the shallow heal (pcscd restart — shared
+    infra, opt-in only)."""
+    import os
+
+    result = probe_isolated()
+    session.stash[ACR_STATE_KEY] = result["state"]
+    print(f"[acr-checkin] {result['state']}: {result['detail']}")
+    if result["state"] == "wedge":
+        print(heal_hint())
+        if os.environ.get("BOLTY_ACR_AUTOHEAL") == "1":
+            healed = subprocess.run(
+                ["systemctl", "restart", "pcscd"],
+                capture_output=True, text=True, timeout=30,
+            )
+            time.sleep(3)
+            result = probe_isolated()
+            session.stash[ACR_STATE_KEY] = result["state"]
+            print(
+                f"[acr-checkin] after autoheal (rc={healed.returncode}): "
+                f"{result['state']}: {result['detail']}"
+            )
+    elif result["state"] == "absent":
+        print("[acr-checkin] ACR1252 not listed by pcscd — hardware tests "
+              "will skip via coupled_card_uid")
+
+
 def _lg_client_p(place: str, *args: str, timeout_s: float = 15):
     """labgrid-client against an explicit place (reservation tokens use
     '+<token>' as the -p argument)."""
@@ -133,6 +165,11 @@ def _lg_client_p(place: str, *args: str, timeout_s: float = 15):
 
 
 LG_RESERVE_TOKEN_KEY = pytest.StashKey[str]()
+# B32 ACR check-in state ('ok' | 'wedge' | 'absent' | 'no-service' |
+# 'unknown'); set when the rig is held, read by coupled_card_uid and the
+# session ledger. None key default = probe not run (non-hardware session).
+ACR_STATE_KEY = pytest.StashKey[str]()
+RIG_HELD_KEY = pytest.StashKey[bool]()
 
 
 def _reserve_wait(session, prio: int, timeout_s: int) -> str:
@@ -245,6 +282,9 @@ def rig_lock(request):
     markexpr = request.config.getoption("-m", "") or "hil"
     note_rig_state(test=f"pytest:{'-'.join(markexpr.split())}",
                    firmware=_fw_sha256())
+
+    request.session.stash[RIG_HELD_KEY] = True
+    _acr_checkin(request.session)
 
     # Shared disk hygiene (2026-09-11 ENOSPC incident): no-op with
     # headroom, conservative prunes without — tollgate_lab owns it. Only
@@ -361,6 +401,11 @@ def _lg_release_best_effort():
 
 def pytest_sessionfinish(session, exitstatus):
     """Append a run record to history.jsonl after every session."""
+    if session.stash.get(RIG_HELD_KEY, False):
+        checkout = probe_isolated()
+        print(f"[acr-checkout] {checkout['state']}: {checkout['detail']}")
+        if checkout["state"] == "wedge":
+            print(heal_hint())
     if session.stash.get(LG_ACQUIRED_KEY, False) and not session.stash.get(
         LG_INHERITED_KEY, False
     ):
@@ -379,6 +424,7 @@ def pytest_sessionfinish(session, exitstatus):
         "passed": sum(1 for r in results.values() if r["outcome"] == "passed"),
         "failed": sum(1 for r in results.values() if r["outcome"] == "failed"),
         "skipped": sum(1 for r in results.values() if r["outcome"] == "skipped"),
+        "acr_state": session.stash.get(ACR_STATE_KEY, None),
     }
     try:
         with open(LEDGER_PATH, "a") as f:
@@ -418,6 +464,15 @@ def console_ctl() -> str:
     return str(DEFAULT_CONSOLE_CTL)
 
 
+def _wedge_skip_reason(acr_state: str):
+    """B32: a wedge detected at check-in must fail fast with the pointer,
+    not burn session minutes on per-test timeouts."""
+    if acr_state == "wedge":
+        return ("ACR1252 wedge detected at check-in (B32) — heal per the "
+                "session-header ladder before spending session time")
+    return None
+
+
 @pytest.fixture
 def coupled_card_uid(request, cli, registry: CardRegistry) -> str:
     """The parametrized registered card UID, verified to be the one actually
@@ -425,6 +480,11 @@ def coupled_card_uid(request, cli, registry: CardRegistry) -> str:
     the registry is the safety contract, not placement. Uses retry-aware
     uid(); params whose card is elsewhere auto-skip."""
     expected = request.param
+    reason = _wedge_skip_reason(
+        request.session.stash.get(ACR_STATE_KEY, "ok")
+    )
+    if reason:
+        pytest.skip(reason)
     actual = cli.uid_or_none()
     if actual is None:
         pytest.skip("no card coupled (intermittent coupling — check antenna)")
