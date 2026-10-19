@@ -216,15 +216,38 @@ fn frame_wait_time_ms(ats: &Ats) -> u32 {
 }
 
 #[cfg(not(feature = "std"))]
-fn frame_wait_time_ms(_ats: &Ats) -> u32 {
+fn frame_wait_time_ms(ats: &Ats) -> u32 {
     // no_std: upstream iso14443 gates Fwi::fwt() (Duration) behind "std" and
     // exposes no raw-FWI accessor (Fwi(pub(crate) u8)), so the declared FWT
-    // is unreadable here. Use the ISO 14443-4 default (FWI=4 -> 302us*2^4
-    // = 4832us), i.e. exactly what the std path computes for FWI=4:
-    // 4832/1000 + 10 = 14 ms. The only no_std consumer today is the
-    // apps/bolty-stm32 skeleton (hardware init pending), so no runtime
-    // behavior depends on a card-declared FWT yet.
-    14
+    // is unreadable through the parsed Ats. Recover TB(1) from the
+    // serialized ATS (to_bytes() is public no_std API) and apply the same
+    // spec formula locally, so cards declaring FWI != 4 get their real FWT
+    // here too. Falls back to the ISO 14443-4 default FWI=4 (14 ms) when
+    // TB(1) is absent, matching the std path.
+    //
+    // Upstream fix proposed in
+    // https://github.com/Foundation-Devices/iso14443-rs/pull/8
+    // (core::time::Duration needs no std). Once that merges and we re-pin,
+    // delete this cfg split and keep only the fwt()-based path above.
+    let fwi = fwi_from_ats(ats).unwrap_or(4);
+    let us = 302u64 * (1u64 << fwi);
+    (us / 1000) as u32 + 10
+}
+
+/// FWI as declared in TB(1) of the serialized ATS (high nibble), or None
+/// when TB(1) is absent or the ATS is too short to carry one.
+#[cfg(any(not(feature = "std"), test))]
+fn fwi_from_ats(ats: &Ats) -> Option<u8> {
+    let bytes = ats.to_bytes().ok()?;
+    let t0 = *bytes.get(1)?;
+    let mut i = 2usize;
+    if t0 & 0b0001_0000 != 0 {
+        i += 1; // TA(1)
+    }
+    if t0 & 0b0010_0000 == 0 {
+        return None; // TB(1) not transmitted -> default FWI
+    }
+    Some(*bytes.get(i)? >> 4)
 }
 
 #[cfg(test)]
@@ -261,5 +284,98 @@ mod tests {
         assert_eq!(ACTIVATION_SETTLE_MS, 15);
         assert_eq!(mfrc522_pcd::FIELD_OFF_DWELL_MS, 50);
         assert_eq!(mfrc522_pcd::FIELD_ON_SETTLE_MS, 5);
+    }
+
+    #[test]
+    fn no_std_fwt_parser_matches_upstream_fwt() {
+        for fwi in 0..=14u8 {
+            for sfgi in [0u8, 5] {
+                let ats = Ats::from_crc_verified(&[0x03, 0x20, (fwi << 4) | sfgi]).unwrap();
+                let parsed = fwi_from_ats(&ats);
+                assert_eq!(parsed, Some(fwi));
+                // The exact expression the no_std path uses must agree with
+                // upstream's spec formula (fwt() is available under std).
+                let us = 302u64 * (1u64 << parsed.unwrap());
+                assert_eq!(us, ats.tb.fwi.fwt().as_micros() as u64);
+            }
+        }
+    }
+
+    // T0 presence bits — ISO 14443-4 §5.2.3; identical in upstream
+    // Format::try_from (src/type_a/ats.rs @ 216d1b9) and in proxmark3's
+    // ATS decoder (client/src/cmdhf14a.c: ta1 = ats[1] & 0x10, tb1 = ats[1]
+    // & 0x20, tc1 = ats[1] & 0x40):
+    //   0b0001_0000 = TA(1) present
+    //   0b0010_0000 = TB(1) present
+    //   0b0100_0000 = TC(1) present
+    // Interface bytes always follow T0 in the order TA(1), TB(1), TC(1).
+    // TB carries FWI 8 (0x80); markers: TA = 0x5A, TC = 0x03, hist = AA BB.
+    #[test]
+    fn parser_walks_t0_presence_combinations() {
+        let tb = 0x80u8; // FWI 8, SFGI 0
+        for (t0, ta, tc) in [
+            (0x20u8, None, None),                 // TB only
+            (0x30u8, Some(0x5Au8), None),         // TA + TB
+            (0x60u8, None, Some(0x03u8)),         // TB + TC (TA absent)
+            (0x70u8, Some(0x5Au8), Some(0x03u8)), // TA + TB + TC
+            (0x72u8, Some(0x5Au8), Some(0x03u8)), // same, FSCI 2 in low nibble
+        ] {
+            let mut body = Vec::new();
+            body.push(t0);
+            if let Some(ta_byte) = ta {
+                body.push(ta_byte);
+            }
+            body.push(tb);
+            if let Some(tc_byte) = tc {
+                body.push(tc_byte);
+            }
+            body.extend_from_slice(&[0xAA, 0xBB]); // historical bytes
+
+            let mut with_tl = Vec::with_capacity(body.len() + 1);
+            with_tl.push((body.len() + 1) as u8);
+            with_tl.extend_from_slice(&body);
+
+            let ats = Ats::from_crc_verified(&with_tl).unwrap();
+            // Ground truth of the constructed frame: TB(1) = 0x80 -> FWI 8.
+            assert_eq!(fwi_from_ats(&ats), Some(8), "T0 = {t0:#04x}");
+            // Oracle: upstream's parsed Fwi must agree (302us * 2^8).
+            assert_eq!(ats.tb.fwi.fwt().as_micros() as u64, 302 * (1u64 << 8));
+        }
+    }
+
+    #[test]
+    fn parser_returns_none_whenever_tb_is_absent() {
+        for (t0, ta, tc) in [
+            (0x00u8, None, None),
+            (0x10u8, Some(0x5Au8), None),         // TA only
+            (0x40u8, None, Some(0x03u8)),         // TC only
+            (0x50u8, Some(0x5Au8), Some(0x03u8)), // TA + TC
+        ] {
+            let mut body = Vec::new();
+            body.push(t0);
+            if let Some(ta_byte) = ta {
+                body.push(ta_byte);
+            }
+            if let Some(tc_byte) = tc {
+                body.push(tc_byte);
+            }
+            body.push(0xAA);
+
+            let mut with_tl = Vec::new();
+            with_tl.push((body.len() + 1) as u8);
+            with_tl.extend_from_slice(&body);
+
+            let ats = Ats::from_crc_verified(&with_tl).unwrap();
+            assert_eq!(fwi_from_ats(&ats), None, "T0 = {t0:#04x}");
+            // Fallback parity: FWI=4 default must equal the std path (14 ms).
+            let ms = (302u64 * (1u64 << fwi_from_ats(&ats).unwrap_or(4)) / 1000) as u32 + 10;
+            assert_eq!(ms, 14);
+            assert_eq!(ms, frame_wait_time_ms(&ats));
+        }
+
+        // The shortest legal ATS (TL = 1, no T0 at all) also falls back.
+        let shortest = Ats::from_crc_verified(&[0x01]).unwrap();
+        assert_eq!(fwi_from_ats(&shortest), None);
+        assert_eq!(frame_wait_time_ms(&shortest), 14);
     }
 }
