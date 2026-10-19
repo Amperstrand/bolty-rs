@@ -12,10 +12,14 @@ path = "src/main.rs"
 [features]
 default = []
 nfc-mfrc522 = []
+nfc-pn7160 = ["dep:bolty-pn7160", "bolty-pn7160/esp"]
 led-matrix = []
 display-st7789 = ["dep:mipidsi", "dep:embedded-graphics"]
 board-m5atom = ["nfc-mfrc522", "led-matrix"]
 board-m5stick = ["nfc-mfrc522", "display-st7789"]
+# ESP32-C3 nucula board (issue #115): PN7160 NCI reader frontend over
+# bolty-pn7160. Slim console-only build — no wifi/rest/ota/ble/display.
+board-nucula = ["nfc-pn7160"]
 wifi = []
 rest = ["wifi"]
 ota = ["wifi", "dep:ed25519-dalek"]
@@ -26,6 +30,7 @@ ble = []
 [dependencies]
 bolty-core = { path = "../../crates/bolty-core" }
 bolty-ntag = { path = "../../crates/bolty-ntag" }
+bolty-pn7160 = { path = "../../crates/bolty-pn7160", optional = true }
 mfrc522-pcd = { path = "../../crates/mfrc522-pcd" }
 bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
 embedded-hal = "=1.0.0"
@@ -39,7 +44,10 @@ embedded-graphics = { version = "=0.8.2", optional = true }
 enumset = "=1.1.10"
 ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["alloc"], optional = true }
 
-[target.'cfg(target_arch = "xtensa")'.dependencies]
+# ESP32 targets: classic ESP32 (m5 boards) is xtensa, the nucula's
+# ESP32-C3 (board-nucula, issue #115) is riscv32 — same dep generation
+# for both (matches ccid-firmware-rs and pn7160-nci's own gate).
+[target.'cfg(any(target_arch = "xtensa", target_arch = "riscv32"))'.dependencies]
 esp-idf-sys = { version = "0.38", features = ["binstart"] }
 esp-idf-hal = "0.47"
 esp-idf-svc = "0.53"

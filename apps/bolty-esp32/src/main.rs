@@ -1,12 +1,12 @@
-#[cfg(target_arch = "xtensa")]
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use core::future::Future;
-#[cfg(target_arch = "xtensa")]
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use core::pin::pin;
-#[cfg(target_arch = "xtensa")]
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use core::task::{Context, Poll, Waker};
 
-#[cfg(target_arch = "xtensa")]
-fn block_on<F: Future>(fut: F) -> F::Output {
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn block_on<F: Future>(fut: F) -> F::Output {
     let mut fut = pin!(fut);
     let mut cx = Context::from_waker(Waker::noop());
     match fut.as_mut().poll(&mut cx) {
@@ -53,20 +53,36 @@ mod button;
 mod button;
 
 #[cfg(all(
-    target_arch = "xtensa",
-    feature = "board-m5atom",
-    feature = "board-m5stick"
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    all(feature = "board-m5atom", feature = "board-m5stick")
 ))]
-compile_error!("Enable exactly one board feature: `board-m5atom` or `board-m5stick`.");
+compile_error!(
+    "Enable exactly one board feature: `board-m5atom`, `board-m5stick` or `board-nucula`."
+);
 
 #[cfg(all(
-    target_arch = "xtensa",
-    not(any(feature = "board-m5atom", feature = "board-m5stick"))
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    not(any(
+        feature = "board-m5atom",
+        feature = "board-m5stick",
+        feature = "board-nucula"
+    ))
 ))]
-compile_error!("Enable one board feature: `board-m5atom` or `board-m5stick`.");
+compile_error!("Enable one board feature: `board-m5atom`, `board-m5stick` or `board-nucula`.");
 
-#[cfg(all(target_arch = "xtensa", not(feature = "nfc-mfrc522")))]
-compile_error!("The current firmware requires the `nfc-mfrc522` feature.");
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    feature = "board-nucula",
+    any(feature = "board-m5atom", feature = "board-m5stick")
+))]
+compile_error!("`board-nucula` excludes the M5 board features.");
+
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    not(feature = "board-nucula"),
+    not(feature = "nfc-mfrc522")
+))]
+compile_error!("The M5 board firmware requires the `nfc-mfrc522` feature.");
 
 #[cfg(all(
     target_arch = "xtensa",
@@ -87,19 +103,34 @@ compile_error!("`display-st7789` is only supported on `board-m5stick`.");
 // `cargo test -p bolty-esp32` (issue #63: they never executed anywhere).
 // The AXP192 register map is pure data in the same boat: its GREAT
 // EXPECTATION lock runs on host even though display.rs is xtensa-only.
+// Board frontend selection (issue #115): the M5 boards (xtensa) keep the
+// MFRC522 firmware module; the nucula (ESP32-C3, riscv32) compiles its own
+// PN7160 frontend in its place. Same module name, so main() dispatch and
+// every shared reference stay board-agnostic.
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    not(feature = "board-nucula")
+))]
+mod firmware;
+
+#[cfg(all(
+    any(target_arch = "xtensa", target_arch = "riscv32"),
+    feature = "board-nucula"
+))]
+#[path = "firmware_nucula.rs"]
+mod firmware;
+
 mod axp192_map;
 mod commands;
-#[cfg(target_arch = "xtensa")]
-mod firmware;
 mod service;
 mod workflow;
 
-#[cfg(target_arch = "xtensa")]
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 fn main() {
     firmware::main();
 }
 
-#[cfg(not(target_arch = "xtensa"))]
+#[cfg(not(any(target_arch = "xtensa", target_arch = "riscv32")))]
 fn main() {
-    println!("bolty-esp32 firmware main is only available on xtensa targets");
+    println!("bolty-esp32 firmware main is only available on esp32 targets");
 }

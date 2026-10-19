@@ -1,0 +1,298 @@
+//! board-nucula frontend (issue #115): ESP32-C3 + PN7160 NCI reader.
+//!
+//! The nucula board runs the PN7160 NFC controller over I2C (NCI address
+//! 0x28, SDA=GPIO4 / SCL=GPIO5 / IRQ=GPIO6 / VEN=GPIO7 — the bench-proven
+//! geometry in `pn7160_nci::board::NUCULA`, ccid-firmware-rs #149 P2). The
+//! ISO-DEP activation lives inside the NFCC, so unlike the MFRC522 boards
+//! there is no iso14443-session layer here: `bolty_pn7160::Pn7160Transport`
+//! implements `ntag424::Transport` directly and `bolty-ntag`'s generic
+//! workflows drive the card.
+//!
+//! Scope (v1): serial console with reader bring-up, card poll/UID and an
+//! unauthenticated safe-inspect — the bench proof that the frontend works
+//! with a bolt card on the antenna. Burn/wipe/keys and NVS staging remain
+//! M5-board territory until the service layer unifies over
+//! `ntag424::Transport` (the console here deliberately stays small so that
+//! unification has one consumer to converge on, not two to refactor).
+//!
+//! The console below is a private minimal copy of the M5 firmware's
+//! `SerialConsole` (raw stdio FDs, non-blocking read) rather than a shared
+//! extraction: the original lives as a private submodule of the MFRC522
+//! firmware module, and hoisting it would touch the M5 path for no
+//! functional gain in this PR.
+
+use core::fmt::Write as _;
+
+use bolty_pn7160::{BusPins, EspPn7160Transport, NUCULA, Pn7160Driver, Pn7160Transport};
+use esp_idf_hal::{delay::FreeRtos, peripherals::Peripherals};
+use esp_idf_svc::log::EspLogger;
+use heapless::String;
+
+use crate::block_on;
+
+const BOARD_NAME: &str = "nucula (ESP32-C3 + PN7160)";
+const BUILD_EPOCH: &str = env!("BOLTY_BUILD_EPOCH");
+const SERIAL_FD_IN: i32 = 0;
+const SERIAL_FD_OUT: i32 = 1;
+const MAX_LINE_LEN: usize = 256;
+const MAIN_LOOP_DELAY_MS: u32 = 10;
+
+/// Reader stack: `EspPn7160Transport` (I2C + IRQ + VEN) under the NCI
+/// driver, wrapped in the `ntag424::Transport` bridge.
+type Reader = Pn7160Transport<EspPn7160Transport>;
+
+pub fn main() {
+    esp_idf_sys::link_patches();
+    esp_idf_hal::sys::link_patches();
+    EspLogger::initialize_default();
+
+    let mut console = Console::new();
+    console.line("[BOOT] bolty nucula frontend (issue #115)");
+    console.line(&format!("[BOOT] board={BOARD_NAME} built={BUILD_EPOCH}"));
+
+    let peripherals = match Peripherals::take() {
+        Ok(peripherals) => peripherals,
+        Err(_) => {
+            console.fail("peripherals already taken; halting");
+            return;
+        }
+    };
+
+    // Bench-proven bring-up order (ccid #149 P1, verdict B): I2C bus first,
+    // then the VEN power cycle, probe inside the post-VEN ACK window, then
+    // the NCI ladder (CORE_RESET..RF_DISCOVER) and ISO-DEP power-on. With a
+    // card already on the antenna this activates it in one shot.
+    let bus_pins = BusPins {
+        i2c0: peripherals.i2c0,
+        sda: peripherals.pins.gpio4,
+        scl: peripherals.pins.gpio5,
+        irq: peripherals.pins.gpio6,
+        ven: peripherals.pins.gpio7,
+    };
+    let mut reader: Option<Reader> =
+        match EspPn7160Transport::bringup_config_order(NUCULA, bus_pins) {
+            Ok(transport) => match Pn7160Transport::activate(Pn7160Driver::new(transport)) {
+                Ok(reader) => {
+                    console.ok("PN7160 reader up (NCI ladder + ISO-DEP power-on)");
+                    Some(reader)
+                }
+                Err(err) => {
+                    console.fail(&format!("PN7160 activate failed: {err:?}"));
+                    None
+                }
+            },
+            Err(err) => {
+                console.fail(&format!("PN7160 I2C bring-up failed: {err:?}"));
+                console.fail("console continues without NFC (check VEN/IRQ wiring)");
+                None
+            }
+        };
+
+    let mut line = String::<MAX_LINE_LEN>::new();
+    loop {
+        while let Some(byte) = console.read_byte_nonblocking() {
+            if byte == b'\r' || byte == b'\n' {
+                let handled = handle_line(line.as_str(), reader.as_mut(), &mut console);
+                if !handled {
+                    console.ok(&format!("unknown command: {}", line.as_str()));
+                }
+                line.clear();
+            } else if line.len() < MAX_LINE_LEN {
+                let _ = line.push(byte as char);
+            }
+        }
+        FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
+    }
+}
+
+/// Dispatch one console line. Returns false for unknown commands (so the
+/// caller can echo) and true for everything recognized, including failures.
+fn handle_line(input: &str, reader: Option<&mut Reader>, console: &mut Console) -> bool {
+    let command = input.trim();
+    if command.is_empty() {
+        return true;
+    }
+    let (head, rest) = match command.split_once(' ') {
+        Some((head, rest)) => (head, Some(rest)),
+        None => (command, None),
+    };
+
+    match head.to_ascii_lowercase().as_str() {
+        "help" | "?" => {
+            console.line("commands: help | ver | status | poll | uid | inspect");
+            true
+        }
+        "ver" => {
+            console.line(&format!(
+                "fw=bolty-esp32 board={BOARD_NAME} built={BUILD_EPOCH}"
+            ));
+            true
+        }
+        "status" => {
+            match reader {
+                Some(reader) => {
+                    let uid = if reader.session_active() {
+                        uid_hex(reader.uid())
+                    } else {
+                        String::new()
+                    };
+                    console.line(&format!(
+                        "nfc=ok session={} uid={}",
+                        if reader.session_active() {
+                            "active"
+                        } else {
+                            "idle"
+                        },
+                        uid.as_str()
+                    ));
+                }
+                None => console.line("nfc=missing (bring-up failed at boot)"),
+            }
+            let _ = rest;
+            true
+        }
+        "poll" => {
+            match reader {
+                Some(reader) => match reader.power_on() {
+                    Ok(()) => {
+                        console.ok(&format!(
+                            "card up: uid={} atr_len={}",
+                            uid_hex(reader.uid()),
+                            reader.atr().len()
+                        ));
+                    }
+                    Err(err) => console.fail(&format!("no card / power-on failed: {err:?}")),
+                },
+                None => console.fail("nfc unavailable"),
+            }
+            true
+        }
+        "uid" => {
+            match reader {
+                Some(reader) => {
+                    if !reader.session_active() && reader.power_on().is_err() {
+                        console.fail("no card on antenna");
+                    } else {
+                        console.ok(&format!("uid={}", uid_hex(reader.uid())));
+                    }
+                }
+                None => console.fail("nfc unavailable"),
+            }
+            true
+        }
+        "inspect" => {
+            match reader {
+                Some(reader) => {
+                    if !reader.session_active() && reader.power_on().is_err() {
+                        console.fail("no card on antenna");
+                    } else {
+                        match block_on(bolty_ntag::safe_inspect(reader, None, None)) {
+                            Ok(result) => {
+                                console.line(&format!(
+                                    "uid={} version={:?} ndef_bytes={}",
+                                    uid_hex(&result.uid),
+                                    result.version,
+                                    result.ndef_bytes.as_ref().map_or(0, Vec::len)
+                                ));
+                                console.line(&format!("sdm={:?}", result.sdm_verification));
+                            }
+                            Err(err) => console.fail(&format!("inspect failed: {err:?}")),
+                        }
+                    }
+                }
+                None => console.fail("nfc unavailable"),
+            }
+            true
+        }
+        _ => {
+            let _ = rest;
+            false
+        }
+    }
+}
+
+fn uid_hex(uid: &[u8]) -> String<32> {
+    let mut out = String::new();
+    for (i, byte) in uid.iter().enumerate() {
+        if i > 0 {
+            let _ = out.push(':');
+        }
+        let _ = write!(out, "{byte:02X}");
+    }
+    out
+}
+
+/// Minimal stdio console (see module docs for why this is not shared with
+/// the M5 firmware): non-blocking stdin, blocking newline-framed stdout.
+struct Console;
+
+impl Console {
+    fn new() -> Self {
+        let rc = unsafe {
+            esp_idf_sys::fcntl(
+                SERIAL_FD_IN,
+                esp_idf_sys::F_SETFL as i32,
+                esp_idf_sys::O_NONBLOCK as i32,
+            )
+        };
+        if rc < 0 {
+            log::warn!("failed to set stdin non-blocking: rc={rc}");
+        }
+        // Drain stale bytes from boot/download mode so the first command
+        // isn't corrupted by leftover flasher handshake data.
+        let console = Self;
+        console.flush_rx();
+        console
+    }
+
+    fn flush_rx(&self) {
+        let mut byte = 0u8;
+        loop {
+            let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
+            if read != 1 {
+                break;
+            }
+        }
+    }
+
+    fn read_byte_nonblocking(&mut self) -> Option<u8> {
+        let mut byte = 0u8;
+        let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
+        if read == 1 { Some(byte) } else { None }
+    }
+
+    fn line(&mut self, line: &str) {
+        self.write_all(line.as_bytes());
+        self.write_all(b"\r\n");
+    }
+
+    fn ok(&mut self, message: &str) {
+        let mut out = String::<384>::new();
+        let _ = write!(out, "[OK] {message}");
+        self.line(out.as_str());
+    }
+
+    fn fail(&mut self, message: &str) {
+        let mut out = String::<384>::new();
+        let _ = write!(out, "[FAIL] {message}");
+        self.line(out.as_str());
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) {
+        let mut written = 0usize;
+        while written < bytes.len() {
+            let rc = unsafe {
+                esp_idf_sys::write(
+                    SERIAL_FD_OUT,
+                    bytes[written..].as_ptr().cast(),
+                    bytes.len() - written,
+                )
+            };
+            if rc <= 0 {
+                log::warn!("serial write failed: rc={rc}");
+                break;
+            }
+            written += rc as usize;
+        }
+    }
+}
