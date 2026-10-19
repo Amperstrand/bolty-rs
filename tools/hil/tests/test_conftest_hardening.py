@@ -95,3 +95,43 @@ def test_lg_acquire_refuses_other_holder(monkeypatch):
     monkeypatch.setattr(conftest.pytest, "exit", staticmethod(fake_exit))
     with pytest.raises(FakePytestExit):
         conftest._lg_acquire_or_exit(type("S", (), {"stash": {}})())
+
+
+# ── B32 ACR check-in probe (2026-10-19) ────────────────────────────────
+
+
+def test_acr_probe_isolated_parses_json(monkeypatch):
+    from hil import acr_probe
+
+    class OkRun:
+        returncode = 0
+        stdout = '{"state": "ok", "detail": "ATR 3b8180018080"}\n'
+        stderr = ""
+
+    monkeypatch.setattr(acr_probe.subprocess, "run", lambda *a, **k: OkRun())
+    assert acr_probe.probe_isolated() == {
+        "state": "ok", "detail": "ATR 3b8180018080",
+    }
+
+
+def test_acr_probe_isolated_timeout_is_the_wedge_signature(monkeypatch):
+    import subprocess as sp
+
+    from hil import acr_probe
+
+    def hang(*a, **k):
+        raise sp.TimeoutExpired(cmd="probe", timeout=25)
+
+    monkeypatch.setattr(acr_probe.subprocess, "run", hang)
+    result = acr_probe.probe_isolated()
+    assert result["state"] == "wedge"
+    assert "bulk pipe" in result["detail"]
+
+
+def test_coupled_card_uid_skips_on_checkin_wedge():
+    conftest = _load_conftest()
+    reason = conftest._wedge_skip_reason("wedge")
+    assert reason is not None and "B32" in reason
+    assert conftest._wedge_skip_reason("ok") is None
+    assert conftest._wedge_skip_reason("absent") is None
+    assert conftest._wedge_skip_reason("no-service") is None

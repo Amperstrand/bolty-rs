@@ -780,9 +780,8 @@ systemctl restart pcscd        # then run the probe again
 #    record the result the first time it's tried)
 # 3. authorized toggle: echo 0 > /sys/bus/usb/devices/1-4/authorized; \
 #    sleep 2; echo 1 > /sys/bus/usb/devices/1-4/authorized  (UNTESTED here)
-# 4. POWER REMOVAL: physical replug today; once the reader sits behind a
-#    switchable hub (planned, uhubctl-compatible), `uhubctl --cycle`
-#    replaces the human.
+# 4. POWER REMOVAL: physical replug — the only deep-class recovery on
+#    this bench (owner decision 2026-10-19: no switched-power hub).
 ```
 
 **Ceiling** (B29 rule 3): steps 1–3 cannot fix a device that fails the
@@ -792,16 +791,35 @@ heals.
 
 **The trigger is us**: the wedge follows CCID exchanges aborted
 mid-bulk-transfer — harness timeouts/kills during card auth-delay (`91AD`)
-windows when responses are legitimately slow. Prevention: keep the bolty-cli
-backoff+circuit-breaker discipline (6d08cbb); HIL harnesses must tear down
-gracefully — never SIGKILL mid-APDU; treat a 91AD card as slow, not dead.
+windows when responses are legitimately slow, AND **pcscd restarts caused
+by sibling bench sessions** (observed 2026-10-19: a concurrent M5Stick
+flash session bounces the stick's USB on every flash step; socket-activated
+pcscd re-inits (its config still carries the stick's `/dev/m5-ccid` serial
+reader) and every restart aborts in-flight CCID exchanges bench-wide —
+clients see `Service not available` gaps and `NO_DEVICE` bursts).
+Prevention: keep the bolty-cli backoff+circuit-breaker discipline
+(6d08cbb); HIL harnesses must tear down gracefully — never SIGKILL
+mid-APDU; treat a 91AD card as slow, not dead; and coordinate stick-flash
+sessions with reader sessions (they are not as independent as the place
+model suggests — pcscd couples them).
 
 **Firmware**: IFD_VERSION attrib reads `0.0.0.1` (v1.x line; exact build
 string needs the proper Le in the FF 00 50 pseudo-APDU). No public ACS
 changelog attributes a CCID-hang fix to any ACR1252U firmware; an upgrade
 is owner-only (Windows updater from the ACS SDK), changes the reference
 oracle (Phase-1 revalidation + provenance note required), and is
-low-confidence — **the switchable hub is the actual fix**: it turns every
-future deep wedge into one command. If wedges persist after that, capture
-a usbmon trace of one and draft an ACS technical-support report
-(owner-only channel).
+low-confidence.
+
+**Update (2026-10-19, same day — owner decision + automation)**: the
+switched-power hub was declined for this bench, so the deep class stays
+**owner-replug-only** and prevention/early detection are load-bearing,
+not optional. Automated: `tools/hil` conftest now runs the B32 probe as
+a **check-in** the moment `rig_lock` grants bench exclusivity and a
+**check-out** at sessionfinish (results in the run ledger's `acr_state`);
+a wedge at check-in makes every `coupled_card_uid` test skip loudly with
+the heal pointer instead of burning minutes on timeouts, and
+`BOLTY_ACR_AUTOHEAL=1` opts into the shallow heal (pcscd restart — shared
+infra, opt-in only). The probe itself runs in a killable subprocess — the
+one mid-exchange kill that is safe by design. If wedges persist at this
+rate, capture a usbmon trace of one and draft an ACS technical-support
+report (owner-only channel).
