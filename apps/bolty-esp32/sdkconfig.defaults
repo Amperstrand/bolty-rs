@@ -1,4 +1,16 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Legacy-i2c coexistence knob (issue #115, lesson from ccid #278/#292):
+# IDF v5.5.5's legacy i2c.c ships an ELF boot-time constructor that
+# abort()s pre-app_main whenever the new driver_ng is also linked (both
+# generations coexist in the link on hal 0.47 builds). Our I2C users are
+# driver_ng only, so the legacy conflict check has nothing to protect —
+# skip it or every esp image boot-loops (compile-green, boot-dead).
+# Caveat carried from ccid: this defaults file does NOT layer into an
+# already-generated sdkconfig .full — after changing it, rebuild with
+# build.sh --clean-sys. Boot proof (console "Calling app_main()", no
+# "i2c: CONFLICT!", no rst:0xc loop) is mandatory before any merge that
+# touches I2C or its dependencies (#115 checklist).
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
 # Reproducible app images (#62): empties the app-descriptor __TIME__/__DATE__
 # fields (CONFIG_APP_COMPILE_TIME_DATE depends on !APP_REPRODUCIBLE_BUILD)
 # and adds debug-prefix-maps for IDF/PROJECT/BUILD dirs. Two builds of the

@@ -6,6 +6,14 @@ linker = "ldproxy"
 runner = "espflash flash --monitor"
 rustflags = ["--cfg", "espidf_time64", "-Zunstable-options", "-C", "panic=immediate-abort"]
 
+# ESP32-C3 (board-nucula, issue #115): same espidf semantics, riscv32
+# triple. build.sh selects it via CARGO_BUILD_TARGET (process env wins
+# over the [build] target above).
+[target.riscv32imc-esp-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+rustflags = ["--cfg", "espidf_time64", "-Zunstable-options", "-C", "panic=immediate-abort"]
+
 [env]
 # sdkconfig.defaults MUST be pinned here: esp-idf-sys resolves relative
 # sdkconfig paths against the WORKSPACE root, where no sdkconfig.defaults

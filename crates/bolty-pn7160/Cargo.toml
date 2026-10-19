@@ -9,8 +9,17 @@ description = "PN7160 NFC frontend transport for NTAG424 (ntag424::Transport ove
 # Shared crate per lesson B28 ("shared logic lives in ONE crate, projects
 # inherit"): the NCI core stays homed in ccid-firmware-rs; bolty consumes it
 # pinned by rev, exactly like ntag424/mfrc522/iso14443.
-pn7160-nci = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "f2a250b4d259be07d5bc63cd45a26b389d580502", default-features = false }
+# Rev 0b8e33e (ccid main, 2026-10-19): #149 P1/P2 landed — the bench-proven
+# ESP32 transport (esp feature), BoardPins::NUCULA and the driver_ng
+# embedded-hal adapter live in the crate now; this bridge no longer needs a
+# firmware-local copy of any of it.
+pn7160-nci = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "0b8e33e3287b8f5ece7a2769765012bcddfc5665", default-features = false }
 ntag424 = { workspace = true }
+
+[features]
+# Forwarded to pn7160-nci's target-gated esp deps (esp-idf-sys/hal on
+# xtensa + riscv32 only — host builds of this crate stay pure).
+esp = ["pn7160-nci/esp"]
 
 [lints]
 workspace = true

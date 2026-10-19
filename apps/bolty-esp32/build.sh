@@ -23,7 +23,7 @@
 #      verify_sdkconfig_fresh).
 #
 # Usage:
-#   ./build.sh <m5stick|m5stick-min|m5atom|m5stick-ble> [--flash <port>]
+#   ./build.sh <m5stick|m5stick-min|m5atom|m5stick-ble|nucula> [--flash <port>]
 #              [--clean-sys] [--sdkconfig <file>]
 #
 #   m5stick      board-m5stick,wifi,rest,ota   (the canonical bench build)
@@ -33,6 +33,8 @@
 #                --sdkconfig sdkconfig.defaults.ble — the sdkconfig and the
 #                feature must travel together or the bt module is either
 #                absent from the build or uncompilable)
+#   nucula       board-nucula                  (ESP32-C3 + PN7160, riscv32;
+#                issue #115 — console-only reader frontend)
 #
 # --sdkconfig passes an alternative ESP_IDF_SDKCONFIG_DEFAULTS file
 # (relative to this directory), e.g. sdkconfig.defaults.ble for the BLE
@@ -75,11 +77,18 @@ usage() {
 BOARD="$1"; shift || true
 
 FEATURES=""
+TRIPLE=""
 case "$BOARD" in
-    m5stick)     FEATURES="board-m5stick,wifi,rest,ota" ;;
-    m5stick-min) FEATURES="board-m5stick" ;;
-    m5atom)      FEATURES="board-m5atom" ;;
-    m5stick-ble) FEATURES="board-m5stick,ble" ;;
+    m5stick)     FEATURES="board-m5stick,wifi,rest,ota"; TRIPLE="xtensa-esp32-espidf" ;;
+    m5stick-min) FEATURES="board-m5stick";               TRIPLE="xtensa-esp32-espidf" ;;
+    m5atom)      FEATURES="board-m5atom";                TRIPLE="xtensa-esp32-espidf" ;;
+    m5stick-ble) FEATURES="board-m5stick,ble";           TRIPLE="xtensa-esp32-espidf" ;;
+    # ESP32-C3 nucula (issue #115): riscv32 triple, reader frontend +
+    # wifi + OTA seat server (the bench recovery door — without it every
+    # OTA push of a bolty image is one-way). CARGO_BUILD_TARGET (exported
+    # below) selects the triple in .cargo/config.toml's [target.*]
+    # sections; [build] stays xtensa for the m5 boards.
+    nucula)      FEATURES="board-nucula,wifi,ota-server"; TRIPLE="riscv32imc-esp-espidf" ;;
     *)           usage ;;
 esac
 
@@ -103,12 +112,12 @@ IDF_PIN="$(grep -oP 'esp_idf_version\s*=\s*"tag:\Kv[0-9]+\.[0-9]+\.[0-9]+' Cargo
 
 if [ "$CLEAN_SYS" -eq 1 ]; then
     info "cleaning esp-idf-sys build state (post-bump rerun rule)"
-    rm -rf "$CARGO_TARGET_DIR"/xtensa-esp32-espidf/release/build/esp-idf-sys-*
+    rm -rf $CARGO_TARGET_DIR/$TRIPLE/release/build/esp-idf-sys-*
 fi
 
 verify_idf_pin() {
     local json dir
-    json="$(ls "$CARGO_TARGET_DIR"/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/esp-idf-build.json 2>/dev/null | head -n1 || true)"
+    json="$(ls $CARGO_TARGET_DIR/$TRIPLE/release/build/esp-idf-sys-*/out/esp-idf-build.json 2>/dev/null | head -n1 || true)"
     [ -n "$json" ] || die "no esp-idf-build.json under $CARGO_TARGET_DIR — did the build run?"
     dir="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['esp_idf_dir'])" "$json")"
     case "$dir" in
@@ -129,7 +138,7 @@ verify_sdkconfig_fresh() {
     # gate checks the build actually CONSUMED the requested defaults file:
     # embuild records the resolved list in esp-idf-build.json.
     local json used
-    json="$(ls "$CARGO_TARGET_DIR"/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/esp-idf-build.json 2>/dev/null | head -n1 || true)"
+    json="$(ls $CARGO_TARGET_DIR/$TRIPLE/release/build/esp-idf-sys-*/out/esp-idf-build.json 2>/dev/null | head -n1 || true)"
     [ -n "$json" ] || return 0
     used="$(python3 -c '
 import json, sys
@@ -157,12 +166,13 @@ command -v ldproxy >/dev/null || die "ldproxy not found — run espup install an
 
 # Absolute path: relative sdkconfig paths resolve against the WORKSPACE root
 # in esp-idf-sys, where the variant files do not exist.
-ESP_IDF_SDKCONFIG_DEFAULTS="$SCRIPT_DIR/$SDKCONFIG" \
+    CARGO_BUILD_TARGET="$TRIPLE" \
+    ESP_IDF_SDKCONFIG_DEFAULTS="$SCRIPT_DIR/$SDKCONFIG" \
     cargo +esp build --release --features "$FEATURES"
 verify_idf_pin
 verify_sdkconfig_fresh
 
-BIN="$CARGO_TARGET_DIR/xtensa-esp32-espidf/release/bolty-esp32"
+BIN="$CARGO_TARGET_DIR/$TRIPLE/release/bolty-esp32"
 [ -f "$BIN" ] || die "build finished but $BIN is missing"
 
 if [ -n "$FLASH_PORT" ]; then

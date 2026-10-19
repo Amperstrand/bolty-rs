@@ -21,7 +21,15 @@ use alloc::vec::Vec;
 use core::fmt::{self, Debug, Display, Formatter};
 
 use ntag424::{Response, Transport};
-use pn7160_nci::driver::{Error as DriverError, Pn7160Driver};
+use pn7160_nci::driver::Error as DriverError;
+
+// B28 single-rev re-exports: consumers (bolty-esp32's board-nucula
+// frontend) instantiate the ESP32 transport through THIS crate, so the
+// ccid rev pin lives in exactly one manifest on the bolty side.
+pub use pn7160_nci::board::{BoardPins, NUCULA};
+pub use pn7160_nci::driver::Pn7160Driver;
+#[cfg(feature = "esp")]
+pub use pn7160_nci::esp_transport::{BusPins, EspPn7160Transport};
 
 /// Maximum ISO-DEP I-block payload the NFCC will hand back for one
 /// `transmit_apdu` (NCI DATA payload limit: 255 bytes + 3-byte header).

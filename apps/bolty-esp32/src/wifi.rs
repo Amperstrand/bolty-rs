@@ -72,6 +72,16 @@ impl WifiManager {
         self.wifi.is_connected().unwrap_or(false)
     }
 
+    /// Station IP once associated (for consoles / the OTA seat address).
+    pub fn ip(&self) -> Option<esp_idf_svc::ipv4::Ipv4Addr> {
+        self.wifi
+            .wifi()
+            .sta_netif()
+            .get_ip_info()
+            .ok()
+            .map(|info| info.ip)
+    }
+
     pub fn connect(
         &mut self,
         ssid: &WifiSsidString,
