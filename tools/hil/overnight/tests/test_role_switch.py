@@ -128,6 +128,7 @@ class Deps:
         self.bus_paths = []
         self.port_exists_fn = port_exists or (lambda path: True)
         self.sleeps = []
+        self.latency_tunes = []
 
     # Deps protocol
     def ping(self):
@@ -145,6 +146,12 @@ class Deps:
 
     def port_exists(self, path):
         return self.port_exists_fn(path)
+
+    def set_latency(self, port, ms):
+        # ftdi latency_timer tune step (79fbdd1) — recorded like every
+        # other dependency so scripted plans can assert on it.
+        self.latency_tunes.append((port, ms))
+        return True, f"latency_timer={ms}ms"
 
     def sleep(self, s):
         self.sleeps.append(s)
@@ -227,6 +234,7 @@ def test_graph_ccid_exact_sequence():
         ("sleep", ()),
         ("port_wait", ()),
         ("sleep", ()),
+        ("latency_tune", ()),
         ("cmd", ("sudo", "rm", "-f", "/var/run/pcscd/pcscd.comm")),
         ("cmd", ("sudo", "systemctl", "restart", "pcscd.socket", "pcscd.service")),
         ("sleep", ()),
@@ -243,9 +251,9 @@ def test_graph_ccid_exact_sequence():
     assert plan[9]["kind"] == "port_wait" and plan[9]["port"] == port
     assert plan[9]["timeout"] == 10.0 and plan[9]["poll_s"] == 0.25
     assert plan[10]["s"] == 2.5
-    assert plan[13]["s"] == 10.0
+    assert plan[14]["s"] == 10.0
     # probe retry fires on a MISSING expected reader, not just empty (fix e)
-    probe = plan[14]
+    probe = plan[15]
     assert probe["expect_includes"] == ["GemPCTwin serial", "ACR1252"]
     retry = probe["on_probe_failed"]
     assert [(s["kind"], tuple(s.get("argv", ()))) for s in retry] == [
@@ -255,8 +263,8 @@ def test_graph_ccid_exact_sequence():
         ("readers_probe", ()),
     ]
     assert retry[2]["s"] == 8.0
-    assert plan[15]["ladder"] is True and plan[15]["ladder_pcscd"] is True
-    assert plan[15]["expect"] == {"includes": ["GemPCTwin serial", "ACR1252"],
+    assert plan[16]["ladder"] is True and plan[16]["ladder_pcscd"] is True
+    assert plan[16]["expect"] == {"includes": ["GemPCTwin serial", "ACR1252"],
                                   "excludes": []}
 
 
@@ -433,7 +441,7 @@ def test_manifest_hash_mismatch_aborts_before_any_flash(tmp_path):
 
 def test_switch_ccid_success_orders_and_placement(tmp_path):
     deps, runner, paths = rig(tmp_path, readers=SeqReaders([CCID_READERS] * 10))
-    res = switch_to("ccid", deps=deps, **paths)
+    res = switch_to("ccid", deps=deps, **paths, via="reflash")
     assert res.ok, res.detail
     i = runner.first_index  # containment search over full argv joins
     assert i("stop bolty-console") < \
@@ -488,7 +496,7 @@ def test_wedge_ladder_order_then_gives_up(tmp_path):
 def test_wedge_ladder_rescues_after_rescan(tmp_path):
     deps, runner, paths = rig(tmp_path, readers=SeqReaders([CCID_READERS] * 10),
                               script={"esptool.py": [1, 0]})
-    res = switch_to("ccid", deps=deps, **paths)
+    res = switch_to("ccid", deps=deps, **paths, via="reflash")
     assert res.ok, res.detail
     assert deps.resets == []  # USBDEVFS_RESET never needed
     assert runner.count("sudo tee /sys/bus/usb/drivers/usb/unbind") == 2  # ladder + mainline
@@ -500,10 +508,14 @@ def test_fallback_mode_b_after_two_attempts_with_restore(tmp_path):
     deps, runner, paths = rig(tmp_path, readers=SeqReaders([ACR_READERS] * 40))
     out = switch_with_fallback("ccid", deps=deps, **paths)
     assert out["mode"] == "Mode B" and out["ok"] is False
-    assert out["attempts"] == 2 and out["restore_ok"] is True
+    # 2x otadata fast path + 1x merged reflash = 3 attempts (#76 ladder)
+    assert out["attempts"] == 3 and out["restore_ok"] is True
     assert out["reason"] and out["timeline"]
-    assert runner.count("esp32-ccid-merged.bin") == 2  # two ccid attempts
-    assert runner.count("bolty-merged.bin") == 1       # best-effort restore
+    # one merged-ccid flash (the reflash rung; otadata rungs flip slots
+    # without flashing). Restore is the otadata-world contract: flip back
+    # + console restart, proven by restore_ok + "start bolty-console"
+    # below — no bolty reflash to count.
+    assert runner.count("esp32-ccid-merged.bin") == 1
     assert any("start bolty-console" in a for a in runner.flat())
 
 
@@ -518,7 +530,7 @@ def test_fallback_mode_a_on_second_attempt(tmp_path):
 def test_pcscd_once_retry_triggers_only_on_failed_probe(tmp_path):
     seq = [[], CCID_READERS, CCID_READERS]  # probe empty -> retry -> verify
     deps, runner, paths = rig(tmp_path, readers=SeqReaders(seq))
-    res = switch_to("ccid", deps=deps, **paths)
+    res = switch_to("ccid", deps=deps, **paths, via="reflash")
     assert res.ok, res.detail
     assert "sudo systemctl restart pcscd.service" in runner.flat()  # retry ran
 
@@ -583,7 +595,7 @@ def test_verify_failure_captures_pcscd_journal_tail(tmp_path):
 
 def test_verify_ladder_restarts_pcscd_between_rungs(tmp_path):
     deps, runner, paths = rig(tmp_path, readers=SeqReaders([ACR_READERS] * 12))
-    res = switch_to("ccid", deps=deps, **paths)
+    res = switch_to("ccid", deps=deps, **paths, via="reflash")
     assert not res.ok and "wedge ladder" in res.detail
     # mainline + one full pcscd restart after EACH ladder rung
     assert runner.count("restart pcscd.socket pcscd.service") == 3

@@ -48,6 +48,11 @@ from hil import BoltyCli, BoltyError, CardRegistry  # noqa: E402
 
 CARD_A = "04c474fa967380"
 CARD_B = "04455ffa967380"
+# Read-battery card: never mutated BY THIS RUNNER (visit-plan convention).
+# NOTE: registry-enforced read-only for this UID was lifted 2026-10-19 when
+# the card was recovered from its stuck-key state (#129 — now burn-allowed);
+# the read-only role in this cycle is runner discipline, and the registry
+# gate's op enforcement is covered by tests with a fixture registry.
 CARD_RO = "043365fa967380"
 ISSUER = "0" * 31 + "1"
 BURN_URL = "https://boltcardpoc.psbt.me/?p={picc:uid+ctr}&c={mac}"
