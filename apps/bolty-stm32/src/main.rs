@@ -79,14 +79,100 @@ mod stm32 {
     // Hardware init behind the board feature (docs/stm32-nfc-frontend-plan.md,
     // option A). Clock plan mirrors ccid-firmware-rs's F469 config; I2C1
     // alt-map pins PB6/PB7 chosen to avoid every in-tree co-tenant claim
-    // (PINOUT-nfc.md). A raw bus scan is all we do until an MFRC522 is
-    // physically wired — no PCD register access, no card handling.
+    // (PINOUT-nfc.md). Until an MFRC522 is physically wired this stops at
+    // the bus scan; when one answers at 0x28 the transceiver is constructed
+    // (from_i2c runs the PCD version check) but no card handling happens.
     #[cfg(feature = "board-stm32f4-disco")]
     mod board {
         use stm32f4xx_hal::{i2c::I2c, pac, prelude::*};
 
+        type HalI2c = I2c<pac::I2C1>;
+
+        /// embedded-hal 1.0 shim over the hal fork's I2c (which implements
+        /// the 0.2-era WriteIter/WriteIterRead — see hal_02 re-export).
+        /// mfrc522-pcd's `from_i2c` requires e-h 1.0 `I2c`; this adapter is
+        /// the bridge so module-arrival day is wiring + flash only.
+        /// Semantics: the common write / write-then-read shapes map 1:1;
+        /// any other Operation sequence executes sequentially (electrically
+        /// separate transactions) — mfrc522 I2C traffic never uses those.
+        pub struct Eh1I2c<I>(pub I);
+
+        #[derive(Debug)]
+        pub struct AdapterError<E>(pub E);
+
+        impl<E: core::fmt::Debug> embedded_hal::i2c::Error for AdapterError<E> {
+            fn kind(&self) -> embedded_hal::i2c::ErrorKind {
+                embedded_hal::i2c::ErrorKind::Other
+            }
+        }
+
+        impl<E: core::fmt::Debug> core::fmt::Display for AdapterError<E> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                write!(f, "i2c bus error: {:?}", self.0)
+            }
+        }
+
+        impl<I, E> embedded_hal::i2c::ErrorType for Eh1I2c<I>
+        where
+            I: stm32f4xx_hal::hal_02::blocking::i2c::WriteIter<Error = E>
+                + stm32f4xx_hal::hal_02::blocking::i2c::WriteIterRead<Error = E>,
+            E: core::fmt::Debug,
+        {
+            type Error = AdapterError<E>;
+        }
+
+        impl<I, E> embedded_hal::i2c::I2c for Eh1I2c<I>
+        where
+            I: stm32f4xx_hal::hal_02::blocking::i2c::WriteIter<Error = E>
+                + stm32f4xx_hal::hal_02::blocking::i2c::WriteIterRead<Error = E>,
+            E: core::fmt::Debug,
+        {
+            fn transaction(
+                &mut self,
+                address: u8,
+                operations: &mut [embedded_hal::i2c::Operation<'_>],
+            ) -> Result<(), Self::Error> {
+                use embedded_hal::i2c::Operation;
+
+                let mut ops = operations.iter_mut();
+                // Fold ONLY exact 1-op write / 2-op write+read shapes; any
+                // other sequence (incl. write+read followed by more ops)
+                // falls through to the sequential path — never drop ops.
+                let folded = match (ops.next(), ops.next(), ops.next()) {
+                    (Some(Operation::Write(w)), None, None) => self
+                        .0
+                        .write(address, w.iter().copied())
+                        .map_err(AdapterError),
+                    (Some(Operation::Write(w)), Some(Operation::Read(r)), None) => self
+                        .0
+                        .write_iter_read(address, w.iter().copied(), r)
+                        .map_err(AdapterError),
+                    _ => {
+                        for op in operations {
+                            match op {
+                                Operation::Write(w) => {
+                                    self.0
+                                        .write(address, w.iter().copied())
+                                        .map_err(AdapterError)?;
+                                }
+                                Operation::Read(r) => {
+                                    self.0
+                                        .write_iter_read(address, core::iter::empty::<u8>(), r)
+                                        .map_err(AdapterError)?;
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                };
+                folded
+            }
+        }
+
         pub struct Board {
-            pub _i2c: I2c<pac::I2C1>,
+            // Held for the card-handling phase (naming follows the prior
+            // `_i2c` convention: keep-alive until main.rs TODO 4-5 land).
+            pub _mfrc522: Option<mfrc522_pcd::Mfrc522Transceiver<Eh1I2c<HalI2c>>>,
         }
 
         pub fn init(dp: pac::Peripherals) -> Board {
@@ -117,16 +203,35 @@ mod stm32 {
                     mfrc522 |= addr == mfrc522_pcd::DEFAULT_I2C_ADDRESS;
                 }
             }
-            if mfrc522 {
-                defmt::info!("bolty-stm32: nfc=mfrc522 detected at 0x28");
-            } else {
+            if !mfrc522 {
                 defmt::warn!(
                     "bolty-stm32: nfc=mfrc522 NOT detected (expected until wiring; scan found {} other device(s))",
                     found
                 );
+                return Board { _mfrc522: None };
             }
 
-            Board { _i2c: i2c }
+            defmt::info!("bolty-stm32: nfc=mfrc522 detected at 0x28 — constructing transceiver");
+            // from_i2c runs the PCD version check on construction: the
+            // first real register-level proof the day the module is wired.
+            match mfrc522_pcd::Mfrc522Transceiver::from_i2c(
+                Eh1I2c(i2c),
+                mfrc522_pcd::DEFAULT_I2C_ADDRESS,
+            ) {
+                Ok(xcvr) => {
+                    defmt::info!("bolty-stm32: mfrc522 transceiver ready");
+                    Board {
+                        _mfrc522: Some(xcvr),
+                    }
+                }
+                Err(_) => {
+                    // Not defmt::Format (hal error type) — the panic-free
+                    // detail path is gdb/tools on the bench, this is the
+                    // marker that construction failed.
+                    defmt::error!("bolty-stm32: mfrc522 init failed (bus or version check)");
+                    Board { _mfrc522: None }
+                }
+            }
         }
     }
 
