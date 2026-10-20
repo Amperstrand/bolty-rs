@@ -135,12 +135,15 @@ mod stm32 {
                 use embedded_hal::i2c::Operation;
 
                 let mut ops = operations.iter_mut();
-                let folded = match (ops.next(), ops.next()) {
-                    (Some(Operation::Write(w)), None) => self
+                // Fold ONLY exact 1-op write / 2-op write+read shapes; any
+                // other sequence (incl. write+read followed by more ops)
+                // falls through to the sequential path — never drop ops.
+                let folded = match (ops.next(), ops.next(), ops.next()) {
+                    (Some(Operation::Write(w)), None, None) => self
                         .0
                         .write(address, w.iter().copied())
                         .map_err(AdapterError),
-                    (Some(Operation::Write(w)), Some(Operation::Read(r))) => self
+                    (Some(Operation::Write(w)), Some(Operation::Read(r)), None) => self
                         .0
                         .write_iter_read(address, w.iter().copied(), r)
                         .map_err(AdapterError),
