@@ -8,7 +8,8 @@ owner-only actions per the CHANNEL rule 2026-09-06). Every delta below is
 exported as a ready-to-submit patch under `patches/`.
 
 Consumption pins (this repo's `Cargo.toml`, post-#105/#110):
-`mfrc522 @ Amperstrand/mfrc522-rs e9ced1e` (fork head `1dd9f8d`) ·
+`mfrc522 @ Amperstrand/mfrc522-rs e9ced1e` (fork head `5e4929b`, cleaned
+2026-10-20) ·
 `iso14443 @ Foundation-Devices/iso14443-rs 216d1b9` — **upstream direct,
 fork RETIRED by #105** · `ntag424 @ Amperstrand/ntag424 afb7238`.
 
@@ -21,7 +22,17 @@ repo mechanics, no wire meaning.
 
 Fork history: `84f4f29` (root: vendored 0.8.0 + patches) → `bc3ebfb`
 (metadata) → `e9ced1e` (caps; this is the workspace pin) → `1dd9f8d`
-(gitignore; fork head).
+(gitignore) → `5e4929b` (upstreamability cleanup, 2026-10-20: stale
+`src/comm/comm/` duplicate removed, `Cargo.lock` untracked, manifest
+description corrected + `=`-pins relaxed; zero src/ behavior change,
+28+1 tests green before and after).
+
+**Decision (owner, 2026-10-20): KEEP the fork.** Retire (the #105
+iso14443 playbook) is not viable here: all three deltas are driver-core
+(register API is the only register access that exists; iteration caps
+and REQA timer init are internal), not consumer-side extractable. Feed
+to `jspngh/mfrc522` stays parked at the owner (GitLab MRs, CHANNEL
+rule); the fork is cleaned so that feed is trivial whenever wanted.
 
 **Delta table — re-derived empirically 2026-10-19 (#108) by diffing the
 fork tree against the unpacked upstream crates.io 0.8.0 tarball.** This
@@ -57,12 +68,18 @@ last repo activity 2026-09-19; no GitLab releases. crates.io newest is
 0.8.0 (2024-11-24). Upstream is slow but not dead — a feed attempt is
 plausible, unlike the pre-correction "dormant ~2 y" reading.
 
-Fork-side hazards (unchanged):
+Fork-side hazards (updated 2026-10-20):
 - ⚠ the fork's history accidentally commits `target/` (`e9ced1e` added it,
   `1dd9f8d` untracked it) — raw `format-patch` of those two commits is
   unusable for submission; the staged 0003 patch is the semantic delta only.
-- ⚠ stray `src/comm/comm/` duplicate directory rides in the fork tree
-  (accidental; excluded from 0004, flagged for fork-side cleanup).
+- ~~stray `src/comm/comm/` duplicate directory~~ **RESOLVED 2026-10-20**
+  (`5e4929b` deleted it — it was a stale copy predating the e9ced1e
+  std-gating, so deletion was strictly correct).
+- ~~tracked `Cargo.lock`~~ **RESOLVED 2026-10-20** (`5e4929b` untracked;
+  `.gitignore` already covered it).
+- Manifest: the false "forked from upstream SPI-only crate" description
+  is corrected in `5e4929b`; `=`-pinned dependency requirements relaxed
+  to normal caret ranges (identical resolution).
 
 Packets under `patches/mfrc522-rs/` (all verified 2026-10-19, see
 `COVER.md` for the verification transcript):
@@ -73,8 +90,12 @@ Packets under `patches/mfrc522-rs/` (all verified 2026-10-19, see
   `1dd9f8d` tree exactly, modulo the fork-side `Cargo.lock`).
 - `0004` — **the submission-grade artifact**: consolidated diff of fork
   head vs upstream 0.8.0 source (register API + timer widening + caps +
-  test repair + `.gitignore`). This is what the owner splits into logical
-  upstream merge requests.
+  test repair + `.gitignore`). **Regenerated 2026-10-20 at the cleaned
+  head `5e4929b`** — now free of the `comm/comm`/lockfile noise by
+  construction (6 src files + `.gitignore`). This is what the owner
+  splits into logical upstream merge requests.
+- `0005` — the fork's cleanup commit itself (`5e4929b`, format-patch),
+  for provenance.
 
 ## Amperstrand/iso14443-rs — RETIRED (superseded by #105 + #110)
 

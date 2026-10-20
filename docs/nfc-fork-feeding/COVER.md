@@ -15,8 +15,12 @@ what was verified.
 - Upstream state: latest commit `0a21f600` 2025-01-04 ("Document that I2C
   is implemented"); last repo activity 2026-09-19; crates.io newest 0.8.0
   (2024-11-24). Read the repo's CONTRIBUTING/AI policy before drafting.
-- First: make the feed-vs-retire call (LEDGER.md "Decision checkpoint").
-  If RETIRE, this packet becomes the vendoring reference instead.
+- Decision (2026-10-20): **KEEP the fork** — retire is not viable (all
+  deltas are driver-core, not consumer-side extractable). The fork is
+  cleaned (`ai-experiments` head `5e4929b`: stray `src/comm/comm/`
+  duplicate removed, `Cargo.lock` untracked, manifest corrected) so the
+  feed below is trivial whenever you want it; until then nothing further
+  is required. `0004` is regenerated against the cleaned head (2026-10-20).
 
 ## What to submit (split from `0004`)
 

@@ -61,11 +61,15 @@ Rules:
    chore, `1dd9f8d`) 62 seconds after the pinned fix landed — any
    branch-floating consumer built after that resolved to a different
    tree.
-4. **Today's pins** (2026-10-19):
+4. **Today's pins** (2026-10-20):
    - `mfrc522` @ `e9ced1e2acc5a724cc0da4f2be6cf4968dc92aff` — software
      iteration cap on MFAuthent/transceive wait loops. Fork head is
-     `1dd9f8d` (gitignore-only child). FEED-vs-RETIRE decision checkpoint:
-     `docs/nfc-fork-feeding/LEDGER.md` (#108).
+     `5e4929b` (2026-10-20 upstreamability cleanup: stray `src/comm/comm/`
+     duplicate deleted, `Cargo.lock` untracked, manifest corrected — zero
+     src/ behavior change, so the pin bump is cosmetic whenever a
+     lockfile-touching PR next rides). **Decision 2026-10-20: KEEP** —
+     retire is not viable (driver-core deltas); feed parked at owner
+     (`docs/nfc-fork-feeding/LEDGER.md`).
    - `iso14443` @ `216d1b919ca1fd4d30048a1c764f14379137f3c7` —
      Foundation-Devices upstream main HEAD (v0.3.1 lineage), == the
      pre-#110 lockfile entry, so the pin changed zero dependency bytes.
@@ -116,7 +120,7 @@ Codeberg are both non-member).
 
 | Crate | Staged state | Topic |
 |---|---|---|
-| `mfrc522` | `docs/nfc-fork-feeding/` (#108): LEDGER + patches 0001–0004 + COVER.md | Register access API, REQA timer widening, iteration caps — split-ready against upstream 0.8.0; upstream = **gitlab.com/jspngh/mfrc522** (corrected 2026-10-19) |
+| `mfrc522` | `docs/nfc-fork-feeding/` (#108): LEDGER + patches 0001–0005 + COVER.md | Register access API, REQA timer widening, iteration caps — split-ready against upstream 0.8.0; **decided 2026-10-20: KEEP + fork cleaned @ `5e4929b`**, feed parked at owner; upstream = **gitlab.com/jspngh/mfrc522** (corrected 2026-10-19) |
 | `iso14443` | **none — retired** (#105) | The old `upstream/pcd-session` / `upstream/wtx` pointer branches in the retired fork are dead; remaining deltas live consumer-side in `crates/iso14443-session` |
 | `ntag424` | fork branch `upstream/lencap` → `6f39a47` | LenCap=0x03 wire-form fix (+ `Sdm::disabled()`); Codeberg delta table + decision done 2026-10-19 (#109) — feed packet staged, ccid co-sign resolved same day, owner post parked |
 
@@ -178,5 +182,5 @@ none of theirs. Owner decision:
 | Crate | State | Next step |
 |---|---|---|
 | `iso14443` | **retired** (#105, #110) — upstream direct, rev-pinned | none (template for future retirements) |
-| `mfrc522` | fork consumed @ `e9ced1e`; packet staged (#108); fork head `1dd9f8d` idle since 2026-08-29 | **owner decision: feed vs retire** (LEDGER.md checkpoint) |
+| `mfrc522` | fork consumed @ `e9ced1e`; **decided 2026-10-20: KEEP** — fork cleaned @ head `5e4929b` (retire not viable: driver-core deltas), feed packet parked | none required — owner GitLab post only if/when desired |
 | `ntag424` | fork consumed @ `02f23f5` (bumped from `afb7238` via #120); **decided 2026-10-19: keep + feed, post parked, co-sign resolved** (#109) | owner posts the staged feed packet (only remaining action) |

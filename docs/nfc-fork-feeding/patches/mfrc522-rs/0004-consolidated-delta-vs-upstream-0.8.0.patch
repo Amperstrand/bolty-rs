@@ -2,45 +2,65 @@ From: Amperstrand <Amperstrand@users.noreply.github.com>
 Subject: [PATCH] Consolidated fork delta vs upstream crates.io mfrc522 0.8.0
 
 Submission-grade consolidated diff of Amperstrand/mfrc522-rs fork head
-(1dd9f8d, 2026-08-29) against the upstream crates.io mfrc522 0.8.0 source
-tarball (2024-11-24; manifest from Cargo.toml.orig). Empirically derived
-2026-10-19 (#108) by unpacking the tarball and diffing trees.
+(5e4929b, 2026-10-20 upstreamability-cleanup head) against the upstream
+crates.io mfrc522 0.8.0 source tarball (2024-11-24; manifest from
+Cargo.toml.orig). Re-derived 2026-10-20 by unpacking the tarball and
+diffing trees; junk-free by construction at this head (the 2026-10-19
+derivation had to hand-exclude the stray src/comm/comm/ duplicate and
+tracked Cargo.lock, both since removed from the fork).
 
-Contents (all fork commits 84f4f29 + bc3ebfb + e9ced1e + 1dd9f8d folded):
-- src/lib.rs: public register API (`pub mod register` + `Register`
-  re-export, `read_register`/`write_register`/`rmw_register` accessors,
-  `AtqA::as_bytes`), REQA timer reload 25 ms -> ~100 ms (0x3E8 -> 0x0FA0,
-  Arduino MFRC522 PCD_ConfigureDefaults precedent), software iteration
-  caps on wait loops, missing_docs allow
-- src/tests.rs: init()-based test repair + expanded eh02 expectations +
-  std-gating of host-only tests
-- .gitignore: /target, /Cargo.lock
-
-Excluded (fork-side identity/artifacts, not for upstream): Cargo.toml
-metadata + =pinned deps, LICENSE/LICENSING.md, stray src/comm/comm/
-duplicate, tracked Cargo.lock.
-
-NOTE (2026-10-19 correction): the fork's I2C transports are NOT part of
-this delta — comm/blocking/i2c.rs and comm/eh02/i2c.rs are byte-identical
-to upstream 0.8.0, which has shipped I2C since at least 2024-11-24
-(upstream commit 0a21f600 "Document that I2C is implemented", 2025-01-04).
-
-This patch is the single source the owner can split into logical upstream
-merge requests (suggested: (1) register access API, (2) timer widening,
-(3) iteration caps + test repair).
-
-diff --git a/.gitignore b/.gitignore
-new file mode 100644
-index 0000000..4fffb2f
---- /dev/null
-+++ b/.gitignore
-@@ -0,0 +1,2 @@
-+/target
-+/Cargo.lock
-diff --git a/src/lib.rs b/src/lib.rs
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/comm/blocking/i2c.rs b/tmp/opencode/mfrc522-fork-clean/src/comm/blocking/i2c.rs
+index ef9474d..d89f1b0 100644
+--- a/tmp/opencode/mfrc522-0.8.0/src/comm/blocking/i2c.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/comm/blocking/i2c.rs
+@@ -62,6 +62,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::blocking::i2c::I2cInterface;
+     use crate::comm::Interface;
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/comm/blocking/spi.rs b/tmp/opencode/mfrc522-fork-clean/src/comm/blocking/spi.rs
+index 27180fe..24f18b9 100644
+--- a/tmp/opencode/mfrc522-0.8.0/src/comm/blocking/spi.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/comm/blocking/spi.rs
+@@ -144,6 +144,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::blocking::spi::SpiInterface;
+     use crate::comm::Interface;
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/comm/eh02/i2c.rs b/tmp/opencode/mfrc522-fork-clean/src/comm/eh02/i2c.rs
+index 04f3057..3efde33 100644
+--- a/tmp/opencode/mfrc522-0.8.0/src/comm/eh02/i2c.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/comm/eh02/i2c.rs
+@@ -63,6 +63,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::eh02::i2c::I2cInterface;
+     use crate::comm::Interface;
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/comm/eh02/spi.rs b/tmp/opencode/mfrc522-fork-clean/src/comm/eh02/spi.rs
+index ec246dc..5bcaa9f 100644
+--- a/tmp/opencode/mfrc522-0.8.0/src/comm/eh02/spi.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/comm/eh02/spi.rs
+@@ -234,6 +234,7 @@ where
+ }
+ 
+ #[cfg(test)]
++#[cfg(feature = "std")]
+ mod test {
+     use crate::comm::eh02::spi::SpiInterface;
+     use crate::comm::Interface;
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/lib.rs b/tmp/opencode/mfrc522-fork-clean/src/lib.rs
 index 6f513af..d68cc7b 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
+--- a/tmp/opencode/mfrc522-0.8.0/src/lib.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/lib.rs
 @@ -57,18 +57,20 @@
  //! - [Raspberry Pi Pico](https://gitlab.com/jspngh/mfrc522/-/tree/main/examples/rp2040)
  //! - [STM32L4](https://gitlab.com/jspngh/mfrc522/-/tree/main/examples/stm32l4)
@@ -160,10 +180,10 @@ index 6f513af..d68cc7b 100644
          }
  
          self.check_error_register()?;
-diff --git a/src/tests.rs b/src/tests.rs
+diff --git a/tmp/opencode/mfrc522-0.8.0/src/tests.rs b/tmp/opencode/mfrc522-fork-clean/src/tests.rs
 index 48e5c4a..6ebc6c1 100644
---- a/src/tests.rs
-+++ b/src/tests.rs
+--- a/tmp/opencode/mfrc522-0.8.0/src/tests.rs
++++ b/tmp/opencode/mfrc522-fork-clean/src/tests.rs
 @@ -1,4 +1,4 @@
 -#[cfg(all(test, feature = "eh02"))]
 +#[cfg(all(test, feature = "eh02", feature = "std"))]
@@ -432,3 +452,11 @@ index 48e5c4a..6ebc6c1 100644
              Ok(crate::FifoData {
                  buffer: [0x98, 0x76, 0x52, 0x2b],
                  valid_bytes: 4,
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..4fffb2f
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,2 @@
++/target
++/Cargo.lock
