@@ -295,12 +295,18 @@ def scale_config(cfg: dict, total_s: float, dry: bool = False) -> dict:
 
 # ------------------------------------------------------------ result store ----
 
-def _atomic_write_json(path: Path, obj: dict) -> None:
+def _atomic_write_json(path: Path, obj: dict, *, fsync: bool = True) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=1, sort_keys=True)
         f.flush()
-        os.fsync(f.fileno())
+        if fsync:
+            # Crash-durability for real overnight runs. Dry-run/simulated
+            # runs skip it: fsync-per-row on contended CI disks overran the
+            # anchor-fixed phase budgets and shrank ROLE_GATE away (the
+            # test_dry_run_mode_a flake, ded1c7e and again 2026-10-19) —
+            # a simulation has nothing to make durable.
+            os.fsync(f.fileno())
     os.replace(tmp, path)
 
 
@@ -308,10 +314,11 @@ class ResultsStore:
     """Incremental atomic persistence: every row/event rewrites results.json
     via write-temp+rename, so a dead scheduler leaves a complete partial state."""
 
-    def __init__(self, directory: str | Path, clock=None):
+    def __init__(self, directory: str | Path, clock=None, durable: bool = True):
         self.dir = Path(directory)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.clock = clock or RealClock()
+        self._durable = durable
         self.path = self.dir / "results.json"
         self.report_path = self.dir / "report.md"
         self._lock = threading.Lock()
@@ -326,7 +333,7 @@ class ResultsStore:
 
     def _persist(self) -> None:
         with self._lock:
-            _atomic_write_json(self.path, self.state)
+            _atomic_write_json(self.path, self.state, fsync=self._durable)
 
     def mark_started(self, dry_run: bool) -> None:
         self.state["run"].update(started_at=_iso(self.clock.time()), dry_run=dry_run,
@@ -1433,7 +1440,7 @@ def _dry_preflight(ctx: PhaseContext) -> bool:
 
 def build_dry_run_app(cfg: dict, out_dir: str | Path, gate_ok: bool,
                       extra_specs: list = ()) -> Orchestrator:
-    store = ResultsStore(out_dir)
+    store = ResultsStore(out_dir, durable=False)
     clock = RealClock()
     ping = ScriptedPing()
     base = dict(pace_s=max(cfg.get("pace_s", 0.05), DRY_FLOORS["pace_s"]))
