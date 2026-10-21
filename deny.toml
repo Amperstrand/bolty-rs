@@ -4,13 +4,9 @@ ignore = [
     "RUSTSEC-2026-0190",  # anyhow unsound — no fix available, accepted risk
     "RUSTSEC-2026-0110",  # bare-metal unmaintained — embedded ecosystem standard
     "RUSTSEC-2026-0173",  # proc-macro-error2 unmaintained — transitive dep
-    # webpki-roots 0.26.11 (bolty-cli -> ureq 2.12 only; no firmware): the
-    # 0.26.x line has no fixed release (fix is the 1.x line, RUSTSEC-2026-0381).
-    # The nested root store IS patched (webpki-roots 1.0.10 in this lockfile,
-    # rustls-webpki 0.103.16); exposure is bolty-cli verifying our own
-    # boltcardpoc edge, not a generic HTTPS client. Real fix = ureq 3 major
-    # bump — tracked in docs/dependency-duplicates.md (defer, owner call).
-    "RUSTSEC-2026-0381",
+    # (2026-10-21) RUSTSEC-2026-0381 ignore REMOVED: bolty-cli migrated to
+    # ureq 3 (rustls TLS, webpki-roots 1.x) — webpki-roots 0.26.x is out of
+    # the graph (was the 0.26.11 facade over an already-patched 1.0.10).
 ]
 
 [licenses]
