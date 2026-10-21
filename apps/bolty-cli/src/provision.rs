@@ -102,12 +102,15 @@ pub fn fetch_provision_keys(proxy_base: &str, code: &str) -> anyhow::Result<Prov
     let url = format!("{base}/new?a={code}");
 
     let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(20))
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(20)))
+        .build()
         .call()
         .map_err(|e| anyhow::anyhow!("request to {url} failed: {e}"))?;
 
     let mut body = String::new();
     response
+        .into_body()
         .into_reader()
         .take(64 * 1024)
         .read_to_string(&mut body)
