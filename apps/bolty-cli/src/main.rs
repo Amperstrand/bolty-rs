@@ -427,11 +427,13 @@ async fn run() -> anyhow::Result<()> {
                 &mut transport,
                 &issuer_key,
                 &url,
-                version,
-                verbose,
-                dry_run,
-                confirm_uid.as_ref(),
-                force,
+                burn::BurnOptions {
+                    version,
+                    verbose,
+                    dry_run,
+                    confirm_uid: confirm_uid.as_ref(),
+                    force,
+                },
             )
             .await?;
         }
@@ -504,13 +506,17 @@ async fn run() -> anyhow::Result<()> {
             let mut transport = connect_transport()?;
             wipe::cmd_wipe(
                 &mut transport,
-                issuer_key.as_ref(),
-                raw_keys.as_ref(),
-                version,
-                verbose,
-                dry_run,
-                skip_preverify,
-                confirm_uid.as_ref(),
+                wipe::WipeKeySource {
+                    issuer_key: issuer_key.as_ref(),
+                    raw_keys: raw_keys.as_ref(),
+                    version,
+                },
+                wipe::WipeOptions {
+                    verbose,
+                    dry_run,
+                    skip_preverify,
+                    confirm_uid: confirm_uid.as_ref(),
+                },
             )
             .await?;
         }
@@ -577,24 +583,30 @@ async fn run() -> anyhow::Result<()> {
                 &mut transport,
                 &issuer_key,
                 &url,
-                version,
-                verbose,
-                false,
-                None,
-                false,
+                burn::BurnOptions {
+                    version,
+                    verbose,
+                    dry_run: false,
+                    confirm_uid: None,
+                    force: false,
+                },
             )
             .await?;
 
             println!("\n═══ CYCLE: WIPE ═══");
             wipe::cmd_wipe(
                 &mut transport,
-                Some(&issuer_key),
-                None,
-                version,
-                verbose,
-                false,
-                false,
-                None,
+                wipe::WipeKeySource {
+                    issuer_key: Some(&issuer_key),
+                    raw_keys: None,
+                    version,
+                },
+                wipe::WipeOptions {
+                    verbose,
+                    dry_run: false,
+                    skip_preverify: false,
+                    confirm_uid: None,
+                },
             )
             .await?;
 
@@ -603,11 +615,13 @@ async fn run() -> anyhow::Result<()> {
                 &mut transport,
                 &issuer_key,
                 &url,
-                version,
-                verbose,
-                false,
-                None,
-                false,
+                burn::BurnOptions {
+                    version,
+                    verbose,
+                    dry_run: false,
+                    confirm_uid: None,
+                    force: false,
+                },
             )
             .await?;
 

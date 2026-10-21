@@ -12,20 +12,46 @@ use crate::common::{
     record_auth_failure,
 };
 
-#[allow(clippy::too_many_arguments)]
+/// Key material source for a wipe (mutually exclusive — clap enforces it
+/// upstream and `main.rs` rejects both/neither before dispatch).
+pub struct WipeKeySource<'a> {
+    /// Issuer key to derive the card keyset from (standard path).
+    pub issuer_key: Option<&'a [u8; 16]>,
+    /// Raw keyset k0–k4 — recovery path for cards burned with known static
+    /// keys (e.g. M5StickC test keys).
+    pub raw_keys: Option<&'a [[u8; 16]; 5]>,
+    /// Keyset version (used by the derived path and printed in dry-run).
+    pub version: u8,
+}
+
+/// Flags for the wipe command (verbosity + safety guards).
+pub struct WipeOptions<'a> {
+    pub verbose: bool,
+    pub dry_run: bool,
+    pub skip_preverify: bool,
+    pub confirm_uid: Option<&'a [u8; 7]>,
+}
+
 pub async fn cmd_wipe<T: Transport>(
     transport: &mut T,
-    issuer_key: Option<&[u8; 16]>,
-    raw_keys: Option<&[[u8; 16]; 5]>,
-    version: u8,
-    verbose: bool,
-    dry_run: bool,
-    skip_preverify: bool,
-    confirm_uid: Option<&[u8; 7]>,
+    keys: WipeKeySource<'_>,
+    opts: WipeOptions<'_>,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
+    let WipeKeySource {
+        issuer_key,
+        raw_keys,
+        version,
+    } = keys;
+    let WipeOptions {
+        verbose,
+        dry_run,
+        skip_preverify,
+        confirm_uid,
+    } = opts;
+
     let uid_fixed = bolty_ntag::preflight(transport)
         .await
         .map_err(map_ntag_error)?;
@@ -387,11 +413,13 @@ mod tests {
             &mut transport,
             issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("burn to provision card");
@@ -421,13 +449,17 @@ mod tests {
 
         let result = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            false,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: false,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
         let err = result.expect_err("wipe must refuse on SUN MAC mismatch");
@@ -446,11 +478,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("burn to provision card");
@@ -473,13 +507,17 @@ mod tests {
 
         let result = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            false,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: false,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
         assert!(
@@ -499,11 +537,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             "https://card.bolt.local/lnurl?p={picc:ctr}&c={mac}",
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("privacy burn to provision card");
@@ -520,13 +560,17 @@ mod tests {
 
         let result = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            false,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: false,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
         assert!(
@@ -546,11 +590,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             "https://card.bolt.local/lnurl?p={picc:ctr}&c={mac}",
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("privacy burn to provision card");
@@ -566,13 +612,17 @@ mod tests {
 
         let result = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            false,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: false,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
         let err = result.expect_err("privacy-card wipe must refuse on SUN MAC mismatch");
@@ -593,11 +643,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("burn to provision card for wipe dry-run test");
@@ -608,13 +660,17 @@ mod tests {
 
         let result = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            true,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: true,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
@@ -652,23 +708,29 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         let _ = std::fs::remove_file(&tmp_path);
         let _ = cmd_wipe(
             &mut transport,
-            Some(&issuer_key),
-            None,
-            1,
-            false,
-            false,
-            false,
-            None,
+            WipeKeySource {
+                issuer_key: Some(&issuer_key),
+                raw_keys: None,
+                version: 1,
+            },
+            WipeOptions {
+                verbose: false,
+                dry_run: false,
+                skip_preverify: false,
+                confirm_uid: None,
+            },
         )
         .await;
 

@@ -18,20 +18,16 @@ fn privacy_template(url: &str) -> bool {
     url.contains("{picc:ctr}") && !url.contains("{picc:uid")
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn cmd_burn<T: Transport>(
     transport: &mut T,
     issuer_key: &[u8; 16],
     url: &str,
-    version: u8,
-    verbose: bool,
-    dry_run: bool,
-    confirm_uid: Option<&[u8; 7]>,
-    force: bool,
+    opts: BurnOptions<'_>,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
+    let version = opts.version;
     let uid_fixed = bolty_ntag::preflight(transport)
         .await
         .map_err(map_ntag_error)?;
@@ -49,18 +45,15 @@ where
         k4: keys.k4.clone(),
     };
 
+    // The issuer-derived entry point always audits as DerivedIssuer: the
+    // keyset is derived here from `issuer_key`, so the provenance is fixed
+    // by construction, not a caller decision.
     burn_card(
         transport,
         &card_keys,
         url,
-        BurnOptions {
-            version,
-            verbose,
-            dry_run,
-            confirm_uid,
-            force,
-            provenance: KeyProvenance::DerivedIssuer { version },
-        },
+        opts,
+        KeyProvenance::DerivedIssuer { version },
     )
     .await
 }
@@ -72,7 +65,6 @@ pub struct BurnOptions<'a> {
     pub dry_run: bool,
     pub confirm_uid: Option<&'a [u8; 7]>,
     pub force: bool,
-    pub provenance: KeyProvenance,
 }
 
 /// Burn `keys` to the card. Shared by issuer-derived burns and proxy-issued
@@ -82,6 +74,7 @@ pub async fn burn_card<T: Transport>(
     keys: &CardKeys,
     url: &str,
     opts: BurnOptions<'_>,
+    provenance: KeyProvenance,
 ) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
@@ -92,7 +85,6 @@ where
         dry_run,
         confirm_uid,
         force,
-        provenance,
     } = opts;
 
     let uid_fixed = bolty_ntag::preflight(transport)
@@ -353,11 +345,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            true,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: true,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         assert!(result.is_ok(), "dry-run should succeed: {:?}", result.err());
@@ -392,11 +386,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            Some(&wrong_uid),
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: Some(&wrong_uid),
+                force: false,
+            },
         )
         .await;
 
@@ -425,11 +421,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            true,
-            Some(&correct_uid),
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: true,
+                confirm_uid: Some(&correct_uid),
+                force: false,
+            },
         )
         .await;
 
@@ -458,11 +456,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("privacy burn should succeed");
@@ -512,11 +512,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect("standard burn should succeed");
@@ -558,11 +560,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         assert!(
@@ -598,11 +602,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         assert!(
@@ -618,11 +624,13 @@ mod tests {
             &mut transport,
             &issuer_key,
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         assert!(result.is_ok(), "re-burn should succeed: {:?}", result.err());
@@ -692,11 +700,13 @@ mod security_tests {
             &mut transport,
             &[0u8; 16],
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect_err("missing {picc} must be rejected");
@@ -726,11 +736,13 @@ mod security_tests {
             &mut transport,
             &[0u8; 16],
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect_err("missing {mac} must be rejected");
@@ -755,11 +767,13 @@ mod security_tests {
             &mut transport,
             &[0u8; 16],
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await
         .expect_err("placeholder-less URL must be rejected");
@@ -783,11 +797,13 @@ mod security_tests {
             &mut transport,
             &issuer,
             "https://example.com/forced",
-            1,
-            false,
-            false,
-            None,
-            true,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: true,
+            },
         )
         .await;
         let _ = std::fs::remove_file(&path);
@@ -815,11 +831,13 @@ mod security_tests {
             &mut transport,
             &[0u8; 16],
             url,
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
         let _ = std::fs::remove_file(&path);
@@ -846,11 +864,13 @@ mod security_tests {
             &mut transport,
             &[0u8; 16],
             "https://example.com/no-placeholders",
-            1,
-            false,
-            false,
-            None,
-            false,
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
         )
         .await;
 
