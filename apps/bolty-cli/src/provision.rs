@@ -154,8 +154,8 @@ where
             dry_run: false,
             confirm_uid,
             force,
-            provenance: KeyProvenance::ProxyIssued,
         },
+        KeyProvenance::ProxyIssued,
     )
     .await
 }
