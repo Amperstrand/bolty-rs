@@ -55,7 +55,6 @@ impl<PN532, RST> Pn532Device<PN532, RST> {
 
 pub const PN532_BUF_SIZE: usize = 64;
 
-#[cfg(target_arch = "xtensa")]
 fn max_response_len<const BUF: usize>() -> usize {
     BUF.saturating_sub(9)
 }
@@ -167,8 +166,13 @@ where
     }
 }
 
-#[cfg(target_arch = "xtensa")]
-mod xtensa_impl {
+// The Pn532Ops blanket impl is NOT xtensa-specific (the generics are
+// bus-agnostic pn532-crate traits) — de-gated 2026-10-20 so the STM32
+// F469 port (bolty-stm32, docs/stm32-nfc-frontend-plan.md option B) can
+// construct Pn532Device over any Interface. xtensa compilation is
+// source-identical; downstream pins (ccid-firmware-rs rev-pins this
+// repo) pick this up deliberately.
+mod pn532_impl {
     use super::{Error, Pn532Ops, max_response_len};
     use alloc::vec::Vec;
     use core::time::Duration;
@@ -221,11 +225,10 @@ mod xtensa_impl {
 
             let target_num = response.get(1).copied().unwrap_or(0);
             let uid_len = response.get(5).copied().unwrap_or(0) as usize;
-            let uid = if uid_len > 0 && 6 + uid_len <= response.len() {
-                response[6..6 + uid_len].to_vec()
-            } else {
-                Vec::new()
-            };
+            let uid = response
+                .get(6..6 + uid_len)
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
 
             Ok(Some((target_num, uid)))
         }

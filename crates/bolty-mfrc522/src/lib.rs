@@ -252,9 +252,63 @@ fn fwi_from_ats(ats: &Ats) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
+
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    /// Cross-crate response-split conformance contract (mirrored in
+    /// bolty-mfrc522, bolty-pn532 and bolty-pn7160). The hoist was
+    /// evaluated 2026-10-20: the only shared dependency is the
+    /// rev-pinned ntag424 fork (frozen pending the owner's
+    /// feed-vs-retire decision), so the 8-line split stays crate-local
+    /// and THESE vectors are the drift guard — change one, change all
+    /// three. Natural hoist home if the fork decision lands: a
+    /// Response helper on the ntag424 fork itself.
+    #[test]
+    fn split_response_conformance() {
+        // <2 bytes is always InvalidResponseLength(len)
+        for short in [&[][..], &[0x6Fu8][..]] {
+            match super::split_response::<core::convert::Infallible>(short) {
+                Err(Error::InvalidResponseLength(n)) => assert_eq!(n, short.len()),
+                Err(other) => panic!("expected InvalidResponseLength, got {other:?}"),
+                Ok(_) => panic!("short input must not split"),
+            }
+        }
+        // status-word-only responses
+        for (rsp, sw) in [
+            (&[0x90u8, 0x00][..], (0x90u8, 0x00u8)),
+            (&[0x61, 0x00][..], (0x61, 0x00)),
+            (&[0x67, 0x00][..], (0x67, 0x00)),
+        ] {
+            match super::split_response::<core::convert::Infallible>(rsp) {
+                Ok(r) => {
+                    assert!(r.data.is_empty());
+                    assert_eq!((r.sw1, r.sw2), sw);
+                }
+                Err(e) => panic!("expected Ok, got {e:?}"),
+            }
+        }
+        // data + status word, incl. SW-looking bytes inside data
+        let cases: &[(&[u8], &[u8], u8, u8)] = &[
+            (&[0x6F, 0x10, 0x90, 0x00], &[0x6F, 0x10], 0x90, 0x00),
+            (&[0x00, 0xFF, 0x67, 0x00], &[0x00, 0xFF], 0x67, 0x00),
+            (
+                &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x90, 0x00],
+                &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09],
+                0x90,
+                0x00,
+            ),
+        ];
+        for (rsp, data, sw1, sw2) in cases {
+            match super::split_response::<core::convert::Infallible>(rsp) {
+                Ok(r) => {
+                    assert_eq!(r.data.as_slice(), *data);
+                    assert_eq!((r.sw1, r.sw2), (*sw1, *sw2));
+                }
+                Err(e) => panic!("expected Ok, got {e:?}"),
+            }
+        }
+    }
 
     #[test]
     fn deterministic_card_errors_are_not_retryable() {

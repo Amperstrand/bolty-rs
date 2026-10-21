@@ -32,6 +32,8 @@ embedded-hal = "1.0"
 stm32f4xx-hal = { git = "https://github.com/Amperstrand/stm32f4xx-hal", rev = "05d999d600d457f99aeb23ff93275d2c8f998908", features = ["stm32f469"] }
 pn532-transport = { path = "../../crates/pn532-transport", optional = true }
 bolty-pn532 = { path = "../../crates/bolty-pn532", optional = true }
+# Same version spec as pn532-transport's pin — one crate instance.
+pn532 = { version = "=0.5.0", features = ["msb-spi"], default-features = false, optional = true }
 
 [target.'cfg(not(all(target_arch = "arm", target_os = "none")))'.dependencies]
 # Host-side stubs for testing
@@ -47,4 +49,4 @@ board-stm32f4-disco = []
 nfc-mfrc522 = []
 # PN532 revival (compile-spike for the F469 until the module arrives;
 # per docs/stm32-nfc-frontend-plan.md option B).
-nfc-pn532 = ["dep:pn532-transport", "dep:bolty-pn532"]
+nfc-pn532 = ["dep:pn532-transport", "dep:bolty-pn532", "dep:pn532"]
