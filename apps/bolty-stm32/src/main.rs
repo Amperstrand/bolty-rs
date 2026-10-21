@@ -344,18 +344,26 @@ mod stm32 {
                 }
             }
 
-            /// pn532::CountDown timer that simply busy-waits the armed
-            /// duration on wait() — same design as ccid's EspDelayTimer.
+            /// pn532::CountDown timer honoring the nb contract (Codex P1 on
+            /// #163): `wait()` busy-waits ONE slice, then returns
+            /// `WouldBlock` while budget remains so `Pn532::_process` can
+            /// re-poll `wait_ready()`; `Ok(())` only when the armed duration
+            /// is actually spent. Sleeping the whole deadline inside
+            /// `wait()` made the FIRST not-ready status poll consume the
+            /// entire budget, so normal ACK latency surfaced as
+            /// TimeoutAck/TimeoutResponse even with working hardware.
             /// Cycle cost derived from the frozen 168 MHz sysclk.
             pub struct BlockingTimer {
-                deadline: core::time::Duration,
+                remaining_us: u32,
             }
+
+            /// wait_ready() re-check cadence: the deadline drains in 1 ms
+            /// steps (~50 re-polls of a 50 ms firmware probe).
+            const TIMER_SLICE_US: u32 = 1_000;
 
             impl BlockingTimer {
                 pub fn new() -> Self {
-                    Self {
-                        deadline: core::time::Duration::ZERO,
-                    }
+                    Self { remaining_us: 0 }
                 }
             }
 
@@ -366,18 +374,23 @@ mod stm32 {
                 where
                     T: Into<Self::Time>,
                 {
-                    self.deadline = count.into();
+                    self.remaining_us = count.into().as_micros() as u32;
                 }
 
                 fn wait(&mut self) -> pn532::nb::Result<(), core::convert::Infallible> {
-                    let us = self.deadline.as_micros() as u32;
-                    if us > 0 {
-                        // 168 cycles/us at the frozen sysclk; asm::delay is
-                        // approximately cycles.
-                        cortex_m::asm::delay(us * 168);
-                        self.deadline = core::time::Duration::ZERO;
+                    if self.remaining_us == 0 {
+                        return Ok(());
                     }
-                    Ok(())
+                    let step = TIMER_SLICE_US.min(self.remaining_us);
+                    // 168 cycles/us at the frozen sysclk; asm::delay is
+                    // approximately cycles.
+                    cortex_m::asm::delay(step * 168);
+                    self.remaining_us -= step;
+                    if self.remaining_us == 0 {
+                        Ok(())
+                    } else {
+                        Err(pn532::nb::Error::WouldBlock)
+                    }
                 }
             }
 
@@ -400,6 +413,17 @@ mod stm32 {
                 rcc: &mut Rcc,
             ) -> Option<Pn532Device<PortPn532, gpio::PB1<gpio::Output<gpio::PushPull>>>>
             {
+                // Release the PN532 from reset before any SPI traffic
+                // (Codex P1 on #163): PB1 was initialized LOW and RST is
+                // active-low, so the module is held in reset until here.
+                // Timings mirror pn532-transport's `init_with_delay`
+                // (assert 100 ms, release, settle 500 ms) — the same
+                // module our ESP32 frontends use.
+                let mut rst_pin = rst_pin;
+                rst_pin.set_low();
+                cortex_m::asm::delay(100 * 168_000);
+                rst_pin.set_high();
+                cortex_m::asm::delay(500 * 168_000);
                 // Mode 0; conservative 1 MHz until the module is verified.
                 let spi = Spi::new(
                     spi1,
@@ -453,6 +477,8 @@ mod stm32 {
                     cs.set_high();
                     cs
                 },
+                // PB1 starts LOW = RST is active-low, so the PN532 is held
+                // in reset until probe() runs its assert/release cycle.
                 gpiob.pb1.into_push_pull_output(),
             );
 
