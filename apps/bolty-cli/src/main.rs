@@ -1,7 +1,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod audit;
-pub(crate) mod burn;
+pub(crate) mod budget;
+mod burn;
 mod common;
 mod diagnose;
 #[cfg(test)]
@@ -48,6 +49,11 @@ struct Args {
 enum Cli {
     /// List PCSC readers with card presence (virtual readers marked)
     Readers,
+
+    /// Read-only card auth-failure budget (SeqFailCtr/TotFailCtr/SpentTimeCtr
+    /// via GetKeySettings — no authentication, no writes). Uses the global
+    /// --json flag for machine-readable output.
+    Budget,
 
     /// Read and print the card UID
     Uid,
@@ -364,6 +370,11 @@ async fn run() -> anyhow::Result<()> {
                 let name = r.name;
                 println!("{presence:5} {name}{virt}");
             }
+        }
+
+        Cli::Budget => {
+            let mut transport = connect_transport()?;
+            budget::cmd_budget(&mut transport, json_mode).await?;
         }
 
         Cli::Uid => {
