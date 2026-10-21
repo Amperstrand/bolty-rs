@@ -152,9 +152,7 @@ where
                     .unwrap_or_else(|| "null".into()),
             )
         } else {
-            format!(
-                r#"{{"ok":true,"uid":"{uid_hex}","core_trusted":false,"raw":"{raw_hex}"}}"#
-            )
+            format!(r#"{{"ok":true,"uid":"{uid_hex}","core_trusted":false,"raw":"{raw_hex}"}}"#)
         };
         println!("{json}");
         return Ok(());
