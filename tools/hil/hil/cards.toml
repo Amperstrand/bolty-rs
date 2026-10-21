@@ -29,3 +29,18 @@ alias        = "recovered-static-key"
 reader_hint  = "any"
 ops          = ["read", "burn", "wipe"]
 state        = "any"
+
+# Foreign-project cards (J3R180/JCOP — ccid-firmware-rs j3r180 lane,
+# 2026-10-21): expected on shared readers for THEIR project. Registered
+# read-only so preflight names them instead of 'not burn-allowed mystery';
+# bolt lanes never mutate them. Identified by: ISO14443-4, no DESFire/
+# NTAG native layer (0x90 CLA -> 6E00), no PPSE (6A82).
+[cards.0447838aae1790]
+alias        = "j3r180-acr-slot"
+reader_hint  = "ACR1252"
+ops          = ["read"]
+
+[cards.044b858aae1790]
+alias        = "j3r180-stick-slot"
+reader_hint  = "GemPCTwin"
+ops          = ["read"]
