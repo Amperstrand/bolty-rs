@@ -1729,7 +1729,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "iso14443"
 version = "0.3.1"
-source = "git+https://github.com/Amperstrand/iso14443-rs.git?rev=fa4f91f8#fa4f91f85c2ab477e8a0cbccdbb6cd6a3e679628"
+source = "git+https://github.com/Amperstrand/iso14443-rs.git?rev=0f7d9d70#0f7d9d70f986e924397f5b7245eeabd553cb375f"
 dependencies = [
  "bitflags 2.11.1",
  "bounded-integer",
