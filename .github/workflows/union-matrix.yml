@@ -1,0 +1,164 @@
+# Workflow: union compile matrix — board x frontend x transport
+# (kanban t_f579fc05; bolty's half of the cross-repo union matrix).
+#
+# WHY: esp32-check.yml builds exactly two combos (m5stick wifi+rest+ota,
+# m5atom) and stm32-check.yml exactly one (f4-disco + mfrc522). The other
+# VALID combos — m5stick-min, m5stick-ble (feature+sdkconfig pair),
+# nucula C3 + ota-server, and the nfc-pn532 stm32 revival spike — had NO
+# compile coverage: they could only break on the bench (#307 lesson).
+# This workflow compile-checks every valid combo; the table is GENERATED
+# from apps/bolty-esp32/build.sh (the bench authority) by
+# tools/union_matrix.py — one manifest, so the matrix cannot drift from
+# build.sh.
+#
+# TRIGGERS: same shape as the repo's existing workflows (push to main +
+# pull_request) — bolty CI is not opt-in (unlike ccid-firmware-rs #366).
+# workflow_dispatch takes a combo filter for scoped smoke runs.
+#
+# COST: `cargo check` per combo (release builds stay in esp32-check.yml /
+# stm32-check.yml — those catch link errors; this catches feature-union
+# compile breaks across the whole valid set).
+#
+# Local equivalent:
+#   tools/union_matrix.py --format table
+#   tools/union_matrix.py --format commands --variant <name>
+
+name: union-matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      combo-filter:
+        description: "Run only variants whose name contains this substring (empty = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # espup queries the GitHub API
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      esp: ${{ steps.gen.outputs.esp }}
+      esp-count: ${{ steps.gen.outputs.esp-count }}
+      stm32: ${{ steps.gen.outputs.stm32 }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the combo manifest (features, sdkconfigs, selftest)
+        run: python3 tools/union_matrix.py check
+      - name: Generate matrices
+        id: gen
+        run: |
+          {
+            echo "esp=$(python3 tools/union_matrix.py --format matrix --filter "${{ inputs.combo-filter }}")"
+            echo "esp-count=$(python3 tools/union_matrix.py --format matrix --filter "${{ inputs.combo-filter }}" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+            echo "stm32=$(python3 tools/union_matrix.py --format stm32-matrix)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Matrix summary
+        run: |
+          echo "### union-matrix: ${{ steps.gen.outputs.esp-count }} esp32 combos + stm32 frontend cross" >> "$GITHUB_STEP_SUMMARY"
+          python3 tools/union_matrix.py --format table --filter "${{ inputs.combo-filter }}" >> "$GITHUB_STEP_SUMMARY" || true
+
+  esp32-check:
+    needs: matrix
+    if: needs.matrix.outputs.esp-count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.esp) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install espup + ldproxy
+        run: cargo install espup ldproxy
+      # Same pins as esp32-check.yml (espup fork 1.98.1.0: newer forks'
+      # rust-src/libc pairing breaks -Zbuild-std on espidf; crosstool must
+      # match the pinned IDF's tool_version_check string).
+      - name: Cache esp Rust toolchain (espup pins)
+        id: esp_toolchain_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains/esp*
+            ~/export-esp.sh
+          key: espup-toolchain-v1-v1.98.1.0-c14.2.0_20260121
+      - name: Install ESP toolchain (xtensa + c3, pinned fork + crosstool)
+        if: steps.esp_toolchain_cache.outputs.cache-hit != 'true'
+        run: |
+          espup install -v 1.98.1.0 -c 14.2.0_20260121 --targets esp32,esp32c3
+          . "${HOME}/export-esp.sh"
+      - name: Cache espressif tools + target dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cargo/registry
+            target
+            .embuild
+          key: espressif-${{ runner.os }}-v1-${{ matrix.name }}-${{ matrix.target }}-check-${{ hashFiles('apps/bolty-esp32/Cargo.toml', '**/Cargo.lock', 'apps/bolty-esp32/sdkconfig*') }}
+          restore-keys: |
+            espressif-${{ runner.os }}-v1-${{ matrix.name }}-${{ matrix.target }}-check-
+            espressif-${{ runner.os }}-v1-${{ matrix.name }}-
+      - name: cargo check (${{ matrix.name }})
+        working-directory: apps/bolty-esp32
+        run: |
+          . "${HOME}/export-esp.sh"
+          # sdkconfig.defaults is pinned by .cargo/config.toml ([env],
+          # relative); variant configs (ble) must travel with their
+          # feature or the bt module is absent from the build — an
+          # absolute override via process env wins over the config table.
+          if [ "${{ matrix.sdkconfig_override }}" = "true" ]; then
+            export ESP_IDF_SDKCONFIG_DEFAULTS="$PWD/${{ matrix.sdkconfig }}"
+          fi
+          cargo +esp check --target ${{ matrix.target }} --features "${{ matrix.features }}"
+
+  stm32-check:
+    # Frontend cross on the STM32 side: mfrc522 (shipped) + pn532 (revival
+    # spike #163) — the latter compiled by no other CI lane.
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix.outputs.stm32) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read pinned toolchain from rust-toolchain.toml
+        id: toolchain
+        run: echo "channel=$(grep -oP '(?<=^channel = ")[^"]+' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check (${{ matrix.name }})
+        run: >-
+          cargo check -p bolty-stm32 --target thumbv7em-none-eabihf
+          --features "${{ matrix.features }}"
+
+  union-ok:
+    # Aggregator: runs even when something failed so a red run can never
+    # report green; skipped legs count green.
+    needs: [matrix, esp32-check, stm32-check]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: All union-matrix jobs succeeded or skipped
+        run: |
+          results='${{ toJSON(needs.*.result) }}'
+          echo "needs results: $results"
+          if echo "$results" | grep -Eq '"(failure|cancelled)"'; then
+            echo "::error::one or more union-matrix jobs failed or were cancelled"
+            exit 1
+          fi
