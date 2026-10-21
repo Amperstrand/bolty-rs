@@ -153,7 +153,7 @@ The historical recovery notes below are retained for the counter mechanics
 ### What We Know
 
 - **Chip**: NTAG424 DNA (HW vendor=04, type=04, v=30.00 | SW v=01.02)
-- **Manufactured**: Calendar Week 25, 2021 (batch CF2E56, wafer 495019)
+- **Manufactured**: Calendar Week 19, 2021 (batch 3475920457 — corrected 2026-10-20 from a live `ver` read; the earlier "CW25 / CF2E56 / wafer 495019" row belonged to another card, evidence /tmp H1 lane log `08-ver-043365.log`)
 - **NDEF**: 256 bytes, contains URL template `boltcardpoc.psbt.me/?p=...&c=...`
   with all-zero placeholders (SDM not dynamically replacing)
 - **SDM Config**: Active, standard MAC configuration
