@@ -370,6 +370,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "mfrc522-pcd",
  "panic-probe",
+ "pn532",
  "pn532-transport",
  "stm32f4xx-hal",
 ]
