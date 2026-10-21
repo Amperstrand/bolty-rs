@@ -17,8 +17,11 @@ physical bench (cargo target/, lab-daemon ports, RF): labgrid places only
 exclude per-place (upstream AcquirePlace rejects a second acquisition of
 THE SAME place — microfips-bench vs bolty-rig never contend), and neither
 cover non-labgrid resources nor survive coordinator restarts (upstream
-load() drops acquired state). (2) the bolty-rig coordinator place, when
-labgrid is up. (3) the local results/.rig-lock flock fallback.
+load() drops acquired state). (2) the coordinator place when labgrid is
+up — bolty-rig (full rig) by default, or the ref-acr1252 leaf for
+ACR-only sessions via --lg-place/BOLTY_LG_PLACE (#127: the full-rig place
+reserves the stick serial too). (3) the local results/.rig-lock flock
+fallback.
 
 Run ledger: every session appends to results/history.jsonl (OpenHTF pattern).
 """
@@ -26,6 +29,7 @@ Run ledger: every session appends to results/history.jsonl (OpenHTF pattern).
 import fcntl
 import hashlib
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -65,8 +69,17 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 # Coordinator binds only this address (see labgrid-env.yaml); mDNS does not
 # resolve on this host.
 LABGRID_COORDINATOR = "192.168.13.208:20408"
+# Full-rig place (stick serial + reference ACR) for suites that need both
+# devices (difftest, burn_cycle). ACR-only sessions must acquire the
+# LABGRID_PLACE_ACR_ONLY leaf instead (#127): acquiring the full-rig place
+# reserves the stick serial too, so any m5stick holder blocks them even
+# though the ACR is free.
 LABGRID_PLACE = "bolty-rig"
+LABGRID_PLACE_ACR_ONLY = "ref-acr1252"
 LG_ACQUIRED_KEY = pytest.StashKey[bool]()
+# Active place for this session (resolved from --lg-place / BOLTY_LG_PLACE);
+# stashed at acquire time so teardown releases the place it took.
+LG_PLACE_KEY = pytest.StashKey[str]()
 # True when the place was already acquired by THIS identity (crashed prior
 # session or wrapper script): acquisition is inherited, not taken — so
 # teardown must NOT release it (ccid-firmware-rs fe17ea5 pattern; releasing
@@ -96,16 +109,36 @@ def pytest_configure(config):
 # runs first).
 
 
-def _lg_client(*args: str, timeout_s: float = 15):
+def _lg_place(config) -> str:
+    """Active rig place for this session (#127): the --lg-place option,
+    then BOLTY_LG_PLACE, then the full-rig default. ACR-only suites pass
+    ref-acr1252 (LABGRID_PLACE_ACR_ONLY) so a stick-serial holder cannot
+    block them — one-device-one-exclusion-domain."""
+    place = None
+    if config is not None:
+        # getattr guard: bare option access on a stub config (hardening
+        # tests) must degrade to the env/default path, never raise.
+        try:
+            place = config.getoption("lg_place", None)
+        except (ValueError, KeyError, AttributeError):
+            place = None
+    if place:
+        return place
+    return os.environ.get("BOLTY_LG_PLACE") or LABGRID_PLACE
+
+
+def _lg_client(place: str, *args: str, timeout_s: float = 15):
     return subprocess.run(
-        ["labgrid-client", "-x", LABGRID_COORDINATOR, "-p", LABGRID_PLACE, *args],
+        ["labgrid-client", "-x", LABGRID_COORDINATOR, "-p", place, *args],
         capture_output=True, text=True, timeout=timeout_s,
     )
 
 
 def _lg_coordinator_up() -> bool:
     try:
-        return _lg_client("who", timeout_s=10).returncode == 0
+        # `who` ignores -p upstream, so the probe place is irrelevant —
+        # keep the full-rig constant to stay session-independent.
+        return _lg_client(LABGRID_PLACE, "who", timeout_s=10).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -213,7 +246,7 @@ ACR_STATE_KEY = pytest.StashKey[str]()
 RIG_HELD_KEY = pytest.StashKey[bool]()
 
 
-def _reserve_wait(session, prio: int, timeout_s: int) -> str:
+def _reserve_wait(session, place: str, prio: int, timeout_s: int) -> str:
     """Queue for the rig place via a coordinator reservation instead of
     exiting when busy (the canon's polite-queue pattern: once allocated,
     only this reservation's owner can lock the place)."""
@@ -222,13 +255,13 @@ def _reserve_wait(session, prio: int, timeout_s: int) -> str:
     try:
         r = subprocess.run(
             ["labgrid-client", "-x", LABGRID_COORDINATOR, "reserve", "--wait",
-             "--prio", str(prio), f"name={LABGRID_PLACE}"],
+             "--prio", str(prio), f"name={place}"],
             capture_output=True, text=True, timeout=timeout_s,
         )
     except subprocess.TimeoutExpired:
-        pytest.exit(f"reservation for {LABGRID_PLACE} timed out after {timeout_s}s", returncode=3)
+        pytest.exit(f"reservation for {place} timed out after {timeout_s}s", returncode=3)
     if r.returncode != 0:
-        pytest.exit(f"reservation for {LABGRID_PLACE} failed: {(r.stderr or r.stdout).strip()[:200]}",
+        pytest.exit(f"reservation for {place} failed: {(r.stderr or r.stdout).strip()[:200]}",
                     returncode=3)
     m = re.search(r"^\s*token:\s*(\S+)", r.stdout, re.M)
     if not m:
@@ -240,8 +273,13 @@ def _lg_acquire_or_exit(session) -> bool:
     """Acquire the rig place. Returns True when the place was INHERITED
     (already acquired by this same identity) — callers must not release an
     inherited place. Any other holder is a loud refusal."""
+    # getattr: the hardening tests drive this path with a bare stash-only
+    # session mock (test_conftest_hardening contract).
+    config = getattr(session, "config", None)
+    place = _lg_place(config)
+    session.stash[LG_PLACE_KEY] = place
     try:
-        acquired = _lg_client("acquire")
+        acquired = _lg_client(place, "acquire")
     except (OSError, subprocess.TimeoutExpired) as exc:
         pytest.exit(f"labgrid-client failed during acquire: {exc}", returncode=3)
     if acquired.returncode != 0:
@@ -249,26 +287,23 @@ def _lg_acquire_or_exit(session) -> bool:
         if "already acquired" in stderr:
             session.stash[LG_INHERITED_KEY] = True
             return True
-        # getattr: the hardening tests drive this path with a bare
-        # stash-only session mock (test_conftest_hardening contract).
-        config = getattr(session, "config", None)
         reserve = config.getoption("reserve", False) if config is not None else False
         if reserve:
             prio = config.getoption("reserve_priority", 0)
             timeout_s = config.getoption("reserve_timeout_min", 120) * 60
-            token = _reserve_wait(session, prio, timeout_s)
+            token = _reserve_wait(session, place, prio, timeout_s)
             session.stash[LG_RESERVE_TOKEN_KEY] = token
             alloc = _lg_client_p(f"+{token}", "acquire", timeout_s=timeout_s)
             if alloc.returncode != 0:
                 subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,
                                 "cancel-reservation", token],
                                capture_output=True, timeout=30)
-                pytest.exit(f"could not acquire allocated {LABGRID_PLACE}: "
+                pytest.exit(f"could not acquire allocated {place}: "
                             f"{alloc.stderr.strip()[:200]}", returncode=3)
-            print(f"[labgrid] {LABGRID_PLACE} acquired via reservation {token}")
+            print(f"[labgrid] {place} acquired via reservation {token}")
             return False
         pytest.exit(
-            f"rig place {LABGRID_PLACE} is acquired by another session "
+            f"rig place {place} is acquired by another session "
             f"({stderr or 'see labgrid-client who'}); pass --reserve to queue "
             f"politely instead of failing",
             returncode=3,
@@ -285,6 +320,11 @@ def pytest_addoption(parser):
                     help="Reservation priority (CI lanes use negative).")
     group.addoption("--reserve-timeout-min", type=int, default=120,
                     help="How long --reserve may block waiting (minutes).")
+    group.addoption("--lg-place", action="store", default=None, metavar="PLACE",
+                    help="Labgrid place to acquire (default bolty-rig; ACR-only "
+                         "suites pass ref-acr1252 per #127 — the full-rig place "
+                         "also reserves the stick serial). BOLTY_LG_PLACE sets "
+                         "the same default.")
 
 
 def pytest_sessionstart(session):
@@ -351,7 +391,7 @@ def rig_lock(request):
             request.session.stash[LG_ACQUIRED_KEY] = True
         yield "labgrid-place"
         if not inherited:
-            _lg_release_best_effort()
+            _lg_release_best_effort(request.session)
         bench_lock.release()
         return
 
@@ -434,9 +474,14 @@ def _stamp_allure_environment(session) -> None:
     (Path(alluredir) / "environment.properties").write_text("\n".join(lines) + "\n")
 
 
-def _lg_release_best_effort():
+def _lg_release_best_effort(session):
+    """Release the place this session acquired (stashed at acquire time so
+    a mid-session option/env change can never split acquire/release)."""
+    place = session.stash.get(LG_PLACE_KEY, None) or _lg_place(
+        getattr(session, "config", None)
+    )
     try:
-        _lg_client("release")
+        _lg_client(place, "release")
     except (OSError, subprocess.TimeoutExpired):
         pass  # teardown must never crash; coordinator restarts wipe places anyway
 
@@ -451,7 +496,7 @@ def pytest_sessionfinish(session, exitstatus):
     if session.stash.get(LG_ACQUIRED_KEY, False) and not session.stash.get(
         LG_INHERITED_KEY, False
     ):
-        _lg_release_best_effort()
+        _lg_release_best_effort(session)
     token = session.stash.get(LG_RESERVE_TOKEN_KEY, None)
     if token:
         subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,

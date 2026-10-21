@@ -30,7 +30,12 @@ test:
 
 test-hil:
 	mkdir -p tools/hil/results
+	# ACR-only suite: acquire the ref-acr1252 leaf place, not full bolty-rig —
+	# the full-rig match also reserves the stick serial, so any m5stick holder
+	# would block ACR sessions needlessly (#127). Needs coordinator-side leaf
+	# place (make labgrid-place creates it).
 	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v \
+	  --lg-place=ref-acr1252 \
 	  --reruns 2 --reruns-delay 3 \
 	  --json-report --json-report-file=tools/hil/results/hil-test-report.json \
 	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S)

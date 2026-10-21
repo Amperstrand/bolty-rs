@@ -194,3 +194,81 @@ def test_pcscd_reader_wrapper_passthrough_when_unavailable(monkeypatch):
     monkeypatch.setattr(conftest, "acquire_pcscd_reader", None)
     inner = object()
     assert conftest._wrap_pcscd_reader(inner) is inner
+
+
+# ── #127 ACR-only place decoupling ─────────────────────────────────────
+
+
+class _OptConfig:
+    """Minimal config stub: getoption backed by a dict."""
+
+    def __init__(self, opts):
+        self._opts = opts
+
+    def getoption(self, name, default=None):
+        return self._opts.get(name, default)
+
+
+def test_lg_place_resolution_order(monkeypatch):
+    """#127: --lg-place beats BOLTY_LG_PLACE beats the full-rig default."""
+    conftest = _load_conftest()
+    monkeypatch.delenv("BOLTY_LG_PLACE", raising=False)
+    assert conftest._lg_place(None) == "bolty-rig"
+    assert conftest._lg_place(_OptConfig({})) == "bolty-rig"
+    monkeypatch.setenv("BOLTY_LG_PLACE", "ref-acr1252")
+    assert conftest._lg_place(None) == "ref-acr1252"
+    assert conftest._lg_place(_OptConfig({})) == "ref-acr1252"
+    assert (
+        conftest._lg_place(_OptConfig({"lg_place": "bolty-rig"})) == "bolty-rig"
+    ), "explicit --lg-place must beat the env default"
+
+
+def test_lg_acquire_uses_and_stashes_configured_place(monkeypatch):
+    """#127: the resolved place is what gets acquired AND what teardown
+    will release — acquire/release must never split across places."""
+    conftest = _load_conftest()
+
+    calls = []
+
+    class OkResult:
+        returncode = 0
+        stderr = ""
+
+    def fake_client(place, *args, **kwargs):
+        calls.append((place, args))
+        return OkResult()
+
+    monkeypatch.setattr(conftest, "_lg_client", fake_client)
+    monkeypatch.delenv("BOLTY_LG_PLACE", raising=False)
+    session = type(
+        "S", (), {"stash": {}, "config": _OptConfig({"lg_place": "ref-acr1252"})}
+    )()
+    assert conftest._lg_acquire_or_exit(session) is False
+    assert calls == [("ref-acr1252", ("acquire",))]
+    assert session.stash.get(conftest.LG_PLACE_KEY) == "ref-acr1252"
+
+
+def test_lg_release_uses_stashed_place(monkeypatch):
+    conftest = _load_conftest()
+
+    calls = []
+
+    class OkResult:
+        returncode = 0
+
+    def fake_client(place, *args, **kwargs):
+        calls.append((place, args))
+        return OkResult()
+
+    monkeypatch.setattr(conftest, "_lg_client", fake_client)
+    session = type("S", (), {"stash": {conftest.LG_PLACE_KEY: "ref-acr1252"}})()
+    conftest._lg_release_best_effort(session)
+    assert calls == [("ref-acr1252", ("release",))]
+
+
+def test_acr_only_place_constant_matches_makefile_leaf():
+    """The leaf name must stay in lockstep with make test-hil's
+    --lg-place=ref-acr1252 and labgrid-place.sh's ensure_place."""
+    conftest = _load_conftest()
+    assert conftest.LABGRID_PLACE_ACR_ONLY == "ref-acr1252"
+    assert conftest.LABGRID_PLACE == "bolty-rig"
