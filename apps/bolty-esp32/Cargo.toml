@@ -55,6 +55,12 @@ ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["all
 esp-idf-sys = { version = "0.38", features = ["binstart"] }
 esp-idf-hal = "0.47"
 esp-idf-svc = "0.53"
+# boards-as-data (ccid-firmware-rs boards-as-data design §3.4, ccid PR
+# #418): the m5 Grove map + NFC I2C address live in ccid's
+# crates/boards — bolty B2 (docs/lessons-learned.md) stays as the
+# provenance CITATION, not as local pin data. Rev-pinned git dep, the
+# pn7160-nci precedent; pure no_std const data, no HAL deps.
+boards = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "354cc118ea7be78a4900a2485a6fed5551e36a96" }
 
 [build-dependencies]
 # 0.32 cannot parse ESP-IDF v5.5.5's tools.json (new win-arm64 platform

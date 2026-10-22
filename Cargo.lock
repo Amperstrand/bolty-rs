@@ -243,6 +243,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "boards"
+version = "0.1.0"
+source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=354cc118ea7be78a4900a2485a6fed5551e36a96#354cc118ea7be78a4900a2485a6fed5551e36a96"
+
+[[package]]
 name = "bolty-cli"
 version = "0.1.0"
 dependencies = [
@@ -278,6 +283,7 @@ dependencies = [
 name = "bolty-esp32"
 version = "0.1.0"
 dependencies = [
+ "boards",
  "bolty-core",
  "bolty-mfrc522",
  "bolty-ntag",
