@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bolty_core::config::BoltyConfig;
-use bolty_mfrc522::{DEFAULT_I2C_ADDRESS, Mfrc522Transceiver};
+use bolty_mfrc522::Mfrc522Transceiver;
 use mfrc522_pcd::recover_i2c_bus;
 
 use esp_idf_hal::{
@@ -105,20 +105,51 @@ pub fn main() {
 
     #[cfg(feature = "display-st7789")]
     {
-        let result = unsafe {
-            display::init(
-                peripherals.i2c1,
-                peripherals.spi2,
-                peripherals.pins.gpio21,
-                peripherals.pins.gpio22,
-                peripherals.pins.gpio13,
-                peripherals.pins.gpio15,
-                peripherals.pins.gpio5,
-                peripherals.pins.gpio23,
-                peripherals.pins.gpio18,
-                peripherals.pins.gpio27,
-                BOARD_NAME,
-            )
+        // boards-as-data (ccid crates/boards, design §3.4 flip): the
+        // StickC-Plus display block reads the boards::M5STICK table —
+        // typed HAL tokens stay (a const table cannot hand them out),
+        // behind a number→token match with a const-time assert that the
+        // matched arm is THE table arm: a drifted pin fails the BUILD,
+        // not the bench.
+        const _: () = {
+            assert!(boards::M5STICK.pin_const("lcd_sclk") == 13);
+            assert!(boards::M5STICK.pin_const("lcd_mosi") == 15);
+            assert!(boards::M5STICK.pin_const("lcd_cs") == 5);
+            assert!(boards::M5STICK.pin_const("lcd_dc") == 23);
+            assert!(boards::M5STICK.pin_const("lcd_rst") == 18);
+            assert!(boards::M5STICK.pin_const("lcd_bl") == 27);
+        };
+        let axp = boards::M5STICK.bus(boards::BusRole::PmuLcd).i2c();
+        let result = match (
+            axp.sda,
+            axp.scl,
+            boards::M5STICK.pin("lcd_sclk"),
+            boards::M5STICK.pin("lcd_mosi"),
+            boards::M5STICK.pin("lcd_cs"),
+            boards::M5STICK.pin("lcd_dc"),
+            boards::M5STICK.pin("lcd_rst"),
+            boards::M5STICK.pin("lcd_bl"),
+        ) {
+            (21, 22, 13, 15, 5, 23, 18, 27) => unsafe {
+                display::init(
+                    peripherals.i2c1,
+                    peripherals.spi2,
+                    peripherals.pins.gpio21,
+                    peripherals.pins.gpio22,
+                    peripherals.pins.gpio13,
+                    peripherals.pins.gpio15,
+                    peripherals.pins.gpio5,
+                    peripherals.pins.gpio23,
+                    peripherals.pins.gpio18,
+                    peripherals.pins.gpio27,
+                    BOARD_NAME,
+                )
+            },
+            (axp_sda, axp_scl, sclk, mosi, cs, dc, rst, bl) => panic!(
+                "StickC-Plus display pins drifted from boards::M5STICK: \
+                 axp=({axp_sda},{axp_scl}) sclk={sclk} mosi={mosi} cs={cs} \
+                 dc={dc} rst={rst} bl={bl}"
+            ),
         };
         DISPLAY_INIT_OK.store(result.is_ok(), Ordering::SeqCst);
         if let Err(e) = result {
@@ -126,15 +157,45 @@ pub fn main() {
         }
     }
 
+    // boards-as-data (design §3.4 flip): the Grove map + the NFC I2C
+    // address read the ccid tables — bolty B2 stays the citation, not
+    // local pin data. Typed HAL tokens behind a number→token match; a
+    // drifted table value panics at bring-up instead of wiring the
+    // wrong bus.
     #[cfg(feature = "board-m5atom")]
-    let (i2c_sda, i2c_scl) = (peripherals.pins.gpio26, peripherals.pins.gpio32);
+    let (i2c_sda, i2c_scl, i2c_sda_pin, i2c_scl_pin, nfc_i2c_addr) = {
+        let b = &boards::M5ATOM;
+        let grove = b.bus(boards::BusRole::NfcFrontend).i2c();
+        match (grove.sda, grove.scl) {
+            (26, 32) => (
+                peripherals.pins.gpio26,
+                peripherals.pins.gpio32,
+                26,
+                32,
+                b.nfc.expect("m5atom table: NFC frontend").i2c_addr,
+            ),
+            (sda, scl) => {
+                panic!("m5atom Grove pins drifted from boards::M5ATOM: sda={sda} scl={scl}")
+            }
+        }
+    };
     #[cfg(feature = "board-m5stick")]
-    let (i2c_sda, i2c_scl) = (peripherals.pins.gpio32, peripherals.pins.gpio33);
-
-    #[cfg(feature = "board-m5atom")]
-    let (i2c_sda_pin, i2c_scl_pin) = (26i32, 32i32);
-    #[cfg(feature = "board-m5stick")]
-    let (i2c_sda_pin, i2c_scl_pin) = (32i32, 33i32);
+    let (i2c_sda, i2c_scl, i2c_sda_pin, i2c_scl_pin, nfc_i2c_addr) = {
+        let b = &boards::M5STICK;
+        let grove = b.bus(boards::BusRole::NfcFrontend).i2c();
+        match (grove.sda, grove.scl) {
+            (32, 33) => (
+                peripherals.pins.gpio32,
+                peripherals.pins.gpio33,
+                32,
+                33,
+                b.nfc.expect("m5stick table: NFC frontend").i2c_addr,
+            ),
+            (sda, scl) => {
+                panic!("m5stick Grove pins drifted from boards::M5STICK: sda={sda} scl={scl}")
+            }
+        }
+    };
 
     recover_i2c_bus(i2c_scl_pin, i2c_sda_pin);
 
@@ -154,12 +215,12 @@ pub fn main() {
     let initial_i2c_scan = scan_i2c_bus(&mut i2c);
     let mfrc522_seen = initial_i2c_scan
         .iter()
-        .any(|&address| address == DEFAULT_I2C_ADDRESS);
+        .any(|&address| address == nfc_i2c_addr);
 
     let (xcvr, raw_i2c, nfc_ready) = if mfrc522_seen {
-        match Mfrc522Transceiver::from_i2c(i2c, DEFAULT_I2C_ADDRESS) {
+        match Mfrc522Transceiver::from_i2c(i2c, nfc_i2c_addr) {
             Ok(xcvr) => {
-                log::info!("MFRC522 initialized at 0x{:02X}", DEFAULT_I2C_ADDRESS);
+                log::info!("MFRC522 initialized at 0x{:02X}", nfc_i2c_addr);
                 (Some(xcvr), None, true)
             }
             Err(e) => {
@@ -170,7 +231,7 @@ pub fn main() {
     } else {
         log::warn!(
             "MFRC522 not detected at 0x{:02X}; continuing without NFC",
-            DEFAULT_I2C_ADDRESS
+            nfc_i2c_addr
         );
         (None, Some(i2c), false)
     };
