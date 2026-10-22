@@ -176,6 +176,12 @@ none of theirs. Owner decision:
   ≤v0.1.0; the fork touches no `crypto/`/`high_level/` files), not a
   fork delta — the #109 issue body listed it as one and it had crept
   into the §1 refresh; both corrected.
+- Freshness re-checks of the parked feed (authoritative via
+  `git ls-remote`, not local clones — local tag lists have twice misled):
+  **2026-10-22**: main still `f540830`, all four release tags present
+  (v0.1.0-beta1…v0.1.1), no new branches — dormant ~6 months, zero
+  delta change; feed packet remains staged, nothing to merge, next
+  natural re-check with the p224 quarterly or on any upstream movement.
 
 ## 5. Fork lifecycle status (2026-10-19)
 
