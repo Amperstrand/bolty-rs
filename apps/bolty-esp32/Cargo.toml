@@ -35,7 +35,10 @@ ble = []
 bolty-core = { path = "../../crates/bolty-core" }
 bolty-ntag = { path = "../../crates/bolty-ntag" }
 bolty-pn7160 = { path = "../../crates/bolty-pn7160", optional = true }
-mfrc522-pcd = { path = "../../crates/mfrc522-pcd" }
+# Kernel M2 (t_e3335b39): canonical copy in ccid-firmware-rs, rev-pinned
+# via the workspace (root Cargo.toml) — the local crates/mfrc522-pcd
+# duplicate is deleted.
+mfrc522-pcd = { workspace = true }
 bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
 embedded-hal = "=1.0.0"
 embedded-svc = "=0.29.0"

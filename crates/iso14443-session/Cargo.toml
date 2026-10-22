@@ -6,4 +6,7 @@ description = "Borrow-free ISO 14443-4 PCD session over the public upstream iso1
 license = "GPL-3.0-or-later"
 
 [dependencies]
-iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", rev = "216d1b919ca1fd4d30048a1c764f14379137f3c7", features = ["alloc"] }
+# Workspace pin (byte-identical to ccid's crates/mfrc522-pcd iso14443 pin —
+# see root Cargo.toml): one crate instance across bolty + the mfrc522-pcd
+# git dep, so the PcdTransceiver traits unify.
+iso14443 = { workspace = true }
