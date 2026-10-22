@@ -1,5 +1,5 @@
-//! Borrow-free ISO 14443-4 PCD session state, built entirely on the PUBLIC
-//! upstream [`iso14443`] API — no fork required.
+//! Borrow-free ISO 14443-4 PCD session state, built on the PUBLIC
+//! [`iso14443`] API.
 //!
 //! Upstream's `Pcd` takes `&'t mut T` for the whole session lifetime, which
 //! is awkward when the transceiver is owned elsewhere (bolty's MFRC522
@@ -10,7 +10,11 @@
 //! Deltas over upstream's own `Pcd` loop, each load-bearing:
 //! - **S(WTX) timeout extension** (ISO 14443-4 §7.5.7): when the card asks
 //!   for more time, the transceiver timeout is extended to WTXM × FWT for
-//!   the echo and restored after — via the [`TimeoutExt`] hook. NTAG424 DNA
+//!   the echo and restored after — via the in-trait
+//!   [`PcdTransceiver::try_set_timeout_ms`] hook the iso14443 fork carries
+//!   natively (kernel M2, t_e3335b39: the consumer-side `TimeoutExt`
+//!   stand-in is retired with bolty's local mfrc522-pcd copy; the git-pinned
+//!   ccid copy implements the hook on the trait itself). NTAG424 DNA
 //!   needs this for MAC / key-diversification work.
 //! - **Rule-5-correct chain recovery** (§7.5.5): during receive-chain
 //!   recovery the SAME R(ACK) is re-sent — the block number was already
@@ -65,17 +69,11 @@ fn append_crc_a(data: &[u8]) -> Result<FrameVec, TypeAError> {
 
 const MAX_RETRIES: u8 = 2;
 
-/// Optional transceiver hook: extend the receive timeout during S(WTX)
-/// exchanges. The default is a no-op returning `Err(())` (WTX echo still
-/// happens; only the timeout extension is skipped). Hardware front-ends
-/// with a fixed FWT timer override this.
-pub trait TimeoutExt {
-    // Deliberate `()`: the optional hook carries no diagnostics — callers only test is_ok().
-    #[allow(clippy::result_unit_err)]
-    fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
-        Err(())
-    }
-}
+// Kernel M2 (t_e3335b39): the `TimeoutExt` consumer-side hook is retired.
+// The iso14443 fork pin (byte-identical to ccid's crates/mfrc522-pcd pin)
+// carries `PcdTransceiver::try_set_timeout_ms` natively with the same
+// `Err(())` default, so hardware front ends override it in their
+// `PcdTransceiver` impl (ccid's mfrc522-pcd does exactly that).
 
 /// Borrow-free protocol state for one activated PICC.
 #[derive(Debug)]
@@ -159,7 +157,7 @@ impl PcdSession {
     /// Exchange an APDU with the PICC over a caller-owned transceiver:
     /// PCD-side chaining, PICC-side chaining, WTX handling, §7.5.5
     /// recovery. Session state survives across calls.
-    pub fn exchange<T: PcdTransceiver + TimeoutExt>(
+    pub fn exchange<T: PcdTransceiver>(
         &mut self,
         t: &mut T,
         apdu: &[u8],
@@ -209,10 +207,7 @@ impl PcdSession {
     }
 
     /// Send S(DESELECT), wait for the echo. Retries once per Rule 8.
-    pub fn deselect<T: PcdTransceiver + TimeoutExt>(
-        &mut self,
-        t: &mut T,
-    ) -> Result<(), PcdError<T::Error>> {
+    pub fn deselect<T: PcdTransceiver>(&mut self, t: &mut T) -> Result<(), PcdError<T::Error>> {
         let deselect = self.handler.build_sblock(SBlockSubtype::Deselect)?;
 
         match self.transceive_block(t, &deselect) {
@@ -237,7 +232,7 @@ impl PcdSession {
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    fn collect_response<T: PcdTransceiver + TimeoutExt>(
+    fn collect_response<T: PcdTransceiver>(
         &mut self,
         t: &mut T,
         first: Block,
@@ -271,7 +266,7 @@ impl PcdSession {
     /// the block number was already toggled by `process_received`, so a
     /// freshly built R(ACK) carries the wrong BN. Rule 4 (send-chain):
     /// R(NAK).
-    fn transceive_with_recovery<T: PcdTransceiver + TimeoutExt>(
+    fn transceive_with_recovery<T: PcdTransceiver>(
         &mut self,
         t: &mut T,
         block: &Block,
@@ -384,9 +379,8 @@ mod exchange_tests {
         fn try_enable_hw_crc(&mut self) -> Result<(), ChanErr> {
             Err(ChanErr) // software CRC path
         }
-    }
-
-    impl TimeoutExt for Scripted {
+        // WTX hook: same no-op-success override the old `TimeoutExt` impl
+        // carried — now on the fork's in-trait method (kernel M2).
         fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
             Ok(())
         }

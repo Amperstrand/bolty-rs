@@ -6,7 +6,10 @@ license = "GPL-3.0-or-later"
 description = "MFRC522 NFC transport for ntag424"
 
 [dependencies]
-mfrc522-pcd = { path = "../mfrc522-pcd" }
+# Kernel M2 (t_e3335b39): canonical copy in ccid-firmware-rs, rev-pinned
+# via the workspace (root Cargo.toml) — the local crates/mfrc522-pcd
+# duplicate is deleted.
+mfrc522-pcd = { workspace = true }
 ntag424 = { workspace = true }
 # No unconditional "std": upstream iso14443 gates Fwi::fwt() (Duration)
 # behind its std feature and the crate is no_std-capable without it. This

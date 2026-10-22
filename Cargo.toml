@@ -10,13 +10,29 @@ members = [
 [workspace.dependencies]
 ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "02f23f51fc352f5abad8812550dc1e0361afe514", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
-# Canonical upstream directly — the Amperstrand fork is retired; our session
-# API + WTX hook live consumer-side in crates/iso14443-session.
+# iso14443: the Amperstrand fork's rebased ai-experiments tip (kernel M2,
+# t_e3335b39). mfrc522-pcd now arrives from ccid-firmware-rs as a rev-pinned
+# git dep and its `PcdTransceiver` impl rides the fork's in-trait
+# `try_set_timeout_ms` WTX hook — bolty must resolve the SAME crate instance
+# or the traits split into two graphs and stop unifying. The fork tip
+# descends from upstream 216d1b9 (bolty's prior direct pin) + additive
+# experiments, so the public API is a superset. The rev string MUST stay
+# byte-identical to ccid's crates/mfrc522-pcd pin ("0f7d9d70"): a differing
+# string (even short-vs-full of the same commit) splits the graph into two
+# iso14443 copies (bench lesson 2026-10-21, ccid crates/mfrc522-pcd).
 # Rev-pinned per fork-policy §2 rule 1 (rev-pinned builds must resolve to the
-# same bytes forever; the unpinned entry from #105 let any `cargo update`
-# float an MCU firmware dependency). Bump procedure (§2 rule 2): explicit,
-# reviewed commit that moves this rev AND the matching Cargo.lock entry.
-iso14443 = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", rev = "216d1b919ca1fd4d30048a1c764f14379137f3c7", features = ["alloc"] }
+# same bytes forever). Bump procedure (§2 rule 2): explicit, reviewed commit
+# that moves this rev AND the matching Cargo.lock entry.
+iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "0f7d9d70", features = ["alloc"] }
+# Kernel M2 (t_e3335b39): mfrc522-pcd's canonical home is ccid-firmware-rs
+# (crates/mfrc522-pcd); bolty's duplicate local copy is deleted and every
+# consumer (bolty-mfrc522, apps/bolty-esp32, apps/bolty-stm32) rides this
+# rev-pinned git dep instead. Rev = ccid main at the flip
+# (79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3, post-#426 frontend
+# constructors + FrontendDiagnostics). Bump = explicit reviewed commit
+# moving this rev AND the Cargo.lock entry together (fork-policy §2 rule 2),
+# keeping the rev byte-identical across every bolty manifest that pins it.
+mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

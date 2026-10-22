@@ -1708,7 +1708,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "iso14443"
 version = "0.3.1"
-source = "git+https://github.com/Foundation-Devices/iso14443-rs.git?rev=216d1b919ca1fd4d30048a1c764f14379137f3c7#216d1b919ca1fd4d30048a1c764f14379137f3c7"
+source = "git+https://github.com/Amperstrand/iso14443-rs.git?rev=0f7d9d70#0f7d9d70f986e924397f5b7245eeabd553cb375f"
 dependencies = [
  "bitflags 2.11.1",
  "bounded-integer",
@@ -1845,11 +1845,11 @@ dependencies = [
 [[package]]
 name = "mfrc522-pcd"
 version = "0.1.0"
+source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3#79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3"
 dependencies = [
  "embedded-hal 1.0.0",
  "esp-idf-sys",
  "iso14443",
- "iso14443-session",
  "log",
  "mfrc522",
 ]
