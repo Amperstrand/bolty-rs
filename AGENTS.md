@@ -310,6 +310,32 @@ cd /home/ubuntu/src/bolty-rs
 - NXP Community: Change Keys and "lock" NTAG DNA 424
 - AndroidCrypto: A comprehensive overview of all keys for the NTAG424 NFC chip
 
+## KNOWN-GOOD NUCULA C3 — board-nucula firmware (2026-10-23, bench-verified)
+
+The nucula C3 runs bolty `board-nucula` firmware at main (PRs #185/#186/#193),
+fully functional with a coupled NTAG424 card. This is the reference state
+for the #115 frontend and any future nucula work:
+
+- **Console**: fully interactive over `/dev/ttyACM0` at 115200 (commands:
+  help/status/uid/poll/inspect/ver/wifi). Requires the `UsbSerialDriver`
+  peripheral claim at boot (#186) — without it, the ROM owns USB_SERIAL_JTAG
+  and mirrors TX only (stdin never arms, host writes stall at USB level).
+- **Reader**: PN7160 up with full NCI ladder logged at boot; `[OK] PN7160
+  reader up (NCI-DEP power-on)` appears ~500ms after reset.
+- **Card ops**: `status → nfc=ok session=active uid=<UID>`, `poll → [OK] card
+  up`, `uid → [OK] uid=<UID>`, `inspect → uid=<UID> ndef_bytes=N sdm=<bool>` —
+  all proven against `04c474fa967380`, run twice consecutively without leak.
+- **Heap discipline**: all console output MUST be heapless (`String<N>` via
+  `write!()` — NEVER `format!()` on this target; the C3 has ~143KB heap
+  shared by WiFi+PN7160+console; `format!()` exhausted it and crashed the
+  firmware — coredump-decoded, PR #193).
+- **sdkconfig**: `sdkconfig.defaults.nucula` (USB_SERIAL_JTAG primary console,
+  `ESP_MAIN_TASK_STACK_SIZE=32768` — default stack overflows at `app_main`).
+- **Crash log**: `crashlog` command reports boot count + last crash; clean
+  (no crashes since #193's fix).
+- **To restore CCID firmware**: re-flash via ccid-firmware-rs `build.sh c3-ccid`
+  (the pcscd reader `Nucula CCID via broker` is absent while bolty runs).
+
 ## KNOWN-GOOD DISPLAY STATE — M5StickC Plus (2026-10-23, owner-verified)
 
 The stick's ST7789 display works on the current bench boot — physically
