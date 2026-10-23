@@ -1,11 +1,10 @@
-use anyhow::Context;
 use bolty_core::constants::FACTORY_KEY;
 use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::secret::AesKey;
 use bolty_core::uid::CardUid;
 use bolty_ntag::{Session, Transport};
 
-use crate::common::{gen_rnd_a, uid_to_fixed};
+use crate::common::gen_rnd_a;
 
 pub async fn cmd_keyver<T: Transport>(
     transport: &mut T,
@@ -16,11 +15,30 @@ pub async fn cmd_keyver<T: Transport>(
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let uid = Session::default()
-        .get_selected_uid(transport)
-        .await
-        .context("failed to read UID")?;
-    let uid_fixed = uid_to_fixed(&uid);
+    // Best-effort UID: transports without the FFCA pseudo-APDU (nucula
+    // broker) can't supply it; keyver then requires --uid-fallback input or
+    // identifies via the authenticated session instead.
+    let uid_hex_owned: String = match Session::default().get_selected_uid(transport).await {
+        Ok(uid) => crate::to_hex(uid.as_ref()),
+        Err(_) => match std::env::var("BOLTY_UID_FALLBACK") {
+            Ok(hex) if hex.len() == 14 => hex.to_ascii_lowercase(),
+            _ => {
+                anyhow::bail!("UID unreadable via this transport — set BOLTY_UID_FALLBACK=<14-hex>")
+            }
+        },
+    };
+    let uid_fixed: [u8; 7] = {
+        let mut out = [0u8; 7];
+        let bytes = uid_hex_owned.as_bytes();
+        let pairs: Vec<&[u8]> = (0..7).filter_map(|i| bytes.get(i * 2..i * 2 + 2)).collect();
+        for (slot, pair) in out.iter_mut().zip(pairs) {
+            let hex_pair =
+                std::str::from_utf8(pair).map_err(|_| anyhow::anyhow!("bad fallback hex"))?;
+            *slot = u8::from_str_radix(hex_pair, 16)
+                .map_err(|_| anyhow::anyhow!("bad fallback hex"))?;
+        }
+        out
+    };
     let uid_hex = crate::to_hex(uid_fixed);
 
     if !json_mode {

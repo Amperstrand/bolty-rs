@@ -27,6 +27,7 @@ use bolty_core::derivation::BoltcardDeterministicDeriver;
 use bolty_core::uid::CardUid;
 use bolty_core::util::decode_hex;
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "bolty-cli", about = "NTAG424 card programming CLI via PCSC")]
@@ -50,10 +51,14 @@ enum Cli {
     /// List PCSC readers with card presence (virtual readers marked)
     Readers,
 
-    /// Read-only card auth-failure budget (SeqFailCtr/TotFailCtr/SpentTimeCtr
-    /// via GetKeySettings — no authentication, no writes). Uses the global
-    /// --json flag for machine-readable output.
-    Budget,
+    /// Auth-budget accounting from the audit log (host-side: the card's
+    /// failure counters are NOT wire-readable on NTAG424 — live-established
+    /// 2026-10-23; INS 0x64 is GetKeyVersion, MAC-secured). No card I/O.
+    Budget {
+        /// Audit log path (default /tmp/bolty-audit.log)
+        #[arg(long)]
+        log: Option<PathBuf>,
+    },
 
     /// Read and print the card UID
     Uid,
@@ -372,9 +377,8 @@ async fn run() -> anyhow::Result<()> {
             }
         }
 
-        Cli::Budget => {
-            let mut transport = connect_transport()?;
-            budget::cmd_budget(&mut transport, json_mode).await?;
+        Cli::Budget { log } => {
+            budget::cmd_budget(log, json_mode)?;
         }
 
         Cli::Uid => {
