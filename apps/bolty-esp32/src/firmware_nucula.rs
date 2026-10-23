@@ -181,17 +181,40 @@ pub fn main() {
     esp_idf_hal::sys::link_patches();
     EspLogger::initialize_default();
 
-    let mut console = Console::new();
-    console.line("[BOOT] bolty nucula frontend (issue #115)");
-    console.line(&format!("[BOOT] board={BOARD_NAME} built={BUILD_EPOCH}"));
-
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,
         Err(_) => {
-            console.fail("peripherals already taken; halting");
+            // No console yet (the console needs this driver — see below):
+            // the ROM console still mirrors logs, so this is visible.
+            log::error!("peripherals already taken; halting");
             return;
         }
     };
+
+    // Claim the native USB_SERIAL_JTAG peripheral from the ROM boot
+    // console FIRST (bring-up finding 2026-10-23): the ROM owns it at
+    // boot and provides TX-only mirroring — host console INPUT stalls at
+    // the USB level until the driver is installed and re-arms RX, and
+    // the driver's read API must not be called before installation
+    // (Console::new drains RX — ordering caused a boot crash). Same
+    // recipe as ccid-firmware-rs's C3 console (pn7160_ccid.rs). The
+    // handle is intentionally leaked: it must outlive the console loop.
+    {
+        use esp_idf_hal::usb_serial::{config::Config as UsbConfig, UsbSerialDriver};
+        match UsbSerialDriver::new(
+            peripherals.usb_serial,
+            peripherals.pins.gpio18,
+            peripherals.pins.gpio19,
+            &UsbConfig::new().rx_buffer_size(1024).tx_buffer_size(1024),
+        ) {
+            Ok(driver) => core::mem::forget(driver),
+            Err(err) => log::error!("USB console driver claim failed: {err:?}"),
+        }
+    }
+
+    let mut console = Console::new();
+    console.line("[BOOT] bolty nucula frontend (issue #115)");
+    console.line(&format!("[BOOT] board={BOARD_NAME} built={BUILD_EPOCH}"));
 
     // Wifi modem goes to the network stack before the NFC block claims
     // its pins (Peripherals::take is single-shot; the split is by field).
@@ -405,18 +428,11 @@ struct Console;
 
 impl Console {
     fn new() -> Self {
-        let rc = unsafe {
-            esp_idf_sys::fcntl(
-                SERIAL_FD_IN,
-                esp_idf_sys::F_SETFL as i32,
-                esp_idf_sys::O_NONBLOCK as i32,
-            )
-        };
-        if rc < 0 {
-            log::warn!("failed to set stdin non-blocking: rc={rc}");
-        }
-        // Drain stale bytes from boot/download mode so the first command
-        // isn't corrupted by leftover flasher handshake data.
+        // No fcntl(O_NONBLOCK) on fd 0 anymore: RX goes through the
+        // usb_serial_jtag driver directly (see read_byte_nonblocking) and
+        // the VFS console fd must stay untouched. Drain stale bytes from
+        // boot/download mode so the first command isn't corrupted by
+        // leftover flasher handshake data.
         let console = Self;
         console.flush_rx();
         console
@@ -425,17 +441,34 @@ impl Console {
     fn flush_rx(&self) {
         let mut byte = 0u8;
         loop {
-            let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
-            if read != 1 {
+            let n = unsafe {
+                esp_idf_sys::usb_serial_jtag_read_bytes(
+                    (&mut byte as *mut u8).cast(),
+                    1,
+                    0,
+                )
+            };
+            if n != 1 {
                 break;
             }
         }
     }
 
     fn read_byte_nonblocking(&mut self) -> Option<u8> {
+        // RX via the usb_serial_jtag DRIVER API, never read(2) on fd 0:
+        // the VFS non-blocking console-read path asserts in IDF
+        // (usb_serial_jtag_vfs.c "c != NONE", bring-up 2026-10-23) once
+        // UsbSerialDriver owns the peripheral. ccid's console reads this
+        // way too. ticks=0 => non-blocking.
         let mut byte = 0u8;
-        let read = unsafe { esp_idf_sys::read(SERIAL_FD_IN, (&mut byte as *mut u8).cast(), 1) };
-        if read == 1 { Some(byte) } else { None }
+        let n = unsafe {
+            esp_idf_sys::usb_serial_jtag_read_bytes(
+                (&mut byte as *mut u8).cast(),
+                1,
+                0,
+            )
+        };
+        if n == 1 { Some(byte) } else { None }
     }
 
     fn line(&mut self, line: &str) {
