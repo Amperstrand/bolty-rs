@@ -61,7 +61,12 @@ impl From<pcsc::Error> for PcscError {
 /// Virtual-reader detector: vpcd/virtual readers shadow the ACR1252's real
 /// PICC interface in name-based matching and must never be auto-selected.
 fn is_virtual(name: &str) -> bool {
-    name.contains("Virtual") || name.contains("vpcd")
+    // Case-insensitive: real bench reader names have appeared as
+    // "vpcd" AND "vPICC" (the j3r180 table-sim, 2026-10-23) — a
+    // case-sensitive match let the latter slip the filter and hijack
+    // auto-selection (it contains "PICC").
+    let lower = name.to_ascii_lowercase();
+    lower.contains("virtual") || lower.contains("vpcd") || lower.contains("vpicc")
 }
 
 /// Pure reader-selection policy, unit-tested without pcsc:
