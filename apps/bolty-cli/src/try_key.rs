@@ -3,6 +3,7 @@ use bolty_ntag::{KeyNumber, Session, Transport};
 
 use crate::audit;
 use crate::common::gen_rnd_a;
+use crate::uid::{UidFallback, uid_or_fallback};
 
 pub async fn cmd_try_key<T: Transport>(
     transport: &mut T,
@@ -14,13 +15,9 @@ pub async fn cmd_try_key<T: Transport>(
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    // Best-effort UID (pcsc GET-DATA pseudo-APDU): the nucula CCID broker
-    // transport does not implement it — identify the card via GetVersion
-    // part 3 instead when needed; the key test itself must not die here.
-    let uid_hex = match Session::default().get_selected_uid(transport).await {
-        Ok(uid) => crate::to_hex(uid),
-        Err(_) => "(unreadable via this transport)".to_string(),
-    };
+    // Best-effort UID: transports without the FFCA pseudo-APDU (nucula
+    // broker) get a display placeholder; the key test must not die here.
+    let uid_hex = uid_or_fallback(transport, UidFallback::Placeholder).await?;
     let key_hex = crate::to_hex(key);
 
     if !json_mode {

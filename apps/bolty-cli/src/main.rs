@@ -20,6 +20,7 @@ mod scan_keys;
 mod testck;
 mod transport;
 mod try_key;
+pub(crate) mod uid;
 mod ver;
 mod wipe;
 
