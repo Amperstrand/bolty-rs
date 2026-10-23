@@ -63,7 +63,7 @@ esp-idf-svc = "0.53"
 # crates/boards — bolty B2 (docs/lessons-learned.md) stays as the
 # provenance CITATION, not as local pin data. Rev-pinned git dep, the
 # pn7160-nci precedent; pure no_std const data, no HAL deps.
-boards = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "354cc118ea7be78a4900a2485a6fed5551e36a96" }
+boards = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "a0b1f7420fc82f186717e2f3a6029870372e1a15" }
 
 [build-dependencies]
 # 0.32 cannot parse ESP-IDF v5.5.5's tools.json (new win-arm64 platform

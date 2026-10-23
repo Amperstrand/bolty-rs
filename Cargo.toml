@@ -32,7 +32,7 @@ iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "0f7d
 # constructors + FrontendDiagnostics). Bump = explicit reviewed commit
 # moving this rev AND the Cargo.lock entry together (fork-policy §2 rule 2),
 # keeping the rev byte-identical across every bolty manifest that pins it.
-mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3" }
+mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "a0b1f7420fc82f186717e2f3a6029870372e1a15" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"
