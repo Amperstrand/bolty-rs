@@ -200,7 +200,7 @@ pub fn main() {
     // recipe as ccid-firmware-rs's C3 console (pn7160_ccid.rs). The
     // handle is intentionally leaked: it must outlive the console loop.
     {
-        use esp_idf_hal::usb_serial::{config::Config as UsbConfig, UsbSerialDriver};
+        use esp_idf_hal::usb_serial::{UsbSerialDriver, config::Config as UsbConfig};
         match UsbSerialDriver::new(
             peripherals.usb_serial,
             peripherals.pins.gpio18,
@@ -442,11 +442,7 @@ impl Console {
         let mut byte = 0u8;
         loop {
             let n = unsafe {
-                esp_idf_sys::usb_serial_jtag_read_bytes(
-                    (&mut byte as *mut u8).cast(),
-                    1,
-                    0,
-                )
+                esp_idf_sys::usb_serial_jtag_read_bytes((&mut byte as *mut u8).cast(), 1, 0)
             };
             if n != 1 {
                 break;
@@ -461,13 +457,8 @@ impl Console {
         // UsbSerialDriver owns the peripheral. ccid's console reads this
         // way too. ticks=0 => non-blocking.
         let mut byte = 0u8;
-        let n = unsafe {
-            esp_idf_sys::usb_serial_jtag_read_bytes(
-                (&mut byte as *mut u8).cast(),
-                1,
-                0,
-            )
-        };
+        let n =
+            unsafe { esp_idf_sys::usb_serial_jtag_read_bytes((&mut byte as *mut u8).cast(), 1, 0) };
         if n == 1 { Some(byte) } else { None }
     }
 
