@@ -87,14 +87,20 @@ case "$BOARD" in
     # wifi + OTA seat server (the bench recovery door — without it every
     # OTA push of a bolty image is one-way). CARGO_BUILD_TARGET (exported
     # below) selects the triple in .cargo/config.toml's [target.*]
-    # sections; [build] stays xtensa for the m5 boards.
-    nucula)      FEATURES="board-nucula,wifi,ota-server"; TRIPLE="riscv32imc-esp-espidf" ;;
+    # sections; [build] stays xtensa for the m5 boards. The C3's only
+    # wired console is native USB_SERIAL_JTAG — the board sdkconfig makes
+    # it PRIMARY (shared defaults leave UART0 primary + USB secondary,
+    # which mirrors TX but never routes stdin: bring-up finding
+    # 2026-10-23).
+    nucula)      FEATURES="board-nucula,wifi,ota-server"; TRIPLE="riscv32imc-esp-espidf"; SDKCONFIG="sdkconfig.defaults.nucula" ;;
     *)           usage ;;
 esac
 
 FLASH_PORT=""
 CLEAN_SYS=0
-SDKCONFIG="sdkconfig.defaults"
+# Default sdkconfig defaults file; a BOARD case above (nucula) or
+# --sdkconfig below may have already set a board-specific one.
+SDKCONFIG="${SDKCONFIG:-sdkconfig.defaults}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --flash)     FLASH_PORT="${2:?--flash needs a port}"; shift 2 ;;
