@@ -784,6 +784,41 @@ systemctl restart pcscd        # then run the probe again
 #    this bench (owner decision 2026-10-19: no switched-power hub).
 ```
 
+**Wedge anatomy (2026-10-23 deep-wedge post-mortem, USB-level evidence)**:
+
+Why the device dies and why only power removal revives it —
+1. The ACR1252 is a single-pipeline MCU firmware: CCID slot state
+   machine + autonomous RF polling (card-detection notifications ride
+   the interrupt-IN pipe; that is how pcsc hotplug works).
+2. Host-side URB cancellation mid-transfer (pcscd exit/restart, client
+   kill, cancelled exchange) can strand the device holding an
+   un-collected bulk-IN response / pending notification. ACS firmware
+   (documented across the ACR1xxx line for a decade) lacks a robust
+   "host went away — flush pipeline" path; the state machine waits
+   forever.
+3. Pressure amplifiers pile onto the stalled pipeline: RF chaos on the
+   antenna (a live foreign reader + battery + PCB stacked on it =
+   detection thrash = interrupt notification storm) and repeated
+   restarts (each restart is a fresh mid-flight-abort lottery).
+4. Terminal state = FIRMWARE hang with the USB hardware block still
+   alive: the device keeps bus-level behavior (stays in sysfs, no
+   kernel disconnect) but stops answering enumeration-level requests.
+   Proof from tonight: deauth/reauth (`authorized` 0->1) produced NO
+   re-enumeration — a healthy device MUST re-enumerate with a new
+   device number after that; it kept number 030 and emitted no
+   descriptor exchange. `USBDEVFS_RESET` port reset (kernel-confirmed)
+   equally cannot restart hung MCU firmware. Only VBUS removal re-runs
+   the firmware from reset.
+
+Causal chain tonight (journal-timed): matrix-session probe retry loop ->
+5 pcscd restarts in 85 s (18:23:13-18:24:38) -> one restart cancelled a
+transfer mid-flight on the ACR (aggravated by the stacked reader's RF
+coupling) -> first "Not Found" 18:26:45 -> dropped from enumeration
+permanently. The systemic fixes are the ones this bench now has: no
+restarts outside pcscd-ctl/domain lock (tollgate-lab #15/#16; the
+disturbing session queued its retrofit after this incident), graceful
+harness teardown, and NO live reader on another reader's antenna.
+
 **Ceiling** (B29 rule 3): steps 1–3 cannot fix a device that fails the
 RESET/re-enumeration handshake — if the probe still fails after step 3,
 it is the deep class; go straight to power removal, do not loop software
