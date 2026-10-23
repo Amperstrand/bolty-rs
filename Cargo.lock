@@ -245,7 +245,7 @@ dependencies = [
 [[package]]
 name = "boards"
 version = "0.1.0"
-source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=354cc118ea7be78a4900a2485a6fed5551e36a96#354cc118ea7be78a4900a2485a6fed5551e36a96"
+source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=a0b1f7420fc82f186717e2f3a6029870372e1a15#a0b1f7420fc82f186717e2f3a6029870372e1a15"
 
 [[package]]
 name = "bolty-cli"
