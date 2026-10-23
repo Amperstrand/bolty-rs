@@ -208,3 +208,38 @@ none of theirs. Owner decision:
 | `iso14443` | **fork again** — RESURRECTED for kernel M2 (#174, 2026-10-22): rebased tip `0f7d9d70`, rev byte-identical to ccid's pin; the #105/#110 retirement is historical | none (ride with M2 kernel work; byte-identity rule above) |
 | `mfrc522` | fork consumed @ `e9ced1e`; **decided 2026-10-20: KEEP** — fork cleaned @ head `5e4929b` (retire not viable: driver-core deltas), feed packet parked | none required — owner GitLab post only if/when desired |
 | `ntag424` | fork consumed @ `02f23f5` (bumped from `afb7238` via #120); **decided 2026-10-19: keep + feed, post parked, co-sign resolved** (#109) | owner posts the staged feed packet (only remaining action) |
+
+## Appendix: ntag424 fork-vs-upstream delta table (2026-10-19, refreshed 2026-10-22)
+
+The commit-by-commit classification behind the §4 decision record. Upstream
+`jannschu/ntag424` (Codeberg) main HEAD **`f540830`** (2026-05-26) is exactly
+the fork's merge-base — upstream has zero commits since (dormant ~6 months,
+re-verified 2026-10-22 via `ls-remote` [authoritative; local tag lists have
+twice misled on this bench]). The fork carries **100% of the delta**.
+
+Classification key: **FORK-SHARED** = generic NTAG 424 fact, belongs in the
+canonical repo (feed upstream) · **BURNER-LOCAL** = Bolt Card surface, stays
+Amperstrand-side · **HYGIENE** = repo mechanics.
+
+| # | Commit (date) | Delta | Class | Upstream has it? |
+|---|---|---|---|---|
+| 1 | `e1dcc0b` (06-16) | AuthEV2First LenCap 0x00→0x03 + 3 zero PCDcap2 bytes, Lc 02→05 (spec-recommended AES-128 encoding; both work on real hardware) | **FORK-SHARED** — wire correctness | **NO** — upstream `aes.rs` still sends `Lc=02 [KeyNo LenCap=00]` |
+| 2 | `67488f2` (06-12) | **`Sdm::disabled()`** const ctor — clears SDM on wipe (+16 lines, additive) | **FORK-SHARED** — generic wipe-flow API | **NO** — upstream has adjacent factory-state work but no explicit constructor |
+| 3 | — | key-diversification | **NOT a fork delta** — upstream feature since ≤v0.1.0; fork touches zero `crypto/`/`high_level/` files; features block byte-identical | **YES** | 
+| 4 | `3fd02f0`+`ee1a874` (merged via fork PR #5) | Auth fixtures regenerated to LenCap=0x03 wire form | test side of #1 | NO |
+| 5 | `a25f6c5` (08-27) | ChangeKey byte-exact parity vs bolt-card-programmer, wipe-to-factory K0–K4 (+97, tests) | **BURNER-LOCAL** | NO |
+| 6 | `6f39a47` (08-28) | ChangeFileSettings FS_RESET parity (+54, tests; uses `Sdm::disabled()`) | **BURNER-LOCAL** | NO |
+| 7 | `7e3a696`+`afb7238`+`02f23f5` (08-30→10-19) | 46-vector cross-language suite vendored + reference-locked (dev-dep `sha2 0.10` only) | **BURNER-LOCAL** — Amperstrand conformance infra | NO |
+| 8 | `c862371`, `bc2ef41`, `fa06a22`, `6570c2f`, fork PR #7 | LICENSING.md, fmt, LenCap comment, fork-contract docs | **HYGIENE** | n/a |
+
+**Dependency chain** (the #110 digest-split question): upstream and fork pin
+byte-identical dependency lines (`p224 ^0.13.2 → ecdsa 0.16 → digest 0.10`).
+Re-pinning upstream collapses NOTHING — the digest family's only 0.10 root is
+`p224→ecdsa 0.16` (cmac 0.8 is already 0.11-side). The sole collapse lever
+is a fork-side p224 refresh; the digest-0.11 generation exists only as
+`p224 0.14.0-rc` (no stable) — **defer until stable, re-check quarterly**.
+
+**Feed packet**: fork branch `upstream/lencap` = upstream HEAD `f540830` +
+rows 1/2/4/5/6 rebased (vectors suite deliberately excluded), 30 files
++1051/−108. Regenerate: `git -C <fork> format-patch f540830..origin/upstream/lencap`.
+Owner-only post (CHANNEL rule).
