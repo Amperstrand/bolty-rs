@@ -310,6 +310,33 @@ cd /home/ubuntu/src/bolty-rs
 - NXP Community: Change Keys and "lock" NTAG DNA 424
 - AndroidCrypto: A comprehensive overview of all keys for the NTAG424 NFC chip
 
+## KNOWN-GOOD DISPLAY STATE — M5StickC Plus (2026-10-23, owner-verified)
+
+The stick's ST7789 display works on the current bench boot — physically
+confirmed by the owner while the bolty console bench ran. This is a
+cross-project reference state: **ccid-firmware-rs and the nucula/cashu
+work target the same M5StickC Plus hardware** and can study/port this
+exact recipe instead of rediscovering the AXP192 sequencing.
+
+Verified state (console `hwinfo`: `display_init=ok`, boot log "Display
+init: starting AXP192 I2C1 on GPIO21/GPIO22..."; firmware flavor
+"archive/test/73-graduation-wave", display stack unchanged in main):
+
+- **Power sequencing FIRST** (`apps/bolty-esp32/src/display.rs`
+  `init_axp192` + `axp192_map.rs`): AXP192 on **I2C1, GPIO21=SDA,
+  GPIO22=SCL @ 100 kHz** — LDO2/LDO3 = 3.0 V (0xCC; backlight + panel),
+  power-out ctl (0x12) OR 0x4D (DCDC1+LDO2+LDO3+EXTEN) with read-back
+  verify, ADC all-on, charge 4.2 V/100 mA, PEK key timing, GPIO0 LDO
+  3.3 V, Grove 5 V boost.
+- **Panel driver**: ST7789 via the `mipidsi` crate (ColorInversion),
+  SPI2 with the M5StickC Plus pin set (13/15/5/23/18/27 — DC/CS/SCK/
+  MOSI/BL/RST per `firmware.rs` display::init call site).
+- **Bus isolation**: display lives on I2C1 + SPI2; the MFRC522 reader
+  lives on I2C0 (GPIO32/33, also 0x28). Same boot survived a transient
+  I2C0 "SDA stuck LOW" fault (software bus-recovery clocked through;
+  reader init still succeeded) with the display's I2C1 unaffected —
+  the two-bus split is why the display state is robust.
+
 ## Hardware Test Results (2026-06-15)
 
 ### KNOWN GOOD STATE (2026-08-28 — current)
