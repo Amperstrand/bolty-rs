@@ -41,7 +41,7 @@ the fork (see correction note below the table).
 
 | # | Delta (fork vs upstream 0.8.0) | Class | Consumed by bolty-rs? |
 |---|---|---|---|
-| 1 | **Public register API**: `pub mod register` + `pub use register::Register`, `read_register`/`write_register`/`rmw_register` on the driver, `AtqA::as_bytes()` | FORK-SHARED — API proposal-grade; a PCD-layer consumer needs raw register access | **YES — load-bearing**: `crates/mfrc522-pcd` (21 call sites: `Register`, all three accessors); `AtqA::as_bytes` unused |
+| 1 | **Public register API**: `pub mod register` + `pub use register::Register`, `read_register`/`write_register`/`rmw_register` on the driver, `AtqA::as_bytes()` | FORK-SHARED — API proposal-grade; a PCD-layer consumer needs raw register access | **YES — load-bearing**: `mfrc522-pcd` (canonical home **ccid-firmware-rs** since kernel M2 #174 — bolty consumes it as a rev-pinned git dep; 21 call sites: `Register`, all three accessors); `AtqA::as_bytes` unused |
 | 2 | **REQA timer reload widened**: `TReloadReg` 0x3E8 (25 ms) → 0x0FA0 (~100 ms), comment cites Arduino MFRC522 `PCD_ConfigureDefaults()` | FORK-SHARED — behavioral fix; upstream 25 ms too short for many cards | YES — activation window on the bench rig |
 | 3 | **Software iteration caps** on MFAuthent/transceive wait loops (5000 iters ≈ 1.5 s @100 kHz) replacing infinite hangs; `Error::Timeout` surfaced; eh02 test repair + std-gating; expanded test expectations (`e9ced1e`) | FORK-SHARED — robustness fix any consumer wants | **YES** — `bolty-mfrc522` maps `Mfrc522Error::Timeout` into retryable activation errors |
 | 4 | Cargo.toml: description ("forked from upstream SPI-only crate" — **stale claim, see correction**), repository → fork URL, `=pinned` deps, `[lib]` section (`bc3ebfb` + vendoring) | HYGIENE | fork identity only |
@@ -55,7 +55,7 @@ upstream crates.io 0.8.0 tarball, and upstream's own history documents it
 The 2026-10-18 ledger row "I2C transport support (upstream 0.8.0 is
 SPI-only) — the flagship upstream candidate" was a misattribution; there is
 no I2C gap to feed. The fork's real flagship is the register access API
-(row 1) — exactly what a PCD/CCID consumer (`crates/mfrc522-pcd`) needs.
+(row 1) — exactly what a PCD/CCID consumer (`mfrc522-pcd`, home: ccid-firmware-rs since kernel M2 #174) needs.
 
 **Upstream identity — corrected 2026-10-19:** the crate's true home is
 **`https://gitlab.com/jspngh/mfrc522`** (Cargo.toml `repository`/`homepage`
@@ -113,7 +113,7 @@ re-stage iso14443 patches.
 
 ## bolty-rs usage inventory (fork-shared vs burner-local)
 
-- mfrc522 fork-API call sites: `crates/mfrc522-pcd/src/lib.rs`
+- mfrc522 fork-API call sites: ccid-firmware-rs `crates/mfrc522-pcd/src/lib.rs` (home since kernel M2 #174; was bolty `crates/mfrc522-pcd`)
   (`mfrc522::{Initialized, Mfrc522, Register, RxGain, comm::blocking::i2c::I2cInterface}`,
   `read_register`/`write_register`/`rmw_register` ×21),
   `crates/bolty-mfrc522/src/lib.rs` (`mfrc522::Error` incl. `Timeout`),
@@ -142,7 +142,7 @@ wrong upstream identity and is withdrawn. Evidence as of 2026-10-19:
 - **RETIRE** (mirror the #105 iso14443 playbook): consume crates.io
   `mfrc522 = "0.8.0"` directly and carry the delta consumer-side. The
   blocker the playbook has to solve here: upstream keeps `mod register`
-  private with no raw register access, and `crates/mfrc522-pcd` drives the
+  private with no raw register access, and `mfrc522-pcd` (ccid home, M2 #174) drives the
   PCD at register level (21 call sites) — so retiring means vendoring the
   register API into a bolty-side crate (e.g. a `mfrc522-reg` extension via
   the public `comm::Interface` + a re-declared register map, or moving the

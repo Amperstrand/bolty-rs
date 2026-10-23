@@ -1,0 +1,49 @@
+From c86237100da0d838e21ae2cbb9e69b9601524258 Mon Sep 17 00:00:00 2001
+From: Amperstrand <amperstrand@localhost>
+Date: Tue, 16 Jun 2026 10:30:14 +0200
+Subject: [PATCH 3/7] docs: add licensing documentation for fork
+
+---
+ LICENSING.md | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+ create mode 100644 LICENSING.md
+
+diff --git a/LICENSING.md b/LICENSING.md
+new file mode 100644
+index 0000000..ac22962
+--- /dev/null
++++ b/LICENSING.md
+@@ -0,0 +1,30 @@
++# Licensing
++
++## License
++
++This crate is licensed under **MIT OR Apache-2.0**, inherited from the upstream
++project [jannschu/ntag424](https://codeberg.org/jannschu/ntag424) on Codeberg.
++
++## Fork relationship
++
++This is a fork of jannschu/ntag424 maintained by Amperstrand for use by:
++- [bolty-rs](https://github.com/Amperstrand/bolty-rs) — Bolt Card / NTAG424 DNA programmer
++- [ccid-firmware-rs](https://github.com/Amperstrand/ccid-firmware-rs) — CCID smartcard reader firmware
++
++## Branches
++
++| Branch | Base | Description |
++|---|---|---|
++| `upstream-sync` | jannschu/ntag424 main | Tracks upstream, no changes |
++| `feature/sdm-disabled` | upstream-sync | Adds `Sdm::disabled()` constructor for wipe operations |
++| `fix/lencap` | feature/sdm-disabled | Fixes AuthenticateEV2First LenCap=0x03 for NTAG 424 DNA |
++| **`ai-experiments`** (default) | fix/lencap | Integration branch with both patches |
++
++## Patches
++
++See GitHub issues for detailed documentation of each patch, including spec
++references, A/B hardware test results, and upstream contribution plans.
++
++## SPDX
++
++`SPDX-License-Identifier: MIT OR Apache-2.0`
+-- 
+2.43.0
+

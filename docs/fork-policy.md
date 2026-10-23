@@ -24,7 +24,7 @@ build against, and it carries the licensing documentation for the fork.
 | Crate | Source | Upstream | Role |
 |---|---|---|---|
 | `mfrc522` | `Amperstrand/mfrc522-rs` (fork) | `gitlab.com/jspngh/mfrc522` (crates.io `mfrc522` 0.8.0, 2024-11-24 — ships I2C since 0.8.0) | Public register access API + REQA timer widening + bounded wait loops (see `docs/nfc-fork-feeding/LEDGER.md`) |
-| `iso14443` | **`Foundation-Devices/iso14443-rs` (upstream direct — fork RETIRED #105)** | — | ISO 14443-4 protocol core; our session API/WTX hook live consumer-side in `crates/iso14443-session` |
+| `iso14443` | **`Amperstrand/iso14443-rs` (fork — RESURRECTED for kernel M2, #174)** | `Foundation-Devices/iso14443-rs` (fork tip descends from upstream main `216d1b9` + additive experiments) | ISO 14443-4 protocol core; the fork carries the in-trait `try_set_timeout_ms` WTX hook that `mfrc522-pcd`'s `PcdTransceiver` needs for cross-repo trait unification (M2, `t_e3335b39`) |
 | `ntag424` | `Amperstrand/ntag424` (fork) | `jannschu/ntag424` (Codeberg) | NTAG424 DNA command layer: `Sdm::disabled()`, LenCap=0x03 fix (key diversification is upstream code — see §4 decision record) |
 
 History: bolty-rs and ccid-firmware-rs each carried divergent in-tree
@@ -33,16 +33,25 @@ canonical source (mfrc522 `e9ced1e`, iso14443 `268db79`). 2026-10-18 the
 iso14443 fork was retired (#105, `45d3d9f`): consumption moved to
 Foundation-Devices upstream direct, with the fork-only API carried
 consumer-side in `crates/iso14443-session` — that retirement is the
-template for any future fork retirement.
+template for any future fork retirement. **2026-10-22: the iso14443
+fork was RESURRECTED for kernel M2** (#174, `t_e3335b39`): ccid's
+canonical `mfrc522-pcd` depends on the fork's in-trait
+`try_set_timeout_ms`, so bolty re-pointed to the fork's rebased
+`ai-experiments` tip (`0f7d9d70`, descending from upstream `216d1b9`) to
+keep the crate graph unified; `crates/iso14443-session`'s `TimeoutExt`
+stand-in retired with it (orphan rule). Same era: bolty's duplicate
+local `crates/mfrc522-pcd` was deleted — the crate's canonical home is
+now ccid-firmware-rs, consumed here as a rev-pinned git dep.
 
 ## 2. Consumers ALWAYS pin by rev — never branch-float
 
 Workspace dependencies pin the exact commit (post-#110 manifest truth):
 
 ```toml
-ntag424   = { git = "https://github.com/Amperstrand/ntag424.git",   rev = "afb7238516bcf5fac177eba1910565d1dde9354c", ... }
-mfrc522   = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e", ... }
-iso14443  = { git = "https://github.com/Foundation-Devices/iso14443-rs.git", rev = "216d1b919ca1fd4d30048a1c764f14379137f3c7", features = ["alloc"] }
+ntag424    = { git = "https://github.com/Amperstrand/ntag424.git",      rev = "02f23f51fc352f5abad8812550dc1e0361afe514", ... }
+mfrc522    = { git = "https://github.com/Amperstrand/mfrc522-rs.git",   rev = "e9ced1e", ... }
+iso14443   = { git = "https://github.com/Amperstrand/iso14443-rs.git",  rev = "0f7d9d70", features = ["alloc"] }  # M2 fork tip — rev MUST stay byte-identical to ccid's pin
+mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3" }  # canonical home: ccid (kernel M2)
 ```
 
 Rules:
@@ -70,14 +79,22 @@ Rules:
      lockfile-touching PR next rides). **Decision 2026-10-20: KEEP** —
      retire is not viable (driver-core deltas); feed parked at owner
      (`docs/nfc-fork-feeding/LEDGER.md`).
-   - `iso14443` @ `216d1b919ca1fd4d30048a1c764f14379137f3c7` —
-     Foundation-Devices upstream main HEAD (v0.3.1 lineage), == the
-     pre-#110 lockfile entry, so the pin changed zero dependency bytes.
-   - `ntag424` @ `afb7238516bcf5fac177eba1910565d1dde9354c` — fork head
-     has since moved to `02f23f5` (2026-10-19: vectors reference-lock,
-     fixture regen, docs — zero src-behavior change); the next pin bump
-     rides the next lockfile-touching PR (PR #106 lane, per the #109
-     decision 2026-10-19).
+   - `iso14443` @ `0f7d9d70` — **Amperstrand fork again** (kernel M2,
+     #174): rebased `ai-experiments` tip descending from upstream
+     `216d1b9` (v0.3.1 lineage), so the public API is a superset. The
+     rev string MUST stay byte-identical to ccid's `crates/mfrc522-pcd`
+     pin — a differing string (even short-vs-full of the same commit)
+     splits the graph into two `iso14443` copies whose traits stop
+     unifying (bench lesson 2026-10-21).
+   - `mfrc522-pcd` @ `79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3` —
+     canonical home is **ccid-firmware-rs** since kernel M2 (#174);
+     bolty's local duplicate was deleted, every consumer
+     (`bolty-mfrc522`, `bolty-esp32`, `bolty-stm32`) rides this git
+     dep. Same byte-identity rule across every manifest that pins it.
+   - `ntag424` @ `02f23f51fc352f5abad8812550dc1e0361afe514` — bumped
+     from `afb7238` via #120 (test/docs/reference-lock only, zero
+     src-behavior change); fork head remains `02f23f5` (decision record
+     §4).
 
 ## 3. Licensing per crate (fields VERIFIED 2026-08-30; iso14443 re-verified upstream-direct 2026-10-19)
 
@@ -91,14 +108,15 @@ Every field below was read from the pinned checkout, not assumed.
 - Upstream (crates.io `mfrc522` 0.8.0) is MIT OR Apache-2.0; the fork
   adds no license terms. Compatible with all Amperstrand consumers.
 
-### iso14443-rs — `GPL-3.0-or-later` (Foundation-Devices upstream, consumed direct)
+### iso14443-rs — `GPL-3.0-or-later` (Amperstrand fork; descends from Foundation-Devices upstream)
 
 - Upstream `Cargo.toml` SPDX header: `© 2025 Foundation Devices, Inc.
   <hello@foundation.xyz>` / `SPDX-License-Identifier: GPL-3.0-or-later`
 - Repo root: `LICENSE` (GNU GPL v3 full text)
-- `repository = "https://github.com/Foundation-Devices/iso14443-rs"`
-  (consumed direct since #105; the Amperstrand fork repo still exists as
-  an archive of the retired branch but consumes nothing)
+- Consumed from the **Amperstrand fork** again since kernel M2 (#174,
+  rebased tip `0f7d9d70`); upstream remains
+  `https://github.com/Foundation-Devices/iso14443-rs` — the fork adds no
+  license terms
 - Consequence: bolty-rs is GPL-3.0-or-later (matches), and no
   proprietary-linked consumer may take this crate.
 
@@ -121,8 +139,8 @@ Codeberg are both non-member).
 | Crate | Staged state | Topic |
 |---|---|---|
 | `mfrc522` | `docs/nfc-fork-feeding/` (#108): LEDGER + patches 0001–0005 + COVER.md | Register access API, REQA timer widening, iteration caps — split-ready against upstream 0.8.0; **decided 2026-10-20: KEEP + fork cleaned @ `5e4929b`**, feed parked at owner; upstream = **gitlab.com/jspngh/mfrc522** (corrected 2026-10-19) |
-| `iso14443` | **none — retired** (#105) | The old `upstream/pcd-session` / `upstream/wtx` pointer branches in the retired fork are dead; remaining deltas live consumer-side in `crates/iso14443-session` |
-| `ntag424` | fork branch `upstream/lencap` → `6f39a47` | LenCap=0x03 wire-form fix (+ `Sdm::disabled()`); Codeberg delta table + decision done 2026-10-19 (#109) — feed packet staged, ccid co-sign resolved same day, owner post parked |
+| `iso14443` | **none — fork consumed directly** (M2, #174) | The fork tip is a rebased descendant of upstream main carrying only the in-trait WTX hook M2 needs; no standalone feed packet. The old pre-#105 `upstream/*` pointer branches are dead |
+| `ntag424` | fork branch `upstream/lencap` → `6f39a47`; patches 0001–0007 + owner steps durable in-repo at `docs/ntag424-feeding/` (2026-10-23; regenerated after the /tmp wipe, same `f540830..6f39a47` series) | LenCap=0x03 wire-form fix (+ `Sdm::disabled()`); Codeberg delta table + decision done 2026-10-19 (#109) — feed packet staged, ccid co-sign resolved same day, owner post parked |
 
 Rules:
 
@@ -187,6 +205,6 @@ none of theirs. Owner decision:
 
 | Crate | State | Next step |
 |---|---|---|
-| `iso14443` | **retired** (#105, #110) — upstream direct, rev-pinned | none (template for future retirements) |
+| `iso14443` | **fork again** — RESURRECTED for kernel M2 (#174, 2026-10-22): rebased tip `0f7d9d70`, rev byte-identical to ccid's pin; the #105/#110 retirement is historical | none (ride with M2 kernel work; byte-identity rule above) |
 | `mfrc522` | fork consumed @ `e9ced1e`; **decided 2026-10-20: KEEP** — fork cleaned @ head `5e4929b` (retire not viable: driver-core deltas), feed packet parked | none required — owner GitLab post only if/when desired |
 | `ntag424` | fork consumed @ `02f23f5` (bumped from `afb7238` via #120); **decided 2026-10-19: keep + feed, post parked, co-sign resolved** (#109) | owner posts the staged feed packet (only remaining action) |
