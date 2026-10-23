@@ -1,0 +1,20 @@
+# board-nucula console routing (issue #115 bring-up, 2026-10-23):
+# the C3's native USB_SERIAL_JTAG (GPIO18/19) is the ONLY wired console
+# (no UART bridge). Shared defaults pin PRIMARY console to UART0 with USB
+# as SECONDARY — secondary mirrors TX (logs visible) but never routes
+# stdin: host writes stall at USB level while boot output flows. Block
+# below mirrors ccid-firmware-rs's known-good C3 console config
+# (sdkconfig-c3-ble-diag.full) whose serial console RX works over this
+# same CDC (the nucula-ccid-broker talked to it for months).
+CONFIG_ESP_ROM_USB_SERIAL_DEVICE_NUM=3
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set
+# CONFIG_ESP_CONSOLE_UART_CUSTOM is not set
+# CONFIG_ESP_CONSOLE_NONE is not set
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_ESP_CONSOLE_UART_NUM=3
+
+# Rust + PN7160 bring-up overflow the default main-task stack: Core 0
+# "Stack protection fault" at app_main (bring-up 2026-10-23; intermittent
+# on the first image = near-boundary). ccid's C3 boards run 32K.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
