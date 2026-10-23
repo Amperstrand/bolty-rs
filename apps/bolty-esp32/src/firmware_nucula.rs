@@ -214,7 +214,7 @@ pub fn main() {
 
     let mut console = Console::new();
     console.line("[BOOT] bolty nucula frontend (issue #115)");
-    console.line(&format!("[BOOT] board={BOARD_NAME} built={BUILD_EPOCH}"));
+    console.ok_fmt(&["[BOOT] board=", BOARD_NAME, " built=", BUILD_EPOCH]);
 
     // Wifi modem goes to the network stack before the NFC block claims
     // its pins (Peripherals::take is single-shot; the split is by field).
@@ -242,12 +242,14 @@ pub fn main() {
                     Some(reader)
                 }
                 Err(err) => {
-                    console.fail(&format!("PN7160 activate failed: {err:?}"));
+                    log::error!("PN7160 activate failed: {err:?}");
+                    console.fail("PN7160 activate failed (see log)");
                     None
                 }
             },
             Err(err) => {
-                console.fail(&format!("PN7160 I2C bring-up failed: {err:?}"));
+                log::error!("PN7160 I2C bring-up failed: {err:?}");
+                console.fail("PN7160 I2C bring-up failed (see log)");
                 console.fail("console continues without NFC (check VEN/IRQ wiring)");
                 None
             }
@@ -261,7 +263,7 @@ pub fn main() {
                 let handled =
                     handle_line(line.as_str(), reader.as_mut(), &mut network, &mut console);
                 if !handled {
-                    console.ok(&format!("unknown command: {}", line.as_str()));
+                    console.ok_fmt(&["unknown command: ", line.as_str()]);
                 }
                 line.clear();
             } else if line.len() < MAX_LINE_LEN {
@@ -360,13 +362,22 @@ fn handle_line(
                     } else {
                         match block_on(bolty_ntag::safe_inspect(reader, None, None)) {
                             Ok(result) => {
-                                console.line(&format!(
-                                    "uid={} version={:?} ndef_bytes={}",
+                                // HEAPLESS (crash fix 2026-10-23: the coredump
+                                // backtrace lands HERE — format!() exhausted the
+                                // heap while WiFi + PN7160 + console held it;
+                                // every console output on this RAM-tight C3
+                                // goes through heapless String<N>).
+                                let mut out = String::<384>::new();
+                                let _ = write!(
+                                    out,
+                                    "uid={} ndef_bytes={}",
                                     uid_hex(&result.uid),
-                                    result.version,
                                     result.ndef_bytes.as_ref().map_or(0, Vec::len)
-                                ));
-                                console.line(&format!("sdm={:?}", result.sdm_verification));
+                                );
+                                console.line(out.as_str());
+                                let mut sdm = String::<128>::new();
+                                let _ = write!(sdm, "sdm={:?}", result.sdm_verification.is_some());
+                                console.line(sdm.as_str());
                             }
                             Err(err) => console.fail(&format!("inspect failed: {err:?}")),
                         }
@@ -465,6 +476,20 @@ impl Console {
     fn line(&mut self, line: &str) {
         self.write_all(line.as_bytes());
         self.write_all(b"\r\n");
+    }
+
+    /// Format directly into a heapless buffer — NEVER format!() into
+    /// console output on this target (the heap is ~143KB and WiFi/NFC/
+    /// console share it; format!() allocates on that heap — coredump
+    /// crash 2026-10-23 at firmware_nucula.rs:361).
+    fn ok_fmt(&mut self, parts: &[&str]) {
+        let mut out = String::<384>::new();
+        for p in parts {
+            if out.push_str(p).is_err() {
+                break;
+            }
+        }
+        self.ok(out.as_str());
     }
 
     fn ok(&mut self, message: &str) {
