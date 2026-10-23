@@ -790,7 +790,12 @@ it is the deep class; go straight to power removal, do not loop software
 heals.
 
 **The trigger is us**: the wedge follows CCID exchanges aborted
-mid-bulk-transfer — harness timeouts/kills during card auth-delay (`91AD`)
+mid-bulk-transfer (NEW candidate trigger, 2026-10-23: sustained foreign
+RF coupling with no CCID traffic at all — an M5stick was stacked on the
+ACR1252's antenna for ~1h, its MFRC522 field coupling into the ACR's
+front-end while heavy pcscd churn ran; the ACR wedged deep without a
+single CCID exchange. Correlation, two candidate causes — attribution
+stays open until a controlled repro) — harness timeouts/kills during card auth-delay (`91AD`)
 windows when responses are legitimately slow, AND **pcscd restarts caused
 by sibling bench sessions** (observed 2026-10-19: a concurrent M5Stick
 flash session bounces the stick's USB on every flash step; socket-activated
