@@ -1,0 +1,40 @@
+From 67488f2dbc5e8193e4ec62affe6d310168cece53 Mon Sep 17 00:00:00 2001
+From: amperstand <atlas@oh-my-opencode.com>
+Date: Fri, 12 Jun 2026 21:25:59 +0200
+Subject: [PATCH 1/7] feat: add Sdm::disabled() constructor for clearing SDM on
+ wipe
+
+---
+ ntag424/src/types/file_settings/sdm.rs | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/ntag424/src/types/file_settings/sdm.rs b/ntag424/src/types/file_settings/sdm.rs
+index b9170f3..0f47c05 100644
+--- a/ntag424/src/types/file_settings/sdm.rs
++++ b/ntag424/src/types/file_settings/sdm.rs
+@@ -409,6 +409,22 @@ pub struct Sdm {
+ }
+ 
+ impl Sdm {
++    /// SDM fully disabled: no PICC data mirroring, no file-read MAC, no tamper status.
++    ///
++    /// Use with [`FileSettingsUpdate::with_sdm`] to clear SDM when wiping a card:
++    ///
++    /// ```ignore
++    /// let update = settings.into_update().with_sdm(Sdm::disabled());
++    /// session.change_file_settings(transport, file, &update).await?;
++    /// ```
++    pub const fn disabled() -> Self {
++        Self {
++            picc_data: PiccData::None,
++            file_read: None,
++            tamper_status: None,
++        }
++    }
++
+     /// Returns the tag identity data (PICCData) mirror configuration.
+     pub const fn picc_data(self) -> PiccData {
+         self.picc_data
+-- 
+2.43.0
+
