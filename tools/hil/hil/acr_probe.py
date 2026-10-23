@@ -4,6 +4,8 @@ One no-auth PC/SC exchange — connect + status on the PICC slot — proving
 the CCID bulk pipe is alive. Reader state classes:
 
     ok       reader answered (ATR captured)
+    absent   reader healthy, no card coupled (connect = NoSmartcard — the
+             reader ANSWERED, which is the opposite of a wedge)
     wedge    pcscd lists the reader but the bulk pipe does not complete
              (the B32 signature: control endpoint alive, CCID hung)
     absent   no ACR1252 PICC reader in the pcscd reader list
@@ -77,8 +79,13 @@ def probe() -> dict:
                 SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1,
             )
             if rc != 0:
+                # SCARD_E_NO_SMARTCARD = the reader ANSWERED pcsc with
+                # "no card" — healthy reader, empty field; the opposite
+                # of a wedge. Match the code (0x8010000C), not the
+                # message string (spelling varies by pcsc-lite version).
+                state = "absent" if rc == 0x8010000C else "wedge"
                 SCardReleaseContext(ctx)
-                return {"state": "wedge", "detail": SCardGetErrorMessage(rc)}
+                return {"state": state, "detail": SCardGetErrorMessage(rc)}
             rc, _rn, _st, _pr, atr = SCardStatus(h)
             detail = (
                 f"ATR {bytes(atr).hex()}"
