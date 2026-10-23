@@ -810,6 +810,15 @@ Why the device dies and why only power removal revives it —
    equally cannot restart hung MCU firmware. Only VBUS removal re-runs
    the firmware from reset.
 
+**Reader spacing rule (RF hygiene, from the 2026-10-23 sandwich)**:
+two 13.56 MHz readers on one bench need >=15 cm side-by-side
+(antennas coplanar — never facing each other) or >=30 cm in any
+orientation; 0-5 cm antenna-facing is the mutual-destruction zone
+(coupled fields + conductive mass detuning — a battery/PCB lying on
+an antenna blanks it even powered-off). Nothing but cards on antenna
+surfaces. Card read range is 3-5 cm, so separated readers cannot
+cross-read each other's cards.
+
 Causal chain tonight (journal-timed): matrix-session probe retry loop ->
 5 pcscd restarts in 85 s (18:23:13-18:24:38) -> one restart cancelled a
 transfer mid-flight on the ACR (aggravated by the stacked reader's RF
