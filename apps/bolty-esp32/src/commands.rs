@@ -180,6 +180,11 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
     }
     if command.eq_ignore_ascii_case("token") {
         let arg = parts.next();
+        if parts.next().is_some() {
+            // Surplus args are rejected like every positional command —
+            // `token X extra` must NOT mutate auth config (issue #148).
+            return Err(CommandError::InvalidArgs);
+        }
         match arg {
             None => Err(CommandError::MissingArgs),
             Some("off") | Some("none") | Some("clear") => Ok(Command::SetToken(None)),
@@ -196,6 +201,71 @@ pub fn parse_command(line: &str) -> Result<Command, CommandError> {
 
 pub fn parse_hex_key(s: &str) -> Option<[u8; 16]> {
     bolty_core::util::decode_hex(s).ok()
+}
+
+/// Commands the firmware console loop handles before `handle_line`
+/// (firmware.rs): they need loop-local state (buttons, NVS, feature-gated
+/// provisioning) instead of the `dispatch_command` path, but their
+/// matchers are pure and pinned here so the protocol table and generated
+/// clients see them (issue #148 — they used to be doc-invisible).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreDispatchCommand<'a> {
+    Crashlog,
+    HwTest,
+    ProvisionCert,
+    ProvisionOtaKey(&'a str),
+    ForceOn,
+    ForceOff,
+    ForceStatus,
+}
+
+/// First words of the pre-dispatch surface, pinned against the command
+/// table in docs/serial-host-protocol.md by the tests below.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const PRE_DISPATCH_COMMAND_WORDS: &[&str] = &[
+    "crashlog",
+    "hwtest",
+    "provision-cert",
+    "provision-ota-key",
+    "force",
+];
+
+/// Match the pre-dispatch surface with the same framing as
+/// `parse_command` (trim, ASCII-whitespace split, case-insensitive word).
+/// `None` falls through to `parse_command`, which answers
+/// `UnknownCommand`.
+pub fn parse_pre_dispatch_command(line: &str) -> Option<PreDispatchCommand<'_>> {
+    let trimmed = line.trim();
+    let (head, rest) = match trimmed.find(|c: char| c.is_ascii_whitespace()) {
+        Some(index) => (&trimmed[..index], Some(trimmed[index..].trim())),
+        None => (trimmed, None),
+    };
+
+    if rest.is_none() {
+        if head.eq_ignore_ascii_case("crashlog") {
+            return Some(PreDispatchCommand::Crashlog);
+        }
+        if head.eq_ignore_ascii_case("hwtest") {
+            return Some(PreDispatchCommand::HwTest);
+        }
+        if head.eq_ignore_ascii_case("provision-cert") {
+            return Some(PreDispatchCommand::ProvisionCert);
+        }
+    }
+    if head.eq_ignore_ascii_case("provision-ota-key") {
+        if let Some(key_hex) = rest {
+            return Some(PreDispatchCommand::ProvisionOtaKey(key_hex));
+        }
+    }
+    if head.eq_ignore_ascii_case("force") {
+        return match rest {
+            None => Some(PreDispatchCommand::ForceStatus),
+            Some(arg) if arg.eq_ignore_ascii_case("on") => Some(PreDispatchCommand::ForceOn),
+            Some(arg) if arg.eq_ignore_ascii_case("off") => Some(PreDispatchCommand::ForceOff),
+            Some(_) => None,
+        };
+    }
+    None
 }
 
 fn parse_keys_command<'a>(
@@ -577,6 +647,128 @@ mod tests {
             Err(CommandError::InvalidArgs),
             "token over 64 bytes is InvalidArgs (RestTokenString capacity)"
         );
+    }
+
+    #[test]
+    fn token_rejects_surplus_args_without_building_settoken() {
+        // Issue #148: `token X extra` used to set the token and silently
+        // drop `extra` — the table promises rejection like every
+        // positional command, and no SetToken may be constructed (the
+        // dispatch arm mutates auth config only on a parsed command).
+        assert_eq!(
+            parse_command("token X extra"),
+            Err(CommandError::InvalidArgs)
+        );
+        assert_eq!(
+            parse_command("token off extra"),
+            Err(CommandError::InvalidArgs)
+        );
+        assert_eq!(
+            parse_command("token none extra extra2"),
+            Err(CommandError::InvalidArgs)
+        );
+        let token = "t".repeat(64);
+        assert_eq!(
+            parse_command(&format!("token {token} extra")),
+            Err(CommandError::InvalidArgs),
+            "a valid-length token with surplus args still rejects"
+        );
+    }
+
+    #[test]
+    fn pre_dispatch_commands_parse_with_documented_framing() {
+        use super::PreDispatchCommand as P;
+
+        assert_eq!(parse_pre_dispatch_command("crashlog"), Some(P::Crashlog));
+        assert_eq!(
+            parse_pre_dispatch_command("  HWTEST  "),
+            Some(P::HwTest),
+            "trim + case-insensitive, like parse_command"
+        );
+        assert_eq!(
+            parse_pre_dispatch_command("provision-cert"),
+            Some(P::ProvisionCert)
+        );
+        assert_eq!(
+            parse_pre_dispatch_command("PROVISION-OTA-KEY aabb"),
+            Some(P::ProvisionOtaKey("aabb")),
+            "case-insensitive (was case-sensitive strip_prefix, #148 true-up)"
+        );
+        assert_eq!(
+            parse_pre_dispatch_command("provision-ota-key  aabb ccdd"),
+            Some(P::ProvisionOtaKey("aabb ccdd")),
+            "handler receives the raw remainder and answers with its own hex error"
+        );
+        assert_eq!(parse_pre_dispatch_command("force"), Some(P::ForceStatus));
+        assert_eq!(parse_pre_dispatch_command("FORCE ON"), Some(P::ForceOn));
+        assert_eq!(parse_pre_dispatch_command("force off"), Some(P::ForceOff));
+        assert_eq!(
+            parse_pre_dispatch_command("force\t on"),
+            Some(P::ForceOn),
+            "any ASCII whitespace separates tokens (framing rule)"
+        );
+    }
+
+    #[test]
+    fn pre_dispatch_malformed_lines_fall_through_to_unknown() {
+        // Everything unrecognized must return None so parse_command
+        // answers UnknownCommand — never a silent no-op.
+        for line in [
+            "",
+            "   ",
+            "burn",
+            "crashlog extra",
+            "hwtest now",
+            "provision-cert x",
+            "provision-ota-key",
+            "force bogus",
+            "force on off",
+        ] {
+            assert_eq!(
+                parse_pre_dispatch_command(line),
+                None,
+                "{line:?} must fall through to parse_command"
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_table_documents_every_command_word() {
+        let doc = include_str!("../../../docs/serial-host-protocol.md");
+        let mut words: Vec<&str> = PRE_DISPATCH_COMMAND_WORDS.to_vec();
+        words.extend([
+            "help",
+            "i2cscan",
+            "uid",
+            "status",
+            "keys",
+            "issuer",
+            "url",
+            "wifi",
+            "ota",
+            "burn",
+            "wipe",
+            "ndef",
+            "auth",
+            "ver",
+            "keyver",
+            "check",
+            "inspect",
+            "picc",
+            "diagnose",
+            "derivekeys",
+            "reset",
+            "hwinfo",
+            "button-mode",
+            "token",
+        ]);
+        for word in words {
+            assert!(
+                doc.lines()
+                    .any(|row| row.starts_with(&format!("| `{word}"))),
+                "docs/serial-host-protocol.md must table `{word}` (contract table = client reality)"
+            );
+        }
     }
 
     #[test]

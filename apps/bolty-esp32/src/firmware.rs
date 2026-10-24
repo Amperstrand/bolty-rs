@@ -20,6 +20,8 @@ use core::fmt::Write as _;
 use crate::button::{self, ButtonEvent, ButtonHandler};
 #[cfg(feature = "board-m5stick")]
 use crate::commands::ButtonMode;
+use crate::commands::{PreDispatchCommand, parse_pre_dispatch_command};
+use crate::console_framing::{LineAssembler, LineEvent};
 #[cfg(feature = "display-st7789")]
 use crate::display;
 #[cfg(feature = "rest")]
@@ -66,7 +68,7 @@ pub(super) fn gen_rnd_a() -> bolty_core::secret::AesKey {
 }
 
 const I2C_BAUDRATE_HZ: u32 = 100_000;
-pub(super) const MAX_LINE_LEN: usize = 512;
+pub(super) use crate::console_framing::MAX_LINE_LEN;
 pub(super) const SERIAL_FD_IN: i32 = 0;
 pub(super) const SERIAL_FD_OUT: i32 = 1;
 const CARD_POLL_INTERVAL_MS: u64 = 500;
@@ -284,7 +286,7 @@ pub fn main() {
     let mut rest_server = None;
     #[cfg(feature = "rest")]
     let job_slot: SharedJobSlot = Arc::new(Mutex::new(JobSlot::new()));
-    let mut line = String::<MAX_LINE_LEN>::new();
+    let mut assembler = LineAssembler::<MAX_LINE_LEN>::new();
     let mut next_poll_at = millis();
     let mut heartbeat_at = millis();
     let mut card_announced = false;
@@ -430,56 +432,62 @@ pub fn main() {
 
     loop {
         while let Some(byte) = serial.read_byte_nonblocking() {
-            match byte {
-                b'\r' => {}
-                b'\n' => {
-                    if !line.is_empty() {
-                        if line.trim().eq_ignore_ascii_case("crashlog") {
+            match assembler.feed(byte) {
+                Some(LineEvent::Overflow) => {
+                    // Issue #148: fail once, then drain through the next
+                    // newline — a padded hostile line can no longer
+                    // execute its trailing command.
+                    serial.fail("command too long");
+                }
+                Some(LineEvent::Line(text)) => {
+                    match parse_pre_dispatch_command(text) {
+                        Some(PreDispatchCommand::Crashlog) => {
                             run_crashlog(&mut serial);
-                        } else if line.trim().eq_ignore_ascii_case("hwtest") {
+                        }
+                        Some(PreDispatchCommand::HwTest) => {
                             run_hwtest(&mut serial, &mut buttons, &service);
-                        } else if line.trim().eq_ignore_ascii_case("provision-cert") {
+                        }
+                        Some(PreDispatchCommand::ProvisionCert) => {
                             #[cfg(feature = "rest")]
                             run_provision_cert(&mut serial);
                             #[cfg(not(feature = "rest"))]
                             serial.fail("rest feature disabled — cert not needed");
-                        } else if let Some(key_hex) = line
-                            .trim()
-                            .strip_prefix("provision-ota-key ")
-                            .map(str::trim)
-                        {
+                        }
+                        Some(PreDispatchCommand::ProvisionOtaKey(key_hex)) => {
                             #[cfg(feature = "ota")]
-                            {
-                                run_provision_ota_key(&mut serial, key_hex);
-                            }
+                            run_provision_ota_key(&mut serial, key_hex);
                             #[cfg(not(feature = "ota"))]
                             {
                                 let _ = key_hex;
                                 serial.fail("ota feature disabled");
                             }
-                        } else if line.trim().eq_ignore_ascii_case("force on") {
+                        }
+                        Some(PreDispatchCommand::ForceOn) => {
                             if let Ok(mut cfg) = config.lock() {
                                 cfg.force_unsafe = true;
                             }
                             nvs::save_force_flag(true);
                             serial.line("[OK] safety checks DISABLED (force=on)");
-                        } else if line.trim().eq_ignore_ascii_case("force off") {
+                        }
+                        Some(PreDispatchCommand::ForceOff) => {
                             if let Ok(mut cfg) = config.lock() {
                                 cfg.force_unsafe = false;
                             }
                             nvs::save_force_flag(false);
                             serial.line("[OK] safety checks enabled (force=off)");
-                        } else if line.trim().eq_ignore_ascii_case("force") {
+                        }
+                        Some(PreDispatchCommand::ForceStatus) => {
                             let state = config.lock().map(|c| c.force_unsafe).unwrap_or(false);
                             serial.line(&format!(
                                 "[OK] force={} — safety checks {}",
                                 if state { "on" } else { "off" },
                                 if state { "DISABLED" } else { "enabled" },
                             ));
-                        } else {
+                        }
+                        None => {
                             handle_line(
                                 &mut serial,
-                                line.as_str(),
+                                text,
                                 &service,
                                 &config,
                                 &mut wifi_manager,
@@ -489,16 +497,10 @@ pub fn main() {
                                 &job_slot,
                             );
                         }
-                        line.clear();
-                        card_announced = false;
                     }
+                    card_announced = false;
                 }
-                _ => {
-                    if line.push(byte as char).is_err() {
-                        serial.fail("command too long");
-                        line.clear();
-                    }
-                }
+                None => {}
             }
         }
 
