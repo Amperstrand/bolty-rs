@@ -29,13 +29,10 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       # RUSTSEC-2026-0381: webpki-roots 0.26.x has no fixed release (fix is
-      # the 1.x line); the nested store is patched in-lockfile (1.0.10 +
-      # rustls-webpki 0.103.16), consumer is bolty-cli->ureq only. Mirrors
-      # the documented deny.toml ignore; drop both when ureq moves to 3.x.
-      # RUSTSEC-2026-0381: webpki-roots 0.26.x has no fixed release (fix is
       # the ureq-3 migration, done 2026-10-21 — flag removable once the
       # lockfile rotation lands everywhere).
-      # RUSTSEC-2026-0387: crypto-bigint 0.5.5 constant-time — p224-only
-      # path (ntag424 fork transitive), no secrets on P-224, no fixed
-      # release yet. Same revisit condition as deny.toml.
-      - run: cargo audit --ignore RUSTSEC-2026-0381 --ignore RUSTSEC-2026-0387
+      # RUSTSEC-2026-0387 ignore REMOVED (2026-10-24): the ntag424 re-pin
+      # (Amperstrand/ntag424#13) made originality verification an optional
+      # feature — p224/crypto-bigint left bolty's dependency graph and
+      # cargo audit runs clean without the flag.
+      - run: cargo audit --ignore RUSTSEC-2026-0381
