@@ -181,9 +181,20 @@ verify_sdkconfig_fresh
 BIN="$CARGO_TARGET_DIR/$TRIPLE/release/bolty-esp32"
 [ -f "$BIN" ] || die "build finished but $BIN is missing"
 
+# The partition table must land WITH the image or the OTA layout never
+# reaches the device (bolty #146, the ccid #310/#311 flash-mode class):
+# a freshly flashed unit then boots factory-only and every OTA push is
+# one-way. Pass the table explicitly; espflash without it writes the
+# SDK default layout, which has no ota slots on this config.
+PT="$SCRIPT_DIR/partitions.csv"
+[ -f "$PT" ] || die "partition table missing: $PT"
+
 if [ -n "$FLASH_PORT" ]; then
-    info "flashing $BIN to $FLASH_PORT at 115200"
-    espflash flash --baud 115200 --port "$FLASH_PORT" "$BIN"
+    info "flashing $BIN + PT $(basename "$PT") to $FLASH_PORT at 115200"
+    espflash flash --baud 115200 --port "$FLASH_PORT" \
+        --partition-table "$PT" "$BIN"
 fi
 
-info "done: $BIN (IDF $IDF_PIN verified)"
+# Stamp-comparability line: name what was built + the table's hash so
+# bench logs identify the exact layout (the #308 lesson).
+info "done: $BIN (IDF $IDF_PIN verified, PT $(sha256sum "$PT" | cut -c1-16))"
