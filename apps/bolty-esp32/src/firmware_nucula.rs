@@ -286,16 +286,28 @@ pub fn main() {
         irq: peripherals.pins.gpio6,
         ven: peripherals.pins.gpio7,
     };
+    // #145: a cardless boot must keep the INITIALIZED reader — the old
+    // activate-only path dropped the transport on a no-card power-on,
+    // leaving every later command "nfc unavailable" until a reboot.
+    // The command paths re-run power_on() on the kept reader, so an
+    // inserted card activates on the next poll/uid/inspect.
     let mut reader: Option<Reader> =
         match EspPn7160Transport::bringup_config_order(NUCULA, bus_pins) {
-            Ok(transport) => match Pn7160Transport::activate(Pn7160Driver::new(transport)) {
-                Ok(reader) => {
-                    console.ok("PN7160 reader up (NCI ladder + ISO-DEP power-on)");
-                    Some(reader)
-                }
+            Ok(transport) => match Pn7160Transport::new_initialized(Pn7160Driver::new(transport)) {
+                Ok(mut reader) => match reader.power_on() {
+                    Ok(()) => {
+                        console.ok("PN7160 reader up (NCI ladder + ISO-DEP power-on)");
+                        Some(reader)
+                    }
+                    Err(err) => {
+                        log::warn!("PN7160 no card at boot (reader kept): {err:?}");
+                        console.line("PN7160 up, no card at boot (kept — insert and run nfc)");
+                        Some(reader)
+                    }
+                },
                 Err(err) => {
-                    log::error!("PN7160 activate failed: {err:?}");
-                    console.fail("PN7160 activate failed (see log)");
+                    log::error!("PN7160 NCI init failed: {err:?}");
+                    console.fail("PN7160 NCI init failed (see log)");
                     None
                 }
             },
