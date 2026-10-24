@@ -19,7 +19,10 @@
 //! `SerialConsole` (raw stdio FDs, non-blocking read) rather than a shared
 //! extraction: the original lives as a private submodule of the MFRC522
 //! firmware module, and hoisting it would touch the M5 path for no
-//! functional gain in this PR.
+//! functional gain in this PR. The line FRAMING, however, is shared:
+//! `console_framing::LineAssembler` gives this console the same 512-byte
+//! cap and drain-through-newline hostile-line guarantee as the M5 arm
+//! (#204; the old local gate silently truncated overlong lines).
 
 use core::fmt::Write as _;
 
@@ -38,12 +41,12 @@ use crate::ota_server;
 use crate::wifi::WifiManager;
 
 use crate::block_on;
+use crate::console_framing::{LineAssembler, LineEvent, MAX_LINE_LEN};
 
 const BOARD_NAME: &str = "nucula (ESP32-C3 + PN7160)";
 const BUILD_EPOCH: &str = env!("BOLTY_BUILD_EPOCH");
 const SERIAL_FD_IN: i32 = 0;
 const SERIAL_FD_OUT: i32 = 1;
-const MAX_LINE_LEN: usize = 256;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
 /// Credential namespace on the default NVS partition. Distinct from the
 /// wifi driver's own `nvs.net80211` namespace (esp-idf-svc internal) —
@@ -319,19 +322,24 @@ pub fn main() {
             }
         };
 
-    let mut line = String::<MAX_LINE_LEN>::new();
+    let mut assembler = LineAssembler::<MAX_LINE_LEN>::new();
     network.autoconnect(&mut console);
     loop {
         while let Some(byte) = console.read_byte_nonblocking() {
-            if byte == b'\r' || byte == b'\n' {
-                let handled =
-                    handle_line(line.as_str(), reader.as_mut(), &mut network, &mut console);
-                if !handled {
-                    console.ok_fmt(&["unknown command: ", line.as_str()]);
+            match assembler.feed(byte) {
+                Some(LineEvent::Overflow) => {
+                    // Issue #204: fail once and drain through the next
+                    // newline. The old `line.len() < MAX_LINE_LEN` gate
+                    // silently truncated and dispatched the prefix.
+                    console.fail("command too long");
                 }
-                line.clear();
-            } else if line.len() < MAX_LINE_LEN {
-                let _ = line.push(byte as char);
+                Some(LineEvent::Line(text)) => {
+                    let handled = handle_line(text, reader.as_mut(), &mut network, &mut console);
+                    if !handled {
+                        console.ok_fmt(&["unknown command: ", text]);
+                    }
+                }
+                None => {}
             }
         }
         FreeRtos::delay_ms(MAIN_LOOP_DELAY_MS);
