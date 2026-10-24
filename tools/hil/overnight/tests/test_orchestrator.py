@@ -585,11 +585,24 @@ def test_hb_writer_fresh_during_blocking_role_gate(tmp_path):
 
     cfg = scaled(3.0)
     cfg["heartbeat_interval_s"] = 0.05
+    # The scheduler shrinks anchor-overrun phases to zero ("dynamic shrink,
+    # Metis c"): on the 2026-10-24 CI run WINDOW1's dry-run rows overran the
+    # proportional ROLE_GATE share, the gate was skipped, `entered` never
+    # fired and the test died as a bare `assert False` — the same flake
+    # class as ded1c7e's test_dry_run_mode_a (fsync overruns, documented in
+    # _atomic_write_json). This test's property (hb freshness during a
+    # blocking gate) doesn't care about window budgets, so give the gate a
+    # wide floor: a contended runner must lose >2s in PREFLIGHT+WINDOW1
+    # before the shrink can touch it.
+    cfg["phases"].update(preflight_s=0.3, window1_s=0.3, role_gate_s=2.0,
+                         window2_s=0.2, restore_s=0.1, report_s=0.1)
     orch = build_dry_run_app(cfg, tmp_path, gate_ok=True)
     orch.role_gate = blocking_gate
     rc = orch.run()
     assert rc == 0
-    assert entered.is_set()
+    assert entered.is_set(), ("role_gate never ran — scheduler shrank it away: "
+                              + ", ".join(f"{p['name']}:{p['status']}"
+                                          for p in orch.store.state["phases"]))
     assert len({w[0] for w in writes}) >= 3     # kept refreshing while blocked
     assert all(phase == "ROLE_GATE" for _, phase in writes)
 
