@@ -195,5 +195,9 @@ mod tests {
             doc.contains("console_framing"),
             "the doc must name console_framing.rs as the framing source of truth"
         );
+        assert!(
+            doc.contains("board-nucula"),
+            "the doc must state the nucula console shares this framing (#204)"
+        );
     }
 }

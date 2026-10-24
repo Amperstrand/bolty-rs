@@ -29,7 +29,8 @@ esp32-check lane).
   (`console_framing.rs::MAX_LINE_LEN`). The byte that overflows the cap
   fails the line with `command too long` exactly once, and everything
   through the next newline is **discarded** — padding cannot smuggle a
-  trailing command past the failure (issue #148).
+  trailing command past the failure (issue #148). This applies to BOTH
+  console frontends: the burner firmware and the nucula frontend below.
 
 ## Reply convention
 
@@ -102,3 +103,13 @@ surface (issue #148).
 - Secrets (`keys`, `issuer`, `wifi`, `token`, `ota` signature) arrive as
   single arguments and are consumed into fixed-capacity storage; no
   heap growth is possible from line content.
+
+## Nucula frontend (board-nucula)
+
+The nucula console (`firmware_nucula.rs`, issue #115) shares the byte-level
+framing above — same `console_framing::LineAssembler`, same 512-byte cap and
+drain-through-newline guarantee (issue #204; it previously truncated overlong
+lines at 256 silently and dispatched the prefix). It has its own small
+command set, dispatched outside `parse_command`: `help` | `?` | `ver` |
+`status` | `poll` | `uid` | `inspect` | `wifi <ssid> <password>` | `ip`.
+Unknown lines are echoed back as `unknown command: <line>`.
