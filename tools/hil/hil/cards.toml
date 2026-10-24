@@ -44,3 +44,13 @@ ops          = ["read"]
 alias        = "j3r180-stick-slot"
 reader_hint  = "GemPCTwin"
 ops          = ["read"]
+
+# HCE emulated boltcard (boltcard-hce app on the S20 bench phone).
+# Deterministic issuer 0000...0001 v1; UID/keys verified against the app's
+# source (HceBoltcardService DEFAULT_UID). Read/write for HCE conformance
+# testing; NOT a physical card — exists only while the app runs.
+[cards.04996c6a926980]
+alias        = "hce-s20-emulated"
+reader_hint  = "ACR1252"
+ops          = ["read", "burn", "wipe"]
+state        = "any"
