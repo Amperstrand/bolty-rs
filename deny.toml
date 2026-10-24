@@ -4,13 +4,10 @@ ignore = [
     "RUSTSEC-2026-0190",  # anyhow unsound — no fix available, accepted risk
     "RUSTSEC-2026-0110",  # bare-metal unmaintained — embedded ecosystem standard
     "RUSTSEC-2026-0173",  # proc-macro-error2 unmaintained — transitive dep
-    # (2026-10-24) RUSTSEC-2026-0387: crypto-bigint 0.5.5 constant-time
-    # branches — reached ONLY via p224 in the rev-pinned ntag424 fork.
-    # P-224 carries no bolt-card secrets (NTAG424 SUN messaging is
-    # AES-CMAC; p224 is an unused-for-keys transitive), no fixed
-    # crypto-bigint release exists yet. REVISIT when the patched
-    # release lands: remove this AND the audit.yml flag together.
-    "RUSTSEC-2026-0387",
+    # (2026-10-24) RUSTSEC-2026-0387 ignore REMOVED: ntag424 re-pinned
+    # (Amperstrand/ntag424#13, originality feature-gate) — p224 and
+    # crypto-bigint left the dependency graph entirely; no P-224 code
+    # ships in bolty builds. audit.yml's mirror flag removed together.
     # (2026-10-21) RUSTSEC-2026-0381 ignore REMOVED: bolty-cli migrated to
     # ureq 3 (rustls TLS, webpki-roots 1.x) — webpki-roots 0.26.x is out of
     # the graph (was the 0.26.11 facade over an already-patched 1.0.10).
