@@ -146,6 +146,15 @@ impl PcdSession {
         self.hw_crc
     }
 
+    /// Clamp the reader-side receive ceiling to the FSD actually
+    /// announced in RATS (P2 r4305906310): `from_ats` defaults `fsd`
+    /// to the CARD's FSCI, which is not a limit the reader announced —
+    /// callers that advertised a smaller FSD must clamp it here (and
+    /// `set_fsc` for the symmetric send-side limit).
+    pub fn set_fsd(&mut self, fsd: usize) {
+        self.fsd = fsd;
+    }
+
     pub fn set_fsc(&mut self, fsc: usize) {
         self.fsc = fsc;
     }
@@ -184,7 +193,12 @@ impl PcdSession {
             let chaining = end < apdu.len();
             let iblock = self.handler.build_iblock(&apdu[offset..end], chaining)?;
 
-            let resp = self.transceive_block(t, &iblock)?;
+            // §7.5.5 recovery applies to the SEND side too (P1
+            // r4305898378): a transient transmit error aborts the whole
+            // APDU when this calls transceive_block directly. Route the
+            // outbound I-block through the recovery path (send-chain →
+            // the R(NAK) branch).
+            let resp = self.transceive_with_recovery(t, &iblock, false)?;
 
             if chaining {
                 match self.handler.process_received(resp)? {
@@ -251,8 +265,13 @@ impl PcdSession {
                         let wtxm = reply.payload.as_slice().first().copied().unwrap_or(1) as u32;
                         let extended = (wtxm * self.base_fwt_ms).max(self.base_fwt_ms);
                         let _ = t.try_set_timeout_ms(extended);
-                        block = self.transceive_with_recovery(t, &reply, true)?;
+                        // Restore the base timeout on BOTH outcomes
+                        // (P2 r4305906312): with the call's `?` inline,
+                        // a failed WTX echo/retry left the MFRC522 timer
+                        // at the multiplied value for later exchanges.
+                        let r = self.transceive_with_recovery(t, &reply, true);
                         let _ = t.try_set_timeout_ms(self.base_fwt_ms);
+                        block = r?;
                     } else {
                         block = self.transceive_with_recovery(t, &reply, true)?;
                     }
@@ -384,6 +403,152 @@ mod exchange_tests {
         fn try_set_timeout_ms(&mut self, _ms: u32) -> Result<(), ()> {
             Ok(())
         }
+    }
+
+    // --- #150 regression tests (P1 r4305898378, P2 r4305906310/12) ---
+
+    /// Scripted transceiver with an optional "fail the first N
+    /// transceives" knob and a timeout-call log (for the WTX restore
+    /// assertion).
+    struct ScriptedFlaky {
+        responses: Vec<Vec<u8>>,
+        idx: usize,
+        fail_first: usize,
+        calls: usize,
+        timeouts: Vec<u32>,
+    }
+
+    impl PcdTransceiver for ScriptedFlaky {
+        type Error = ChanErr;
+        fn transceive(&mut self, _frame: &Frame) -> Result<Vec<u8>, ChanErr> {
+            self.calls += 1;
+            if self.calls <= self.fail_first {
+                return Err(ChanErr);
+            }
+            if self.idx < self.responses.len() {
+                let r = self.responses[self.idx].clone();
+                self.idx += 1;
+                Ok(r)
+            } else {
+                Err(ChanErr)
+            }
+        }
+        fn try_enable_hw_crc(&mut self) -> Result<(), ChanErr> {
+            Err(ChanErr)
+        }
+        fn try_set_timeout_ms(&mut self, ms: u32) -> Result<(), ()> {
+            self.timeouts.push(ms);
+            Ok(())
+        }
+    }
+
+    fn iblock_with(payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x02u8];
+        v.extend_from_slice(payload);
+        let (c1, c2) = crc_a(&v);
+        v.push(c1);
+        v.push(c2);
+        v
+    }
+
+    #[test]
+    fn send_side_transient_error_recovers_via_rnak() {
+        // P1: the first transceive (the outbound I-block) fails; the
+        // recovery path must issue R(NAK) and complete the exchange
+        // with the canned response — instead of aborting the APDU.
+        let ats_bytes = [0x07u8, 0x72, 0xF0, 0x40, 0x91, 0x00, 0x00];
+        let ats = Ats::try_from(append_crc_a(&ats_bytes).unwrap().as_slice()).unwrap();
+        let mut session = PcdSession::from_ats(&ats, None, false);
+
+        let mut t = ScriptedFlaky {
+            responses: vec![iblock_with(b"ok")],
+            idx: 0,
+            fail_first: 1,
+            calls: 0,
+            timeouts: vec![],
+        };
+        let out = session
+            .exchange(&mut t, b"req")
+            .expect("send-side transient error must recover via R(NAK)");
+        assert_eq!(out.as_slice(), b"ok");
+        assert!(
+            t.calls >= 2,
+            "recovery must have issued a second transceive"
+        );
+    }
+
+    #[test]
+    fn set_fsd_clamps_oversized_responses() {
+        // P2: an ATS with FSCI=8 (FSC/FSD default 256) plus an
+        // announced FSD of 12 bytes must refuse a frame larger than
+        // the announced ceiling — before the fix, fsd defaulted to the
+        // card's FSCI and the gate was unbounded by the reader's FSD.
+        let ats_bytes = [0x07u8, 0x72, 0xF0, 0x40, 0x91, 0x00, 0x00];
+        let ats = Ats::try_from(append_crc_a(&ats_bytes).unwrap().as_slice()).unwrap();
+        let mut session = PcdSession::from_ats(&ats, None, false);
+        session.set_fsd(12);
+
+        let oversized = iblock_with(&[0xAAu8; 16]); // 19-byte frame ≫ announced 12
+        let mut t = ScriptedFlaky {
+            responses: vec![oversized],
+            idx: 0,
+            fail_first: 0,
+            calls: 0,
+            timeouts: vec![],
+        };
+        assert!(
+            session.exchange(&mut t, b"req").is_err(),
+            "a frame over the announced FSD must be refused"
+        );
+        // Control: within the default (card-side) ceiling the same
+        // shape passes — the gate keys on fsd, not payload content.
+        let mut session2 = PcdSession::from_ats(&ats, None, false);
+        let mut t2 = ScriptedFlaky {
+            responses: vec![iblock_with(&[0xAAu8; 8])],
+            idx: 0,
+            fail_first: 0,
+            calls: 0,
+            timeouts: vec![],
+        };
+        assert!(
+            session2.exchange(&mut t2, b"req").is_ok(),
+            "control (8-byte payload, default ceiling) must pass"
+        );
+    }
+
+    #[test]
+    fn wtx_failure_restores_base_timeout() {
+        // P2: S(WTX) multiplies the timer; when the WTX echo/retry then
+        // FAILS, the base timeout must still be restored (defer shape)
+        // — observed via the timeout-call log.
+        let ats_bytes = [0x07u8, 0x72, 0xF0, 0x40, 0x91, 0x00, 0x00];
+        let ats = Ats::try_from(append_crc_a(&ats_bytes).unwrap().as_slice()).unwrap();
+        let mut session = PcdSession::from_ats(&ats, None, false);
+        session.set_base_fwt_ms(100);
+
+        // S(WTX) request block: PCB 0xF2 (S-block, WTX), payload wtxm=2.
+        let mut wtx = vec![0xF2u8, 0x02];
+        let (c1, c2) = crc_a(&wtx);
+        wtx.push(c1);
+        wtx.push(c2);
+
+        // First response: the S(WTX). Every later transceive fails
+        // (responses exhausted) so the recovery errors out.
+        let mut t = ScriptedFlaky {
+            responses: vec![wtx],
+            idx: 0,
+            fail_first: 0,
+            calls: 0,
+            timeouts: vec![],
+        };
+        assert!(session.exchange(&mut t, b"req").is_err());
+        let last = t.timeouts.last().copied();
+        assert_eq!(
+            last,
+            Some(100),
+            "base timeout must be restored after a failed WTX exchange (saw {:?})",
+            t.timeouts
+        );
     }
 
     #[test]
