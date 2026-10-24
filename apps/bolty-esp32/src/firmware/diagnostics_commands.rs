@@ -14,13 +14,18 @@ use super::service::Esp32BoltyService;
 use super::utils::{CounterDisplay, diagnose_state_label, ndef_ascii, push_uid_hex};
 
 pub(super) fn print_help(serial: &mut SerialConsole) {
-    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check crashlog");
+    // Issue #148: the pre-dispatch commands (crashlog, hwtest, force,
+    // provision-*) used to be handled by the console loop but listed
+    // nowhere a client could see. Help and docs now show the real surface.
+    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check crashlog hwtest force [on|off]");
     #[cfg(feature = "board-m5stick")]
     serial.line("Buttons: button-mode [simple|legacy]");
     #[cfg(feature = "wifi")]
     serial.line("WiFi: wifi <ssid> <password> | wifi off");
+    #[cfg(feature = "rest")]
+    serial.line("TLS: provision-cert");
     #[cfg(feature = "ota")]
-    serial.line("OTA: ota <url>");
+    serial.line("OTA: ota <url> <sig> | provision-ota-key <hex64>");
 }
 
 pub(super) fn print_i2c_scan<I2C>(serial: &mut SerialConsole, service: &mut Esp32BoltyService<I2C>)

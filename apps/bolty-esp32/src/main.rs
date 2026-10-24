@@ -128,6 +128,7 @@ mod firmware;
 
 mod axp192_map;
 mod commands;
+mod console_framing;
 mod service;
 mod workflow;
 
