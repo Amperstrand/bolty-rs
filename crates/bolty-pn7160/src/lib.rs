@@ -56,6 +56,22 @@ impl<T: pn7160_nci::Transport> Pn7160Transport<T> {
         Ok(transport)
     }
 
+    /// Initialize the NFCC WITHOUT requiring a card (#145): same NCI
+    /// ladder as `activate`, but `power_on` failures are the caller's
+    /// to retry on the kept transport — a cardless boot must not drop
+    /// the initialized reader, or every later command reports
+    /// `nfc unavailable` until a reboot (`power_on(&mut self)` is the
+    /// documented re-run path).
+    pub fn new_initialized(driver: Pn7160Driver<T>) -> Result<Self, Error> {
+        let mut transport = Self {
+            driver,
+            uid: Vec::new(),
+            atr: Vec::new(),
+        };
+        transport.driver.init().map_err(Error::Init)?;
+        Ok(transport)
+    }
+
     /// Re-run discovery/power-on (e.g. after a card swap) on an
     /// already-initialized driver.
     pub fn power_on(&mut self) -> Result<(), Error> {
@@ -152,6 +168,30 @@ mod tests {
     /// and THESE vectors are the drift guard — change one, change all
     /// three. Natural hoist home if the fork decision lands: a
     /// Response helper on the ntag424 fork itself.
+    /// #145: a cardless boot must keep the INITIALIZED transport —
+    /// `new_initialized` succeeds with only the NCI ladder scripted,
+    /// `power_on` fails cleanly on the empty discovery queue, and the
+    /// transport SURVIVES that error for a later retry (second
+    /// power_on also fails cleanly — no drop, no panic; the
+    /// with-card retry is the bench leg).
+    #[test]
+    fn new_initialized_keeps_transport_on_cardless_boot() {
+        let mut t = ScriptedTransport::default();
+        script_ladder(&mut t);
+        let mut reader =
+            Pn7160Transport::new_initialized(Pn7160Driver::new(t)).expect("NCI init must succeed");
+        assert!(!reader.session_active());
+        assert!(
+            reader.power_on().is_err(),
+            "no discover notification scripted"
+        );
+        assert!(!reader.session_active());
+        assert!(
+            reader.power_on().is_err(),
+            "transport must survive the first failure for a later retry"
+        );
+    }
+
     #[test]
     fn split_response_conformance() {
         // <2 bytes is always InvalidResponseLength(len)
