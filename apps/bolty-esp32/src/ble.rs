@@ -55,8 +55,13 @@ pub struct BleTransport {
 }
 
 impl BleTransport {
-    pub fn start(modem: esp_idf_hal::modem::Modem<'static>) -> Result<Self, EspError> {
-        let nvs = esp_idf_svc::nvs::EspDefaultNvsPartition::take()?;
+    /// `nvs` is the shared default-partition handle (bolty #143): taken
+    /// once in `main`, cloned here — never `take()`n locally, the
+    /// singleton is already held by whichever subsystem came first.
+    pub fn start(
+        modem: esp_idf_hal::modem::Modem<'static>,
+        nvs: esp_idf_svc::nvs::EspDefaultNvsPartition,
+    ) -> Result<Self, EspError> {
         let bt = Arc::new(BtDriver::new(modem, Some(nvs))?);
 
         let gap = Arc::new(EspBleGap::new(bt.clone())?);
