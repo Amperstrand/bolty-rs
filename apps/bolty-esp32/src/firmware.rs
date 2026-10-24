@@ -254,11 +254,27 @@ pub fn main() {
 
     #[cfg(feature = "display-st7789")]
     display::set_nfc_ready(nfc_ready);
+    // Default NVS partition: taken EXACTLY ONCE (bolty #143) and shared
+    // by clone with every consumer (wifi driver, BLE driver) — a second
+    // `EspDefaultNvsPartition::take()` always fails, the singleton is
+    // global. The wifi driver keeps its calibration data in the
+    // `nvs.net80211` namespace on this partition; the firmware's own
+    // key/value store uses raw `nvs_open` handles (namespace `bolty`)
+    // and is unaffected by the Arc singleton.
+    #[cfg(any(feature = "wifi", feature = "ble"))]
+    let nvs_partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take();
+
     #[cfg(feature = "wifi")]
-    let mut wifi_manager = match WifiManager::new(modem) {
-        Ok(manager) => Some(manager),
+    let mut wifi_manager = match &nvs_partition {
+        Ok(nvs) => match WifiManager::new(modem, nvs.clone()) {
+            Ok(manager) => Some(manager),
+            Err(err) => {
+                info!("wifi init unavailable: {err}");
+                None
+            }
+        },
         Err(err) => {
-            info!("wifi init unavailable: {err}");
+            info!("nvs default partition unavailable: {err}");
             None
         }
     };
@@ -346,7 +362,11 @@ pub fn main() {
     #[cfg(feature = "ble")]
     let ble_transport = {
         log::info!("Initializing BLE transport...");
-        match crate::ble::BleTransport::start(modem) {
+        let started = match &nvs_partition {
+            Ok(nvs) => crate::ble::BleTransport::start(modem, nvs.clone()),
+            Err(err) => Err(*err),
+        };
+        match started {
             Ok(t) => {
                 log::info!("BLE transport initialized");
                 if !crate::ble::wait_for_ready(&t, 5000) {

@@ -26,6 +26,7 @@ pub mod provenance;
 pub mod secret;
 pub mod uid;
 pub mod util;
+pub mod wifi_creds;
 
 #[cfg(test)]
 mod tests {

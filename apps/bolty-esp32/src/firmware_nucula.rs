@@ -28,6 +28,8 @@ use bolty_core::config::{WifiPasswordString, WifiSsidString};
 use bolty_pn7160::{BusPins, EspPn7160Transport, NUCULA, Pn7160Driver, Pn7160Transport};
 use esp_idf_hal::{delay::FreeRtos, peripherals::Peripherals};
 use esp_idf_svc::log::EspLogger;
+#[cfg(feature = "wifi")]
+use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvs};
 use heapless::String;
 
 #[cfg(feature = "ota-server")]
@@ -43,7 +45,10 @@ const SERIAL_FD_IN: i32 = 0;
 const SERIAL_FD_OUT: i32 = 1;
 const MAX_LINE_LEN: usize = 256;
 const MAIN_LOOP_DELAY_MS: u32 = 10;
-#[cfg(feature = "ota-server")]
+/// Credential namespace on the default NVS partition. Distinct from the
+/// wifi driver's own `nvs.net80211` namespace (esp-idf-svc internal) —
+/// both live on the same partition via clones of the one shared handle.
+#[cfg(feature = "wifi")]
 const NVS_NAMESPACE: &str = "boltnv";
 
 /// Reader stack: `EspPn7160Transport` (I2C + IRQ + VEN) under the NCI
@@ -56,22 +61,49 @@ type Reader = Pn7160Transport<EspPn7160Transport>;
 #[cfg(feature = "wifi")]
 struct Network {
     manager: Option<WifiManager>,
+    /// Credential store, opened ONCE (read-write — bolty #144) from the
+    /// shared partition handle and reused for every save/load (bolty
+    /// #143: never re-`take()` the default partition).
+    creds: Option<EspDefaultNvs>,
     #[cfg(feature = "ota-server")]
     ota_spawned: bool,
 }
 
 #[cfg(feature = "wifi")]
 impl Network {
-    fn new(modem: esp_idf_hal::modem::Modem<'static>) -> Self {
-        let manager = match WifiManager::new(modem) {
+    fn new(modem: esp_idf_hal::modem::Modem<'static>, partition: &EspDefaultNvsPartition) -> Self {
+        let manager = match WifiManager::new(modem, partition.clone()) {
             Ok(manager) => Some(manager),
             Err(err) => {
                 log::warn!("wifi manager init failed: {err:?}");
                 None
             }
         };
+        // Read-write is load-bearing: `EspNvs::new(..., false)` opens
+        // NVS_READONLY and every `set_blob` fails (bolty #144) — the
+        // `wifi` command then reports success while storing nothing.
+        let creds = match EspNvs::new(partition.clone(), NVS_NAMESPACE, true) {
+            Ok(nvs) => Some(nvs),
+            Err(err) => {
+                log::warn!("nvs: credential namespace open failed: {err}");
+                None
+            }
+        };
         Self {
             manager,
+            creds,
+            #[cfg(feature = "ota-server")]
+            ota_spawned: false,
+        }
+    }
+
+    /// No-partition fallback (bolty #143): wifi manager and credential
+    /// store both unavailable — console stays up, `wifi` reports
+    /// "manager unavailable" honestly instead of silently no-oping.
+    fn degraded() -> Self {
+        Self {
+            manager: None,
+            creds: None,
             #[cfg(feature = "ota-server")]
             ota_spawned: false,
         }
@@ -93,7 +125,17 @@ impl Network {
         };
         match manager.connect(&ssid_str, &pass_str) {
             Ok(()) => {
-                save_wifi_creds(&ssid_str, &pass_str);
+                // Surface persistence failures (bolty #144): the OTA
+                // recovery door is only real if the creds survive the
+                // reboot — a silent no-op here was the original bug.
+                // Heapless per the #193 discipline (no format!() on
+                // this target).
+                if let Err(err) = self.save_wifi_creds(&ssid_str, &pass_str) {
+                    log::warn!("nvs: credential save failed: {err}");
+                    let mut msg = String::<96>::new();
+                    let _ = write!(msg, "wifi connected but creds NOT stored: {err}");
+                    console.fail(msg.as_str());
+                }
                 self.report(console, true);
             }
             Err(err) => console.fail(&format!("wifi connect failed: {err:?}")),
@@ -102,11 +144,43 @@ impl Network {
 
     /// Boot-time autoconnect from persisted credentials.
     fn autoconnect(&mut self, console: &mut Console) {
-        let Some((ssid, password)) = load_wifi_creds() else {
+        let Some((ssid, password)) = self.load_wifi_creds() else {
             console.line("wifi: no stored credentials (use: wifi <ssid> <pass>)");
             return;
         };
         self.connect(console, ssid.as_str(), password.as_str());
+    }
+
+    /// Persist credentials (namespace `boltnv`); a truncated or missing
+    /// pair is treated as absent on load. Both blobs commit on write
+    /// (`EspNvs::set_blob` commits internally).
+    fn save_wifi_creds(
+        &self,
+        ssid: &WifiSsidString,
+        password: &WifiPasswordString,
+    ) -> Result<(), esp_idf_sys::EspError> {
+        let nvs = self
+            .creds
+            .as_ref()
+            .ok_or(esp_idf_sys::EspError::from_infallible::<
+                { esp_idf_sys::ESP_ERR_INVALID_STATE },
+            >())?;
+        nvs.set_blob(bolty_core::wifi_creds::KEY_SSID, ssid.as_bytes())?;
+        nvs.set_blob(bolty_core::wifi_creds::KEY_PASS, password.as_bytes())?;
+        Ok(())
+    }
+
+    fn load_wifi_creds(&self) -> Option<(WifiSsidString, WifiPasswordString)> {
+        let nvs = self.creds.as_ref()?;
+        let mut ssid_buf = [0u8; 32];
+        let mut pass_buf = [0u8; 64];
+        let ssid = nvs
+            .get_blob(bolty_core::wifi_creds::KEY_SSID, &mut ssid_buf)
+            .ok()??;
+        let password = nvs
+            .get_blob(bolty_core::wifi_creds::KEY_PASS, &mut pass_buf)
+            .ok()??;
+        bolty_core::wifi_creds::decode_creds_pair(Some(ssid), Some(password))
     }
 
     fn report(&mut self, console: &mut Console, verbose: bool) {
@@ -142,38 +216,6 @@ impl Network {
         Self
     }
     fn autoconnect(&mut self, _console: &mut Console) {}
-}
-
-/// Persisted wifi credentials (namespace `bultynv`) so the OTA door
-/// survives reboots. A truncated or missing pair is treated as absent.
-#[cfg(feature = "wifi")]
-fn save_wifi_creds(ssid: &WifiSsidString, password: &WifiPasswordString) {
-    use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
-    let Ok(partition) = EspDefaultNvsPartition::take() else {
-        log::warn!("nvs: default partition unavailable");
-        return;
-    };
-    let Ok(mut nvs) = EspNvs::new(partition, NVS_NAMESPACE, false) else {
-        log::warn!("nvs: namespace open failed");
-        return;
-    };
-    let _ = nvs.set_blob("ssid", ssid.as_bytes());
-    let _ = nvs.set_blob("pass", password.as_bytes());
-}
-
-#[cfg(feature = "wifi")]
-fn load_wifi_creds() -> Option<(WifiSsidString, WifiPasswordString)> {
-    use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs};
-
-    let partition = EspDefaultNvsPartition::take().ok()?;
-    let nvs = EspNvs::new(partition, NVS_NAMESPACE, true).ok()?;
-    let mut ssid_buf = [0u8; 32];
-    let mut pass_buf = [0u8; 64];
-    let ssid = nvs.get_blob("ssid", &mut ssid_buf).ok()??;
-    let password = nvs.get_blob("pass", &mut pass_buf).ok()??;
-    let ssid = WifiSsidString::try_from(core::str::from_utf8(ssid).ok()?).ok()?;
-    let password = WifiPasswordString::try_from(core::str::from_utf8(password).ok()?).ok()?;
-    Some((ssid, password))
 }
 
 pub fn main() {
@@ -216,10 +258,20 @@ pub fn main() {
     console.line("[BOOT] bolty nucula frontend (issue #115)");
     console.ok_fmt(&["[BOOT] board=", BOARD_NAME, " built=", BUILD_EPOCH]);
 
-    // Wifi modem goes to the network stack before the NFC block claims
-    // its pins (Peripherals::take is single-shot; the split is by field).
+    // Wifi modem + NVS partition go to the network stack before the NFC
+    // block claims its pins (Peripherals::take is single-shot; the split
+    // is by field). The default NVS partition is taken exactly ONCE
+    // (bolty #143) — `EspDefaultNvsPartition::take()` is a global
+    // singleton, so every later take() fails; the wifi driver and the
+    // credential store share clones of this one Arc-backed handle.
     #[cfg(feature = "wifi")]
-    let mut network = Network::new(peripherals.modem);
+    let mut network = match esp_idf_svc::nvs::EspDefaultNvsPartition::take() {
+        Ok(partition) => Network::new(peripherals.modem, &partition),
+        Err(err) => {
+            log::error!("nvs: default partition unavailable: {err}");
+            Network::degraded()
+        }
+    };
     #[cfg(not(feature = "wifi"))]
     let mut network = Network::new();
 

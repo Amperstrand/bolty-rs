@@ -2,6 +2,8 @@ use core::fmt;
 
 use bolty_core::config::{WifiPasswordString, WifiSsidString};
 use esp_idf_hal::modem::Modem;
+#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
+use esp_idf_svc::mdns::EspMdns;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     nvs::EspDefaultNvsPartition,
@@ -9,9 +11,6 @@ use esp_idf_svc::{
 };
 use esp_idf_sys::EspError;
 use log::info;
-
-#[cfg(any(esp_idf_comp_mdns_enabled, esp_idf_comp_espressif__mdns_enabled))]
-use esp_idf_svc::mdns::EspMdns;
 
 #[allow(dead_code)]
 const MDNS_HOSTNAME: &str = "bolty";
@@ -56,9 +55,13 @@ pub struct WifiManager {
 }
 
 impl WifiManager {
-    pub fn new(modem: Modem<'static>) -> Result<Self, WifiError> {
+    /// `nvs` is the shared default-partition handle (bolty #143): the
+    /// caller takes `EspDefaultNvsPartition::take()` exactly ONCE in
+    /// `main` and passes clones here — the partition is Arc-backed, and
+    /// `EspWifi` stores its calibration data in the `nvs.net80211`
+    /// namespace on the same partition.
+    pub fn new(modem: Modem<'static>, nvs: EspDefaultNvsPartition) -> Result<Self, WifiError> {
         let sys_loop = EspSystemEventLoop::take()?;
-        let nvs = EspDefaultNvsPartition::take()?;
         let wifi = BlockingWifi::wrap(EspWifi::new(modem, sys_loop.clone(), Some(nvs))?, sys_loop)?;
 
         Ok(Self {
