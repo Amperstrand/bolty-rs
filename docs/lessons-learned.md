@@ -872,3 +872,95 @@ infra, opt-in only). The probe itself runs in a killable subprocess — the
 one mid-exchange kill that is safe by design. If wedges persist at this
 rate, capture a usbmon trace of one and draft an ACS technical-support
 report (owner-only channel).
+
+## B33 — The "dead" ACR1252 was a config write, not a death: NVM auto-poll-off masquerades as RF failure across replugs AND host moves (#214, #208; 2026-10-25)
+
+Evidence: 2026-10-22 22:22 local — the `cashu phone-vs-device` HIL session
+(opencode log, `/tmp/opencode/phone-hil`) ran, labeled "quiet auto-poll":
+
+    SCardControl(h, CM_IOCTL_SMARTCARD_DIRECT, toBytes("E0 00 00 23 01 00"))
+
+— Set Automatic PICC Polling with setting 0x00 (API V1.17 §5.4.7:
+**"The setting will be saved into non-volatile memory"**; doc default
+0x8B). Intent: RF-silence the ACR while testing the phone against the
+M5Stick. Consequence: from that moment the reader never polls → never
+detects any card — through all three B32 wedge cycles, through every
+replug, and through the host move to ai-legion-small. On 2026-10-25 the
+reader (card `04c474fa967380` physically on the antenna) read back
+`FF 00 50` → `90 3F` (param 0x3F: bit7 auto-poll=0, bit6 auto-ATS=0) and
+`E0 00 00 23 00` → setting `0x00`. Two writes restored it:
+`FF 00 51 FF 00` + `SCardControl(CTL_CODE(1), E0 00 00 23 01 8B)`; the
+NTAG424 answered within one 250 ms poll cycle — 5/5 stable UID reads.
+One 0x00 polling write flips BOTH register views (the FF 00 50 param
+mirrors the polling state in this firmware) — the ATS-off bit piggybacks.
+
+**Why two days of diagnosis went sideways (the confusion chain)**:
+
+1. `90 3F` was misread as an "abnormal firmware response" — it is the
+   NORMAL Get PICC Operating Parameter echo (`90 <param>`, §5.7.3), and a
+   healthy reader returns the identical bytes for the identical command.
+   The prior session's PDF copy was a broken 5 KB stub (the real manual
+   is 1.2 MB; mirrors: elvantic.com / rpi4cluster.com / device.report —
+   saved at `/tmp/opencode/acr1252u-api-full.pdf`).
+2. "No card detection" was only ever tested against the S20 HCE phone —
+   which had NEVER coupled, even before the poll-off write. The J3R180 /
+   MIFARE detections quoted as "before the wedge" predate 22:22; a
+   `printf` of a canned "ATR 3b8180018080" checkin line (found in the
+   10-23 logs) was template output, not a live detection. No physical
+   card was ever placed on the antenna after the write until 2026-10-25.
+3. The B32 wedges (real USB hangs, 18:23–18:26 10-23) were blamed for a
+   detection failure that had started ~20 h earlier. Wedge ≠ config:
+   the wedge signature is hangs/NO_DEVICE (B32); the config signature is
+   everything healthy + EMPTY forever. The 2026-10-24 #208 sweep
+   ("all host readers empty of burn cards") was reading a poll-off
+   reader as "no card placed" — the exact #208 blocker.
+
+**The 30-second discriminator** (use before ANY "reader died" debugging):
+`lsusb` shows it + `FF 00 48 00 00` returns the firmware ASCII + shared
+connect answers instantly (even `NO_SMARTCARD`) + `FF 00 50 00 00`
+returns `90 3F`-style → the reader is ALIVE; if the param bit7=0 or the
+`E0 00 00 23 00` setting bit0=0 → config, not hardware. Restore is two
+writes, no replug, no pcscd restart. On this pcscd/ccid stack the escape
+route is `SCardControl(SCARD_CTL_CODE(1)=0x42000001, E0 …)`; the
+CM_IOCTL_SMARTCARD_DIRECT (CTL 1960) from the ACS examples returns
+0x8010001f here (verified live).
+
+**ACR1252U facts worth keeping** (API V1.17 + web, zread had nothing —
+not indexed):
+
+- Transparent session (`FF C2 00 00` + DO `81` start / `82` end, §5.2.1)
+  suspends auto-polling TEMPORARILY and restores it on session end — the
+  correct tool for RF-quiet experiments; RF field on/off DOs `83`/`84`
+  are volatile too. NEVER use E0 00 00 23 for quieting; it is NVM.
+- `FF 00 50`/`FF 00 51` = get/set PICC operating param (bit7 poll, bit6
+  auto-ATS, bit5 250/500 ms, bit4-0 tag types). Bench default 0xFF.
+  MIFARE Classic detection requires auto-ATS=0 — that is why ATS was off
+  in 0x3F; if MIFARE tests are needed, flip bit6 for the session and
+  RESTORE (the check-out audit will flag it otherwise).
+- Polling-setting defaults: V1.17 says 0x8B, V1.02 said 0x8F (bit layout
+  also drifted: bit3 "activate PICC" → RFU, bit6 → NXP MIFARE selection,
+  "firmware 111.1 and above"). Our V101.0 reader accepts 0x8B; either
+  value has poll+activate on.
+- Power-save reminder (§5.4.7): antenna-off-when-idle bits cut idle
+  current 130→60 mA AND stop cards "warming up" on the antenna — nice
+  for NTAG424 longevity on this bench.
+- Firmware update path: the reader re-enumerates as bootloader PID
+  072f:223D ("ACR1252 BL", per acsccid reader table); updater is
+  Windows-only from the ACS SDK — owner-only, and it changes the
+  reference oracle (B32 already ruled this low-confidence).
+- acsccid (github.com/acshk/acsccid) is ACS's own IFD handler if the
+  stock ccid driver ever lacks a reader; libnfc does NOT support the
+  ACR1252U (nfc-tools/libnfc#658) — PC/SC only.
+
+**Prevention (landed with this lesson)**: `tools/hil` check-in probe now
+audits both NVM registers and returns state `cfg` (card-coupled AND
+no-card variants both covered); check-in heals to defaults
+automatically (no pcscd touch — safe where the B32 shallow heal is
+opt-in; `BOLTY_ACR_CFG_HEAL=0` skips), check-out re-audits, and
+card-consuming tests skip loudly with the restore pointer if drift
+survives. The systemic contract (AGENTS.md): bench-reader NVM config is
+SHARED bench state — sibling sessions mutate it invisibly and place
+locks do not cover state that outlives the session; only hardware-read
+audits (#209's bare-CLI gap is the same class) catch it. Restoration
+duty: any experiment that writes reader NVM restores defaults before
+releasing the place, or uses a transparent session instead.

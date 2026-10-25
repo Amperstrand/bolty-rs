@@ -25,6 +25,17 @@ ccid-firmware-rs (ai-legion). Before any bench work with an NFC device:
    practices — coordinator address, exporter state, exclusion domains,
    trusted-network security — live in **conwrt-bench
    `docs/labgrid-coordination.md`** (single source of truth).
+5. **Bench-reader NVM config is shared state (B33)** — the ACR1252 has
+   TWO EEPROM registers that can silently kill card detection across
+   replugs AND host moves (auto-polling + PICC operating param). Never
+   leave them non-default; for temporary RF quiet use a transparent
+   session (`FF C2 … 81`/`82`, API §5.2.1) which auto-restores. The
+   `tools/hil` check-in probe audits both registers and heals them to
+   defaults (`BOLTY_ACR_CFG_HEAL=0` to skip); manual restore:
+   `python3 -m hil.acr_probe --restore` from tools/hil/. If a reader
+   "sees no cards" while USB/firmware answer fine, read
+   `FF 00 50 00 00` FIRST — a `90 3F`-style response means polling is
+   off, not that the reader died (lesson B33, issue #214).
 
 The M5Stack Atom + MFRC522 rig (bolty's primary target) is the `m5stick`
 place; the nucula (PN7160) is available for differential NFC work.
@@ -127,6 +138,13 @@ BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
   it (session log in docs/hil-runbook-2026-10-13.md). Reader selection in
   bolty-cli skips virtual vpcd readers and honors `BOLTY_READER` (#121) /
   `--reader` (loud error on an unmatched pin) / `bolty-cli readers` (#134).
+- ACR1252 health (2026-10-25): FULLY RECOVERED on ai-legion-small after
+  the 2026-10-22→24 "death" was root-caused as an NVM auto-poll-off
+  write by a sibling session (B33) — NOT hardware damage, NOT the B32
+  wedges. USB/CCID/firmware were healthy the whole time; restore =
+  `FF 00 51 FF 00` + `E0 00 00 23 01 8B`, verified by 5/5 NTAG424 UID
+  reads (`04c474fa967380` on the antenna). Config now audited + healed
+  automatically at every HIL check-in (conftest, B33).
 
 ## Card Recovery: UID 043365FA967380 — RESOLVED 2026-10-19
 
