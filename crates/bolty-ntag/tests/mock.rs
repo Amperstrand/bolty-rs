@@ -430,10 +430,19 @@ impl MockTransport {
             "NDEF EF must be selected before ISOReadBinary"
         );
         let offset = u16::from_be_bytes([apdu[2], apdu[3]]) as usize;
-        let source = self.ndef_override_next.take().unwrap_or_else(|| self.ndef.clone());
+        // ISO-DEP: Le = 0x00 requests the short-form maximum of 256 bytes
+        // (latent mock bug — the plain-read path had no test until
+        // safe_inspect, so Le=0 always returned an empty payload).
+        let len = if apdu[4] == 0 { 256 } else { apdu[4] as usize };
+        let source = self
+            .ndef_override_next
+            .take()
+            .unwrap_or_else(|| self.ndef.clone());
         let end = (offset + len).min(source.len());
         let start = offset.min(end);
-        Self::ok(source[start..end].to_vec())
+        // ISOReadBinary is an ISO-DEP command: SW is 9000, not Desfire 9100
+        // (latent mock bug — this path had no test until safe_inspect).
+        Self::response(source[start..end].to_vec(), 0x90, 0x00)
     }
 }
 

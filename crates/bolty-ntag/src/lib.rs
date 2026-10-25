@@ -285,7 +285,7 @@ pub async fn safe_inspect<T: Transport>(
                         // SAFETY: clamped via .min(buf.len()).
                         #[allow(clippy::indexing_slicing)]
                         let second_bytes = &buf[..len2.min(buf.len())];
-                        if Some(second_bytes) == first.as_deref() {
+                        if first.as_slice() == second_bytes {
                             SdmMirroring::Static
                         } else {
                             SdmMirroring::Live
