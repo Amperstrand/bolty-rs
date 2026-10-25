@@ -272,3 +272,44 @@ def test_acr_only_place_constant_matches_makefile_leaf():
     conftest = _load_conftest()
     assert conftest.LABGRID_PLACE_ACR_ONLY == "ref-acr1252"
     assert conftest.LABGRID_PLACE == "bolty-rig"
+
+
+# ── B33 config audit (2026-10-25) ──────────────────────────────────────
+
+
+def test_b33_parse_picc_param():
+    from hil import acr_probe
+
+    assert acr_probe.parse_picc_param([0x90, 0x3F]) == 0x3F
+    assert acr_probe.parse_picc_param([0x90, 0xFF]) == 0xFF
+    assert acr_probe.parse_picc_param([0x63, 0x00]) is None
+    assert acr_probe.parse_picc_param([]) is None
+
+
+def test_b33_parse_polling():
+    from hil import acr_probe
+
+    assert acr_probe.parse_polling([0xE1, 0x00, 0x00, 0x00, 0x01, 0x00]) == 0x00
+    assert acr_probe.parse_polling([0xE1, 0x00, 0x00, 0x00, 0x01, 0x8B]) == 0x8B
+    assert acr_probe.parse_polling([0xE1, 0x00, 0x00, 0x00, 0x02, 0x8B]) is None
+    assert acr_probe.parse_polling(None) is None
+
+
+def test_b33_audit_flags_the_incident_state():
+    from hil import acr_probe
+
+    ok, notes = acr_probe.audit_config(
+        {"picc_param": 0x3F, "polling": 0x00}
+    )
+    assert not ok and "auto-poll OFF" in notes
+    ok, _ = acr_probe.audit_config({"picc_param": 0xFF, "polling": 0x8B})
+    assert ok
+    ok, _ = acr_probe.audit_config({"picc_param": None, "polling": None})
+    assert not ok
+
+
+def test_b33_skip_reason_points_at_restore():
+    conftest = _load_conftest()
+    reason = conftest._wedge_skip_reason("cfg")
+    assert reason is not None and "--restore" in reason and "B33" in reason
+    assert conftest._wedge_skip_reason("ok") is None
