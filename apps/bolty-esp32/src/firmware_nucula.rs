@@ -447,8 +447,22 @@ fn handle_line(
                                     result.ndef_bytes.as_ref().map_or(0, Vec::len)
                                 );
                                 console.line(out.as_str());
+                                // Key-free SDM assessment: the nucula console
+                                // stages no keys, so sdm_verification is always
+                                // None here — mirroring liveness is judged from
+                                // two consecutive NDEF reads instead (the old
+                                // print was structurally always-false).
                                 let mut sdm = String::<128>::new();
-                                let _ = write!(sdm, "sdm={:?}", result.sdm_verification.is_some());
+                                let _ = write!(
+                                    sdm,
+                                    "sdm={}",
+                                    match result.sdm_mirroring {
+                                        bolty_ntag::SdmMirroring::Live => "live",
+                                        bolty_ntag::SdmMirroring::Static => "static",
+                                        bolty_ntag::SdmMirroring::Off => "off",
+                                        bolty_ntag::SdmMirroring::Unknown => "unknown",
+                                    }
+                                );
                                 console.line(sdm.as_str());
                             }
                             Err(err) => console.fail(&format!("inspect failed: {err:?}")),
