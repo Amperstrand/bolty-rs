@@ -328,21 +328,44 @@ cd /home/ubuntu/src/bolty-rs
 - NXP Community: Change Keys and "lock" NTAG DNA 424
 - AndroidCrypto: A comprehensive overview of all keys for the NTAG424 NFC chip
 
-## KNOWN-GOOD NUCULA C3 — board-nucula firmware (2026-10-23, bench-verified)
+## KNOWN-GOOD NUCULA C3 — board-nucula firmware (2026-10-23, re-verified 2026-10-25 @ main c562a1d)
 
-The nucula C3 runs bolty `board-nucula` firmware at main (PRs #185/#186/#193),
-fully functional with a coupled NTAG424 card. This is the reference state
+The nucula C3 runs bolty `board-nucula` firmware at main (PRs #185/#186/#193;
+re-flashed + re-verified at `c562a1d` on 2026-10-25, see the console-contract
+bullet), fully functional with a coupled card. This is the reference state
 for the #115 frontend and any future nucula work:
 
 - **Console**: fully interactive over `/dev/ttyACM0` at 115200 (commands:
   help/status/uid/poll/inspect/ver/wifi). Requires the `UsbSerialDriver`
   peripheral claim at boot (#186) — without it, the ROM owns USB_SERIAL_JTAG
   and mirrors TX only (stdin never arms, host writes stall at USB level).
+- **Console contract (#204/#205, hardware-verified 2026-10-25)**: overlong
+  lines fail exactly once with `command too long` and the trailing command
+  does NOT execute (513-pad+`poll` proven on-device); a 512-byte line parses
+  (unknown-command echo, truncated at the 384-byte `ok_fmt` cap — capacity
+  behavior, not a parser limit); the first line after an overlong one
+  answers normally. Transport caveat: the USB_SERIAL_JTAG RX buffer is
+  1024 bytes — a host that writes MORE than ~1KB back-to-back (e.g. a long
+  pad line immediately followed by a command) loses the burst TAIL; settle
+  briefly between a >1KB write and the next command.
+- **Console daemon**: `bolty-console-c3.service` (systemd, enabled) owns
+  `/dev/ttyACM0` via `/run/bolty/console-c3.sock` (journal:
+  `/root/.bolty/console-c3.log`). FLASHING REQUIRES
+  `systemctl stop bolty-console-c3` first — SIGTERM-ing the python process
+  alone does nothing (systemd respawns it mid-flash and espflash dies with
+  "Communication error"; rediscovered 2026-10-25).
 - **Reader**: PN7160 up with full NCI ladder logged at boot; `[OK] PN7160
   reader up (NCI-DEP power-on)` appears ~500ms after reset.
 - **Card ops**: `status → nfc=ok session=active uid=<UID>`, `poll → [OK] card
   up`, `uid → [OK] uid=<UID>`, `inspect → uid=<UID> ndef_bytes=N sdm=<bool>` —
-  all proven against `04c474fa967380`, run twice consecutively without leak.
+  all proven against `04c474fa967380` (2026-10-23), run twice consecutively
+  without leak. 2026-10-25 note: the antenna then held a RANDOM-ID tag
+  (`08:4C:13:19`, 88-byte NDEF, sdm=false — not the known NTAG; possibly the
+  S20 lying on the antenna). A random-ID/junk coupling also sprays
+  `pn7160_nci read_frame` warnings at ~5 Hz, which floods the console
+  daemon's 400-line ring and breaks its 1.0s quiescence detection (socket
+  replies stall to the 40s cap). Keep non-NTAG RF emitters off the C3
+  antenna during console work.
 - **Heap discipline**: all console output MUST be heapless (`String<N>` via
   `write!()` — NEVER `format!()` on this target; the C3 has ~143KB heap
   shared by WiFi+PN7160+console; `format!()` exhausted it and crashed the
