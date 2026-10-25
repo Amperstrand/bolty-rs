@@ -365,7 +365,18 @@ for the #115 frontend and any future nucula work:
   `pn7160_nci read_frame` warnings at ~5 Hz, which floods the console
   daemon's 400-line ring and breaks its 1.0s quiescence detection (socket
   replies stall to the 40s cap). Keep non-NTAG RF emitters off the C3
-  antenna during console work.
+  antenna during console work — EXCEPT in relay mode (next bullet), where
+  the S20 IS the intended antenna occupant.
+- **Virtual NTAG424 over the S20 (2026-10-25, bench-proven)**: the S20's
+  `dev.boltcard.hce` app has a relay mode (tap its screen to toggle) that
+  forwards every APDU to a bridge on ai-legion-small (`boltcard-relay-bridge`
+  systemd unit, /root/bench/relay_bridge.py, pcsc→ACR1252), giving the C3
+  virtual access to the REAL NTAG424 coupled over there — no hardware moves.
+  Proven with `poll`/`uid`/`inspect`: live SDM NDEF read through two wireless
+  hops, p= counter ticking between reads, 2–17 ms/APDU. RF-level UID is the
+  phone's random ID (unrelayable); the console `sdm=` heuristic shows false
+  even while mirroring is live on the wire. Full architecture + ops in
+  /root/src/boltcard-hce/AGENTS.md (relay mode section).
 - **Heap discipline**: all console output MUST be heapless (`String<N>` via
   `write!()` — NEVER `format!()` on this target; the C3 has ~143KB heap
   shared by WiFi+PN7160+console; `format!()` exhausted it and crashed the
