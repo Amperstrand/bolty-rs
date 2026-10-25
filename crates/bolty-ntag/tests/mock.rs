@@ -52,6 +52,9 @@ pub struct MockTransport {
     ndef_ef_selected: bool,
     ndef: Vec<u8>,
     file_settings: Vec<u8>,
+    /// One-shot replacement served by the next NDEF read then cleared —
+    /// models an SDM card whose mirrored PICC data ticks between reads.
+    ndef_override_next: Option<Vec<u8>>,
     pending_auth: Option<PendingAuth>,
     session: Option<SessionState>,
     version_step: u8,
@@ -109,6 +112,7 @@ impl MockTransport {
             ndef_ef_selected: false,
             ndef,
             file_settings,
+            ndef_override_next: None,
             pending_auth: None,
             session: None,
             version_step: 0,
@@ -121,6 +125,11 @@ impl MockTransport {
 
     pub fn key_versions(&self) -> &[u8; 5] {
         &self.key_versions
+    }
+
+    /// Serve `next` from exactly one subsequent NDEF read (SDM tick).
+    pub fn override_next_ndef_read(&mut self, next: Vec<u8>) {
+        self.ndef_override_next = Some(next);
     }
 
     pub fn ndef(&self) -> &[u8] {
@@ -421,10 +430,10 @@ impl MockTransport {
             "NDEF EF must be selected before ISOReadBinary"
         );
         let offset = u16::from_be_bytes([apdu[2], apdu[3]]) as usize;
-        let len = apdu[4] as usize;
-        let end = (offset + len).min(self.ndef.len());
+        let source = self.ndef_override_next.take().unwrap_or_else(|| self.ndef.clone());
+        let end = (offset + len).min(source.len());
         let start = offset.min(end);
-        Self::ok(self.ndef[start..end].to_vec())
+        Self::ok(source[start..end].to_vec())
     }
 }
 

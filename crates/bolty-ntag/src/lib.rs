@@ -118,6 +118,20 @@ pub struct SafeInspectResult {
     pub file_settings: Option<FileSettingsView>,
     pub ndef_bytes: Option<Vec<u8>>,
     pub sdm_verification: Option<SdmVerification>,
+    /// Key-free SDM mirroring assessment (consoles without staged keys):
+    /// `Live` = SDM configured and two consecutive NDEF reads differ —
+    /// the card is actively mirroring PICC data; `Static` = configured,
+    /// reads identical; `Off` = no SDM in the file settings; `Unknown`
+    /// = settings or second read unavailable.
+    pub sdm_mirroring: SdmMirroring,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SdmMirroring {
+    Live,
+    Static,
+    Off,
+    Unknown,
 }
 
 #[derive(Debug)]
@@ -257,12 +271,39 @@ pub async fn safe_inspect<T: Transport>(
         _ => None,
     };
 
+    let sdm_mirroring = match &file_settings {
+        None => SdmMirroring::Unknown,
+        Some(settings) => match settings.sdm {
+            None => SdmMirroring::Off,
+            Some(_) => {
+                let second = session
+                    .read_file_unauthenticated(transport, File::Ndef, 0, &mut buf)
+                    .await
+                    .ok();
+                match (&ndef_bytes, second) {
+                    (Some(first), Some(len2)) => {
+                        // SAFETY: clamped via .min(buf.len()).
+                        #[allow(clippy::indexing_slicing)]
+                        let second_bytes = &buf[..len2.min(buf.len())];
+                        if Some(second_bytes) == first.as_deref() {
+                            SdmMirroring::Static
+                        } else {
+                            SdmMirroring::Live
+                        }
+                    }
+                    _ => SdmMirroring::Unknown,
+                }
+            }
+        },
+    };
+
     Ok(SafeInspectResult {
         uid,
         version,
         file_settings,
         ndef_bytes,
         sdm_verification,
+        sdm_mirroring,
     })
 }
 
