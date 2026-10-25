@@ -31,13 +31,14 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
 from hil import BoltyCli, BoltyError, CardRegistry
-from hil.acr_probe import heal_hint, probe_isolated
+from hil.acr_probe import cfg_heal_hint, heal_hint, probe_isolated
 from hil.bolty import DEFAULT_CONSOLE_CTL
 from hil.labgrid_state import note_rig_state
 
@@ -199,12 +200,14 @@ def _wrap_pcscd_reader(bench_lock):
 
 
 def _acr_checkin(session) -> None:
-    """B29 rule 1 / B32: probe the ACR1252 the moment the session owns the
-    bench. 'wedge' prints the heal ladder; the deep class is owner-replug
-    (no switched hub on this bench — owner decision 2026-10-19), so burning
-    session minutes on a wedged reader is the failure this prevents.
-    BOLTY_ACR_AUTOHEAL=1 opts into the shallow heal (pcscd restart — shared
-    infra, opt-in only)."""
+    """B29 rule 1 / B32 / B33: probe the ACR1252 the moment the session
+    owns the bench. 'wedge' prints the heal ladder; the deep class is
+    owner-replug (no switched hub on this bench — owner decision
+    2026-10-19), so burning session minutes on a wedged reader is the
+    failure this prevents. BOLTY_ACR_AUTOHEAL=1 opts into the shallow heal
+    (pcscd restart — shared infra, opt-in only). 'cfg' (B33 poll-off NVM
+    drift) heals WITHOUT pcscd by default — direct-mode default restores
+    under the already-held rig lock (BOLTY_ACR_CFG_HEAL=0 to skip)."""
     import os
 
     result = probe_isolated()
@@ -224,6 +227,23 @@ def _acr_checkin(session) -> None:
                 f"[acr-checkin] after autoheal (rc={healed.returncode}): "
                 f"{result['state']}: {result['detail']}"
             )
+    elif result["state"] == "cfg":
+        if os.environ.get("BOLTY_ACR_CFG_HEAL") != "0":
+            print(cfg_heal_hint())
+            healed = subprocess.run(
+                [sys.executable, "-m", "hil.acr_probe", "--restore", "--json"],
+                capture_output=True, text=True, timeout=30,
+                cwd=str(REPO_ROOT / "tools" / "hil"),
+            )
+            result = probe_isolated()
+            session.stash[ACR_STATE_KEY] = result["state"]
+            print(
+                f"[acr-checkin] after B33 cfg-heal (rc={healed.returncode}): "
+                f"{result['state']}: {result['detail']}"
+            )
+        else:
+            print("[acr-checkin] BOLTY_ACR_CFG_HEAL=0 — leaving reader "
+                  "config as found (B33 drift NOT healed)")
     elif result["state"] == "absent":
         print("[acr-checkin] ACR1252 not listed by pcscd — hardware tests "
               "will skip via coupled_card_uid")
@@ -239,9 +259,10 @@ def _lg_client_p(place: str, *args: str, timeout_s: float = 15):
 
 
 LG_RESERVE_TOKEN_KEY = pytest.StashKey[str]()
-# B32 ACR check-in state ('ok' | 'wedge' | 'absent' | 'no-service' |
-# 'unknown'); set when the rig is held, read by coupled_card_uid and the
-# session ledger. None key default = probe not run (non-hardware session).
+# B32/B33 ACR check-in state ('ok' | 'wedge' | 'cfg' | 'absent' |
+# 'no-service' | 'unknown'); set when the rig is held, read by
+# coupled_card_uid and the session ledger. None key default = probe not
+# run (non-hardware session).
 ACR_STATE_KEY = pytest.StashKey[str]()
 RIG_HELD_KEY = pytest.StashKey[bool]()
 
@@ -493,6 +514,9 @@ def pytest_sessionfinish(session, exitstatus):
         print(f"[acr-checkout] {checkout['state']}: {checkout['detail']}")
         if checkout["state"] == "wedge":
             print(heal_hint())
+        elif checkout["state"] == "cfg":
+            print(cfg_heal_hint() + " — config left drifted at checkout "
+                  "(B33: the next session's check-in will heal it)")
     if session.stash.get(LG_ACQUIRED_KEY, False) and not session.stash.get(
         LG_INHERITED_KEY, False
     ):
@@ -552,11 +576,15 @@ def console_ctl() -> str:
 
 
 def _wedge_skip_reason(acr_state: str):
-    """B32: a wedge detected at check-in must fail fast with the pointer,
-    not burn session minutes on per-test timeouts."""
+    """B32/B33: a wedge or unhealed config drift detected at check-in must
+    fail fast with the pointer, not burn session minutes on per-test
+    timeouts."""
     if acr_state == "wedge":
         return ("ACR1252 wedge detected at check-in (B32) — heal per the "
                 "session-header ladder before spending session time")
+    if acr_state == "cfg":
+        return ("ACR1252 auto-polling disabled in NVM at check-in (B33) — "
+                "run `python3 -m hil.acr_probe --restore` from tools/hil/")
     return None
 
 
