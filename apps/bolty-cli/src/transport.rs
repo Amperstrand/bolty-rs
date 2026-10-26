@@ -217,11 +217,19 @@ impl PcscTransport {
     }
 }
 
+
+fn hex_preview(d: &[u8]) -> String {
+    d.iter().take(24).map(|b| format!("{b:02X}")).collect::<String>()
+}
+
 impl Transport for PcscTransport {
     type Error = PcscError;
     type Data = Vec<u8>;
 
     async fn transmit(&mut self, apdu: &[u8]) -> Result<Response<Vec<u8>>, Self::Error> {
+        if std::env::var_os("BOLTY_APDU_LOG").is_some() {
+            eprintln!("APDU> {}", apdu.iter().map(|b| format!("{b:02X}")).collect::<String>());
+        }
         let mut recv_buf = [0u8; 261]; // Max APDU response size
         let rapdu = self
             .card
@@ -243,6 +251,9 @@ impl Transport for PcscTransport {
         #[allow(clippy::indexing_slicing)]
         let sw2 = rapdu[rapdu.len() - 1];
 
+        if std::env::var_os("BOLTY_APDU_LOG").is_some() {
+            eprintln!("<SW {sw1:02X}{sw2:02X} ({})", hex_preview(&data));
+        }
         Ok(Response { data, sw1, sw2 })
     }
 
@@ -260,6 +271,18 @@ impl Transport for PcscTransport {
             self.protocol,
             pcsc::Disposition::ResetCard,
         );
+        // A reconnect re-activates the card, and javacard NTAG424 emulators
+        // (unlike real NTAG424 tags) do NOT implicitly re-select the NDEF
+        // application at activation — native 0x90 commands then land on the
+        // wrong app and fail 6E00. Re-select explicitly; idempotent on real
+        // tags. (Bench-proven on the J3R180 ntag424-applet, 2026-10-26.)
+        let select_ndef = [
+            0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00,
+        ];
+        let _ = self
+            .card
+            .transmit(&select_ndef, &mut [0u8; 261])
+            .map_err(|e| PcscError::Transmit(format!("NDEF re-select after reconnect: {e}")))?;
 
         if response.sw1 != 0x90 || response.sw2 != 0x00 {
             return Err(PcscError::Transmit(format!(
