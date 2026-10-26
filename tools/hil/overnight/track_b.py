@@ -1004,17 +1004,28 @@ def register(ctx):
 
 def build_lane():
     """LaneSpec for overnight.load_track_specs; duck-typed fallback when
-    the (in-flight) orchestrator module is not importable."""
+    the orchestrator module is not importable (mirrors sibling tracks).
+
+    The fallback also covers a shadowed import: when tools/hil/overnight/
+    is a package (sibling __init__.py), `import overnight` under pytest
+    resolves to that docstring-only package, which has no LaneSpec
+    (sys.modules caches the binding; later sys.path inserts cannot
+    rebind) — this kept test_build_lane_shape red on an otherwise clean
+    tree.  Same shape as track_c.build_lane / track_a_rest.build_lane.
+    """
+    spec_cls = None
     try:
         import overnight
+        spec_cls = getattr(overnight, "LaneSpec", None)
     except ImportError:
+        pass
+    if spec_cls is None:
         from types import SimpleNamespace
         return SimpleNamespace(name="track_b_acr", target=register,
                                window="all_night", cards=("acr",),
                                needs_pcscd=True, pace_s=CYCLE_PACE_S)
-    return overnight.LaneSpec("track_b_acr", register, window="all_night",
-                              cards=("acr",), needs_pcscd=True,
-                              pace_s=CYCLE_PACE_S)
+    return spec_cls("track_b_acr", register, window="all_night",
+                    cards=("acr",), needs_pcscd=True, pace_s=CYCLE_PACE_S)
 
 
 # -------------------------------------------------------------- selftest ----
