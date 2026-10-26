@@ -217,9 +217,11 @@ impl PcscTransport {
     }
 }
 
-
 fn hex_preview(d: &[u8]) -> String {
-    d.iter().take(24).map(|b| format!("{b:02X}")).collect::<String>()
+    d.iter()
+        .take(24)
+        .map(|b| format!("{b:02X}"))
+        .collect::<String>()
 }
 
 impl Transport for PcscTransport {
@@ -228,7 +230,10 @@ impl Transport for PcscTransport {
 
     async fn transmit(&mut self, apdu: &[u8]) -> Result<Response<Vec<u8>>, Self::Error> {
         if std::env::var_os("BOLTY_APDU_LOG").is_some() {
-            eprintln!("APDU> {}", apdu.iter().map(|b| format!("{b:02X}")).collect::<String>());
+            eprintln!(
+                "APDU> {}",
+                apdu.iter().map(|b| format!("{b:02X}")).collect::<String>()
+            );
         }
         let mut recv_buf = [0u8; 261]; // Max APDU response size
         let rapdu = self
