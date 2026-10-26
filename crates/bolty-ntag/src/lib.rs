@@ -383,7 +383,13 @@ pub async fn burn<T: Transport>(
 
     let mut read_buf = [0u8; 256];
     let read_len = session
-        .read_file_plain(transport, File::Ndef, 0, 0, &mut read_buf)
+        .read_file_plain(
+            transport,
+            File::Ndef,
+            0,
+            plan.ndef_bytes.len() as u32,
+            &mut read_buf,
+        )
         .await?;
     // SAFETY: read_buf is [u8; 256], NDEF templates are always <= 256 bytes.
     #[allow(clippy::indexing_slicing)]
