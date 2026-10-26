@@ -54,3 +54,11 @@ alias        = "hce-s20-emulated"
 reader_hint  = "ACR1252"
 ops          = ["read", "burn", "wipe"]
 state        = "any"
+
+# J3R180 JavaCard with NTAG424-emulation applet (Play2BReal/ntag424-applet).
+# Applet ≠ NTAG424 silicon — use --emu-card flag on the harness.
+[cards.04337d8aae1790]
+alias        = "j3r180-vntag424-emulator"
+reader_hint  = "ACR1252"
+ops          = ["read", "burn", "wipe"]
+state        = "any"

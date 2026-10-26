@@ -20,6 +20,8 @@ mod scan_keys;
 mod testck;
 mod transport;
 mod try_key;
+mod f5probe;
+mod set_card_uid;
 pub(crate) mod uid;
 mod ver;
 mod wipe;
@@ -236,6 +238,13 @@ enum Cli {
 
     /// Try a raw AES key against a specific key slot (read-only, no writes).
     /// Useful for card recovery when you don't know which key is on the card.
+    F5Probe,
+
+    SetCardUid {
+        #[arg(long)]
+        uid: String,
+    },
+
     TryKey {
         /// Raw 16-byte key in hex (32 chars)
         #[arg(long)]
@@ -635,6 +644,14 @@ async fn run() -> anyhow::Result<()> {
             println!("\n🎉 Full cycle completed successfully!");
         }
 
+        Cli::SetCardUid { uid } => {
+            let mut transport = connect_transport()?;
+            set_card_uid::cmd_set_card_uid(&mut transport, &uid).await?;
+        }
+        Cli::F5Probe => {
+            let mut transport = connect_transport()?;
+            f5probe::cmd_f5probe(&mut transport).await?;
+        }
         Cli::TryKey {
             key,
             key_no,

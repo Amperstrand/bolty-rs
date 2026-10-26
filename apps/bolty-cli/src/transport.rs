@@ -263,6 +263,19 @@ impl Transport for PcscTransport {
     }
 
     async fn get_uid(&mut self) -> Result<Self::Data, Self::Error> {
+        // BOLTY_UID_OVERRIDE (hex): skip the FF CA pseudo-APDU —
+        // vpcd drivers race their presence-poll ATR against the first
+        // client transmit (ATR tail delivered as SW).
+        if let Some(u) = std::env::var_os("BOLTY_UID_OVERRIDE") {
+            let s = u.to_string_lossy().to_ascii_lowercase();
+            if s.len() == 14 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                let mut out = Vec::with_capacity(7);
+                for i in (0..14).step_by(2) {
+                    out.push(u8::from_str_radix(&s[i..i + 2], 16).unwrap_or(0));
+                }
+                return Ok(out);
+            }
+        }
         // GET DATA (INS CA) for UID — standard PCSC GET DATA APDU
         let apdu = [0xff, 0xca, 0x00, 0x00, 0x00];
         let response = self.transmit(&apdu).await?;

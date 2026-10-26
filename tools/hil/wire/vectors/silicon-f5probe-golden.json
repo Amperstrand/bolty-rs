@@ -1,0 +1,111 @@
+{
+ "description": "Golden silicon trace: f5-probe interleave on real NTAG424 (04C474FA967380, factory blank), captured 2026-10-26 via usbmon/wire_tap. Structural sequence only \u2014 randomized crypto material lives in the recorded APDUs but tests match on (cmd, resp_class, resp_len) tuples.",
+ "source": "silicon-battery.pcapng / silicon-audit.log",
+ "tool": "wire_tap.py",
+ "sequence": [
+  {
+   "step": 0,
+   "cmd": "ISO-Select",
+   "apdu": "00A4040007D276000085010100",
+   "expect_sw": "9000",
+   "expect_class": "OK",
+   "expect_len": 0
+  },
+  {
+   "step": 1,
+   "cmd": "AuthFirst",
+   "apdu": "9071000005000300000000",
+   "expect_sw": "91AF",
+   "expect_class": "ADDITIONAL-FRAME",
+   "expect_len": 16
+  },
+  {
+   "step": 2,
+   "cmd": "AuthSecond/Chain",
+   "apdu": "90AF000020BB989D92DB49BE19996F9AA8B107EA23DBA9D4E326BFE34E4E32FBCA9FC6CF6600",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 32
+  },
+  {
+   "step": 3,
+   "cmd": "GetFileSettings",
+   "apdu": "90F500000902F25BBFFA9B84AA0600",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 18
+  },
+  {
+   "step": 4,
+   "cmd": "ReadData",
+   "apdu": "90AD0000070200000004000000",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 4
+  },
+  {
+   "step": 5,
+   "cmd": "GetFileSettings",
+   "apdu": "90F5000009029D5A89C7FAEB0BDE00",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 18
+  },
+  {
+   "step": 6,
+   "cmd": "ReadData",
+   "apdu": "90AD0000070200000004000000",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 4
+  },
+  {
+   "step": 7,
+   "cmd": "GetFileSettings",
+   "apdu": "90F50000090258A677F48F52FD9C00",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 18
+  },
+  {
+   "step": 8,
+   "cmd": "ReadData",
+   "apdu": "90AD0000070200000004000000",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 4
+  },
+  {
+   "step": 9,
+   "cmd": "GetFileSettings",
+   "apdu": "90F500000902E24C4BD71FE453C900",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 18
+  },
+  {
+   "step": 10,
+   "cmd": "WriteData",
+   "apdu": "908D00000B020000000400000000000000",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 0
+  },
+  {
+   "step": 11,
+   "cmd": "GetFileSettings",
+   "apdu": "90F5000009026688F052CA22657700",
+   "expect_sw": "9100",
+   "expect_class": "NTAG-OK",
+   "expect_len": 18
+  },
+  {
+   "step": 12,
+   "cmd": "GetVersion",
+   "apdu": "9060000000",
+   "expect_sw": "91AF",
+   "expect_class": "ADDITIONAL-FRAME",
+   "expect_len": 7
+  }
+ ]
+}
