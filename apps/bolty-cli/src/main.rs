@@ -181,7 +181,9 @@ enum Cli {
         #[arg(long)]
         skip_preverify: bool,
 
-        /// Require this UID (14 hex chars) before proceeding — safety against wrong card
+        /// Require this UID (14 hex chars) before proceeding — safety
+        /// against wrong card. REQUIRED with --raw-keys: a static keyset
+        /// is not card-specific, so the UID is the only pin to one card.
         #[arg(long)]
         confirm_uid: Option<String>,
     },
