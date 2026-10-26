@@ -37,13 +37,38 @@ python3 tools/hil/difftest/generate_tests.py \
     --output-dir tools/hil/difftest/generated/
 ```
 
+## Host-aware mode (#216)
+
+The physical readers left ai-legion: the ACR1252 lives on ai-legion-small
+(labgrid place `ref-acr1252-small`), and `e2e.py` discovers readers via
+local pcscd. With host mode, reader-touching commands run remotely over
+ssh and only file processing stays local:
+
+```bash
+# from ai-legion (or any host with key-based ssh to the reader host);
+# QUOTE the tilde so it expands as the REMOTE user's home, not yours:
+BOLTY_DIFFTEST_HOST=ubuntu@192.168.13.221 \
+BOLTY_DIFFTEST_REMOTE_DIR='~/src/bolty-rs-acr-h1/tools/hil/difftest' \
+python3 e2e.py --phase bolty-acr
+```
+
+- `BOLTY_DIFFTEST_HOST` — ssh target (BatchMode, key auth) that owns
+  pcscd + the readers. Unset = pure local execution (unchanged behavior).
+- `BOLTY_DIFFTEST_REMOTE_DIR` — the difftest dir on that host (needs a
+  compatible checkout of `capture.py` / `bolty_diff.py` and a bolty-cli
+  build at the checkout root's `target/`, which `bolty_diff.py` resolves
+  itself).
+- Result JSONs are written remotely to a scratch dir and fetched back
+  into local `results/`, so diffs/fixtures keep working unchanged.
+- Reader inventory, `capture.py`, and `bolty_diff.py` go remote;
+  `diff.py`, `generate_tests.py`, and the pytest suites stay local.
+
 ## Tools
 
 | Tool | Purpose |
 |------|---------|
 | `capture.py` | Send APDU matrix to a reader, record all traffic as JSON |
-| `diff.py` | Compare two sessions, report mismatches with details |
-| `generate_tests.py` | Generate pytest fixtures and C headers from golden data |
+| `diff.py` | Compare two sessions, report mismatches with details || `generate_tests.py` | Generate pytest fixtures and C headers from golden data |
 | `apdu_matrix.py` | APDU test definitions (~40 tests + 20 fuzz cases) |
 
 ## APDU test categories
