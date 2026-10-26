@@ -6,8 +6,10 @@ for the whole night, alongside whatever role the M5Stick stick plays:
 
   * reader-set assertion — ACR1252 PICC slot present; during the ccid
     window the GemPCTwin serial reader is additionally expected, and the
-    bolty-cli reader pick (transport.rs: first "PICC" entry, else first
-    non-"SAM") must STILL resolve to the ACR1252, never the GemPCTwin.
+    bolty-cli reader pick (transport.rs::select_reader: virtual/vpcd
+    readers excluded from auto-selection, then first "PICC" entry, else
+    first non-"SAM") must STILL resolve to the ACR1252, never a virtual
+    PICC nor the GemPCTwin.
   * `bolty-cli cycle` loop — deterministic issuer key, paced >=60s,
     time-budget aware, harness-side UID assertion before EVERY mutation
     (`cycle` has no --confirm-uid flag; burn/wipe do — verified against
@@ -99,18 +101,36 @@ class ReaderSetError(Exception):
     """The pcscd reader set does not satisfy Track B preconditions."""
 
 
+def _is_virtual(name):
+    """Mirror transport.rs::is_virtual: virtual/vpcd/vPICC readers shadow
+    the real ACR1252 PICC interface in name-based matching and must never
+    be AUTO-selected.  Case-insensitive — real bench reader names have
+    appeared as both "vpcd" and "vPICC" (transport.rs, 2026-10-23)."""
+    lower = str(name).lower()
+    return "virtual" in lower or "vpcd" in lower or "vpicc" in lower
+
+
 def bolty_cli_pick(readers):
-    """Mirror transport.rs::PcscTransport::connect reader pick exactly:
-    first entry containing "PICC", else first entry without "SAM", else
-    the first entry.  Returns None when no readers exist."""
-    readers = list(readers or [])
-    for r in readers:
+    """Mirror transport.rs::select_reader AUTO-selection exactly (issue
+    #177): candidates exclude virtual readers (virtual/vpcd/vPICC,
+    case-insensitive); among non-virtual candidates first entry
+    containing "PICC", else first entry without "SAM", else the first
+    candidate.  Returns None when no non-virtual readers exist —
+    mirroring the CLI's NoReaders error on virtual-only benches (a
+    virtual-only set must never silently grab a vpcd).
+
+    The explicit-pin path of select_reader (pin may select a virtual
+    reader — explicit user intent beats auto-exclusion) is not mirrored:
+    this lane always runs bolty-cli WITHOUT --reader, i.e. on the
+    auto-selection path only."""
+    candidates = [r for r in (readers or []) if not _is_virtual(r)]
+    for r in candidates:
         if "PICC" in r:
             return r
-    for r in readers:
+    for r in candidates:
         if "SAM" not in r:
             return r
-    return readers[0] if readers else None
+    return candidates[0] if candidates else None
 
 
 def assert_reader_set(readers, expect_gempctwin=False):
@@ -119,10 +139,13 @@ def assert_reader_set(readers, expect_gempctwin=False):
     * the ACR1252 PICC slot is present (the ACR1252 shows TWO entries —
       PICC 00 00 + SAM 01 00 slots of ONE physical device; assert on the
       PICC entry, not on entry counts);
-    * bolty-cli's pick (bolty_cli_pick) resolves to the ACR1252 PICC —
-      the GemPCTwin serial reader, present during the ccid window, must
-      never be selected (its name contains no "PICC", so the transport
-      preference order keeps the ACR — asserted, not assumed);
+    * bolty-cli's pick (bolty_cli_pick — virtual readers excluded from
+      auto-selection) resolves to the ACR1252 PICC — a virtual/vpcd
+      PICC enumerated ahead of the real ACR and the GemPCTwin serial
+      reader (present during the ccid window) must both never be
+      selected (the GemPCTwin name contains no "PICC" and virtual
+      readers are excluded before the preference order applies —
+      asserted, not assumed);
     * with expect_gempctwin (WINDOW2), the GemPCTwin is additionally
       required (missing = Mode-B-grade anomaly worth a row).
     """
@@ -1015,9 +1038,19 @@ def _selftest():  # pragma: no cover — exercised via CLI in tests
     acr = "ACS ACR1252 1S CL Reader PICC 00 00"
     sam = "ACS ACR1252 1S CL Reader SAM 01 00"
     gem = "Gemalto GemPC Twin Serial 00 00"
+    vpicc = "Virtual PICC boltcard vpcd 00 00"
     check("pick_bolty", assert_reader_set([acr, sam])["pick"] == acr)
     check("pick_ccid", assert_reader_set([gem, acr, sam],
                                          expect_gempctwin=True)["pick"] == acr)
+    # #177: a virtual PICC enumerated BEFORE the real ACR must not win
+    # the auto-selection (case-insensitive vPICC too — the CLI excludes
+    # virtual/vpcd/vpicc before applying the preference order).
+    check("pick_skips_virtual",
+          assert_reader_set([vpicc, acr, sam])["pick"] == acr)
+    check("pick_skips_vpicc_case",
+          bolty_cli_pick(["vPICC boltcard 00 00", acr]) == acr)
+    check("pick_virtual_only_none",
+          bolty_cli_pick([vpicc, "Virtual SAM vpcd 01 00"]) is None)
     try:
         assert_reader_set([gem])
         check("pick_rejects_gempc", False)
