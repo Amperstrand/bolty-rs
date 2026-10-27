@@ -20,6 +20,8 @@ mod scan_keys;
 mod testck;
 mod transport;
 mod try_key;
+mod f5probe;
+mod set_card_uid;
 pub(crate) mod uid;
 mod ver;
 mod wipe;
@@ -234,6 +236,15 @@ enum Cli {
 
     /// Try a raw AES key against a specific key slot (read-only, no writes).
     /// Useful for card recovery when you don't know which key is on the card.
+    F5Probe,
+
+    /// Applet-only helper: set the stored (SDM-embedded) UID
+    SetCardUid {
+        /// New stored UID (14 hex chars)
+        #[arg(long)]
+        uid: String,
+    },
+
     TryKey {
         /// Raw 16-byte key in hex (32 chars)
         #[arg(long)]
@@ -360,9 +371,20 @@ async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
     let json_mode = args.json;
     let _ = READER_PIN.set(args.reader);
+    if std::env::var_os("BOLTY_EMU_COUNTER_COMPAT").is_some() {
+        bolty_ntag::set_plain_advance_compat(true);
+    }
     let cli = args.command;
 
     match cli {
+        Cli::SetCardUid { uid } => {
+            let mut transport = connect_transport()?;
+            set_card_uid::cmd_set_card_uid(&mut transport, &uid).await?;
+        }
+        Cli::F5Probe => {
+            let mut transport = connect_transport()?;
+            f5probe::cmd_f5probe(&mut transport).await?;
+        }
         Cli::Readers => {
             let readers =
                 transport::list_readers_with_presence().map_err(|e| anyhow::anyhow!("{e}"))?;

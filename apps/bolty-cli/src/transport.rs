@@ -247,6 +247,19 @@ impl Transport for PcscTransport {
     }
 
     async fn get_uid(&mut self) -> Result<Self::Data, Self::Error> {
+        // BOLTY_UID_OVERRIDE (hex, no spaces): skip the FF CA pseudo-APDU
+        // entirely — vpcd drivers race their presence-poll ATR against the
+        // first client transmit (observed: ATR tail delivered as SW).
+        if let Some(u) = std::env::var_os("BOLTY_UID_OVERRIDE") {
+            let s = u.to_string_lossy().to_ascii_lowercase();
+            if s.len() == 14 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                let mut out = Vec::with_capacity(7);
+                for i in (0..14).step_by(2) {
+                    out.push(u8::from_str_radix(&s[i..i + 2], 16).unwrap_or(0));
+                }
+                return Ok(out);
+            }
+        }
         // GET DATA (INS CA) for UID — standard PCSC GET DATA APDU
         let apdu = [0xff, 0xca, 0x00, 0x00, 0x00];
         let response = self.transmit(&apdu).await?;
@@ -255,11 +268,15 @@ impl Transport for PcscTransport {
         // card. On some readers (e.g. ACS ACR1252), this corrupts the ISO
         // 14443-4 protocol state — subsequent native NTAG424 APDUs fail with
         // "card reset". Reconnect to restore a clean card session.
-        let _ = self.card.reconnect(
-            pcsc::ShareMode::Shared,
-            self.protocol,
-            pcsc::Disposition::ResetCard,
-        );
+        // BOLTY_SKIP_FFCA_RECONNECT=1: vpcd/virtual readers — the reconnect
+        // desyncs the vpcd IFD exchange stream (stale ATR as SW).
+        if std::env::var_os("BOLTY_SKIP_FFCA_RECONNECT").is_none() {
+            let _ = self.card.reconnect(
+                pcsc::ShareMode::Shared,
+                self.protocol,
+                pcsc::Disposition::ResetCard,
+            );
+        }
 
         if response.sw1 != 0x90 || response.sw2 != 0x00 {
             return Err(PcscError::Transmit(format!(

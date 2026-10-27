@@ -3,6 +3,10 @@ use std::time::Duration;
 
 use bolty_ntag::{PiccData, SessionError};
 
+pub fn assume_ntag424() -> bool {
+    std::env::var_os("BOLTY_ASSUME_NTAG424").is_some()
+}
+
 const AUTH_RETRY_DELAYS: &[u64] = &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 const CIRCUIT_BREAKER_THRESHOLD: u32 = 10;
 
