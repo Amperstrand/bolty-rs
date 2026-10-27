@@ -19,33 +19,68 @@ where
 
     let mut f5a = 0u8;
     let mut ad = 0u8;
+    let mut f5w = 0u8;
+    let mut wd = 0u8;
     let mut buf = [0u8; 8];
-    for _ in 0..3u8 {
-        let (_fs, s2) = s.get_file_settings(transport, File::Ndef).await?;
-        f5a += 1;
-        s = s2;
-        match s.read_file_plain(transport, File::Ndef, 0, 4, &mut buf).await {
-            Ok(_) => ad += 1,
-            Err(e) => {
-                println!("  read err: {e:?}");
-                break;
+    let payload = [0u8; 4];
+    'probe: {
+        for _ in 0..3u8 {
+            match s.get_file_settings(transport, File::Ndef).await {
+                Ok((_fs, s2)) => {
+                    f5a += 1;
+                    s = s2;
+                }
+                Err(e) => {
+                    println!("  F5 err (read loop, after {f5a} ok): {e:?}");
+                    break 'probe;
+                }
+            }
+            match s.read_file_plain(transport, File::Ndef, 0, 4, &mut buf).await {
+                Ok(_) => ad += 1,
+                Err(e) => {
+                    println!("  read err (read loop, after {ad} ok): {e:?}");
+                    break 'probe;
+                }
             }
         }
-    }
-    let (mut _fs, s2) = s.get_file_settings(transport, File::Ndef).await?;
-    let mut f5w = 1u8;
-    s = s2;
-    let payload = [0u8; 4];
-    let mut wd = 0u8;
-    match s.write_file_plain(transport, File::Ndef, 0, &payload).await {
-        Ok(_) => wd += 1,
-        Err(e) => println!("  write err: {e:?}"),
-    }
-    match s.get_file_settings(transport, File::Ndef).await {
-        Ok(_) => f5w += 1,
-        Err(e) => println!("  f5#2 err: {e:?}"),
+        match s.get_file_settings(transport, File::Ndef).await {
+            Ok((_fs, s2)) => {
+                f5w += 1;
+                s = s2;
+            }
+            Err(e) => {
+                println!("  F5 err (pre-write): {e:?}");
+                break 'probe;
+            }
+        }
+        match s.write_file_plain(transport, File::Ndef, 0, &payload).await {
+            Ok(_) => wd += 1,
+            Err(e) => {
+                println!("  write err: {e:?}");
+                break 'probe;
+            }
+        }
+        match s.get_file_settings(transport, File::Ndef).await {
+            Ok((_fs, _s2)) => f5w += 1,
+            Err(e) => println!("  f5#2 err: {e:?}"),
+        }
     }
     println!("read-interleave:  F5 ok={f5a}/3, AD ok={ad}/3");
     println!("write-interleave: F5 ok={f5w}/2, 8D ok={wd}/1");
-    Ok(())
+    if f5a == 3 && ad == 3 && f5w == 2 && wd == 1 {
+        return Ok(());
+    }
+    // Emulator footgun (2026-10-27 lane finding): without the compat flag
+    // the FIRST F5/AD pair succeeds and everything after fails — looking
+    // exactly like the desync race this probe exists to catch.
+    if std::env::var_os("BOLTY_EMU_COUNTER_COMPAT").is_none() {
+        println!(
+            "hint: NTAG424-emulation applets (J3R180 etc.) need \
+             BOLTY_EMU_COUNTER_COMPAT=1 — plain reads advance CmdCtr there; \
+             rerun with it set before concluding a transport fault"
+        );
+    }
+    // not fully clean: make it machine-detectable (soak loops / CI key on
+    // the exit code, the counters stay in stdout for humans)
+    std::process::exit(1);
 }
