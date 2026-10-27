@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.dependencies]
-ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "7927c40225d56ba9cc4e5a0a968104a112b12563", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
+ntag424 = { git = "https://github.com/Amperstrand/ntag424.git", rev = "3982c16f4d04b97e099403e8d48f5702af79e3e3", default-features = false, features = ["sdm", "key-diversification", "alloc"] }
 mfrc522 = { git = "https://github.com/Amperstrand/mfrc522-rs.git", rev = "e9ced1e" }
 # iso14443: the Amperstrand fork's rebased ai-experiments tip (kernel M2,
 # t_e3335b39). mfrc522-pcd now arrives from ccid-firmware-rs as a rev-pinned

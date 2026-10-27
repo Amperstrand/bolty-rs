@@ -434,6 +434,20 @@ fn handle_line(
                     } else {
                         match block_on(bolty_ntag::safe_inspect(reader, None, None)) {
                             Ok(result) => {
+                                // Across-activation SDM liveness: the real card
+                                // latches a fresh SDM mirror per RF ACTIVATION,
+                                // not per read (relay-bench-proven 2026-10-25:
+                                // identical p= within one activation, ticking
+                                // p= across activations) — so a second inspect
+                                // after a forced re-activation is the honest
+                                // key-free liveness probe. The within-session
+                                // sdm_mirroring field stays authoritative for
+                                // Off/Unknown.
+                                let across = if reader.power_on().is_ok() {
+                                    block_on(bolty_ntag::safe_inspect(reader, None, None)).ok()
+                                } else {
+                                    None
+                                };
                                 // HEAPLESS (crash fix 2026-10-23: the coredump
                                 // backtrace lands HERE — format!() exhausted the
                                 // heap while WiFi + PN7160 + console held it;
@@ -448,7 +462,26 @@ fn handle_line(
                                 );
                                 console.line(out.as_str());
                                 let mut sdm = String::<128>::new();
-                                let _ = write!(sdm, "sdm={:?}", result.sdm_verification.is_some());
+                                let label = match result.sdm_mirroring {
+                                    bolty_ntag::SdmMirroring::Off => "off",
+                                    bolty_ntag::SdmMirroring::Unknown => "unknown",
+                                    _ => match (
+                                        &result.ndef_bytes,
+                                        across.as_ref().and_then(|a| a.ndef_bytes.as_ref()),
+                                    ) {
+                                        // fresh mirror served after re-activation
+                                        (Some(first), Some(second)) if first != second => "live",
+                                        (Some(_), Some(_)) => "static",
+                                        // second probe failed: fall back to the
+                                        // within-session assessment rather than
+                                        // guessing.
+                                        _ => match result.sdm_mirroring {
+                                            bolty_ntag::SdmMirroring::Live => "live",
+                                            _ => "static",
+                                        },
+                                    },
+                                };
+                                let _ = write!(sdm, "sdm={label}");
                                 console.line(sdm.as_str());
                             }
                             Err(err) => console.fail(&format!("inspect failed: {err:?}")),

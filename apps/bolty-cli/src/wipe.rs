@@ -52,6 +52,20 @@ where
         confirm_uid,
     } = opts;
 
+    // #155 P1: the raw-key path is UID-pinned like burn. A raw keyset is
+    // a SHARED static keyset (e.g. the M5StickC test keys) — any card
+    // burned with it passes K0, so an accidentally coupled sibling card
+    // would be erased on key material alone (worse with
+    // --skip-preverify, where K0 is the only pre-write check). The
+    // expected UID must be named up front, before any card interaction.
+    if raw_keys.is_some() && confirm_uid.is_none() {
+        anyhow::bail!(
+            "--raw-keys requires --confirm-uid: a static keyset is not \
+             card-specific (any card burned with it passes K0), so the \
+             expected UID must pin the wipe to one card"
+        );
+    }
+
     let uid_fixed =
         bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
             .await
@@ -199,32 +213,39 @@ where
     // The library re-authenticates internally, but we probe first to get
     // past any auth delay and give a clear error message on failure.
     println!("Authenticating with K0...");
+    if let Err(e) =
+        authenticate_slot_with_retry(transport, KeyNumber::Key0, keys.k0.as_bytes()).await
     {
-        let mut retry = AuthRetry::new();
-        let result = loop {
-            let rnd_a = gen_rnd_a()?;
-            match Session::default()
-                .authenticate_aes(transport, KeyNumber::Key0, keys.k0.as_bytes(), rnd_a)
+        anyhow::bail!(
+            "K0 authentication failed — wrong issuer key, wrong raw keyset, or card not burned ({e})"
+        );
+    }
+
+    // #155 P1: with raw keys, EVERY supplied slot is authenticated before
+    // the first mutating write. bolty_ntag::wipe clears SDM and NDEF
+    // BEFORE the first ChangeKey — a mistyped K1–K4 would otherwise pass
+    // the single K0 gate and leave a partially wiped card. The derived
+    // path does not need this: p/c pre-verification already binds K1/K2
+    // cryptographically to the UID-derived keyset (and K3/K4 ride the
+    // same derivation).
+    if raw_keys.is_some() {
+        println!("Verifying raw K1–K4 before any card mutation...");
+        let slots = [
+            ("K1", KeyNumber::Key1, keys.k1.as_bytes()),
+            ("K2", KeyNumber::Key2, keys.k2.as_bytes()),
+            ("K3", KeyNumber::Key3, keys.k3.as_bytes()),
+            ("K4", KeyNumber::Key4, keys.k4.as_bytes()),
+        ];
+        for (label, slot, key) in slots {
+            authenticate_slot_with_retry(transport, slot, key)
                 .await
-            {
-                Ok(_) => break true,
-                Err(e) if is_auth_delay(&e) => match retry.next_delay() {
-                    Some(d) => {
-                        tokio::time::sleep(d).await;
-                    }
-                    None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
-                },
-                Err(_) => {
-                    record_auth_failure();
-                    break false;
-                }
-            }
-        };
-        if !result {
-            anyhow::bail!(
-                "K0 authentication failed — wrong issuer key, wrong raw keyset, or card not burned"
-            );
+                .map_err(|e| anyhow::anyhow!("{label} in the raw keyset was rejected: {e} — refusing to wipe (a wrong slot would leave the card partially wiped)"))?;
         }
+        println!("  ✓ all five raw keys verified — card keyset matches");
+        audit::log_event_with_provenance(
+            "wipe: raw keyset K0–K4 verified before first mutation",
+            Some(provenance),
+        );
     }
 
     // Delegate to library: it handles SDM disable, NDEF clear, key reset, verification.
@@ -256,6 +277,40 @@ where
     );
     println!("\n{}", crate::output::WIPE_OK);
     Ok(())
+}
+
+/// One AuthenticateEV2First against `slot` with `key`, riding out auth
+/// delay (91AD) with the shared AuthRetry ladder. Distinct-key failure
+/// (91AE-class) fails fast and is recorded (budget bookkeeping) — the
+/// caller decides whether that refusal is fatal.
+async fn authenticate_slot_with_retry<T: Transport>(
+    transport: &mut T,
+    slot: KeyNumber,
+    key: &[u8; 16],
+) -> anyhow::Result<()>
+where
+    T::Error: std::error::Error + Send + Sync + 'static,
+{
+    let mut retry = AuthRetry::new();
+    loop {
+        let rnd_a = gen_rnd_a()?;
+        match Session::default()
+            .authenticate_aes(transport, slot, key, rnd_a)
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e) if is_auth_delay(&e) => match retry.next_delay() {
+                Some(d) => {
+                    tokio::time::sleep(d).await;
+                }
+                None => anyhow::bail!("{}", AuthRetry::exhausted_msg()),
+            },
+            Err(_) => {
+                record_auth_failure();
+                anyhow::bail!("authentication failed — wrong key for this slot");
+            }
+        }
+    }
 }
 
 /// DET:57-59 pre-wipe gate: read the NDEF URL unauthenticated (read=Free on
@@ -402,6 +457,190 @@ mod tests {
         file.push(0x00);
         file.extend_from_slice(url.as_bytes());
         file
+    }
+
+    // ── #155: raw-key wipe guards ─────────────────────────────────────
+
+    fn static_keyset() -> [[u8; 16]; 5] {
+        [
+            [0x11u8; 16],
+            [0x22u8; 16],
+            [0x33u8; 16],
+            [0x44u8; 16],
+            [0x55u8; 16],
+        ]
+    }
+
+    /// A card burned with STATIC keys (the M5StickC class): valid
+    /// provisioned NDEF + SDM settings (taken from a real burn), but a
+    /// raw keyset. Built by burning, then swapping the key material.
+    async fn raw_provisioned_transport(
+        card_keys: [[u8; 16]; 5],
+    ) -> crate::mock_transport::MockTransport {
+        let mut burned = crate::mock_transport::MockTransport::new();
+        let issuer_key = [0x42u8; 16];
+        crate::burn::cmd_burn(
+            &mut burned,
+            &issuer_key,
+            "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}",
+            crate::burn::BurnOptions {
+                version: 1,
+                verbose: false,
+                dry_run: false,
+                confirm_uid: None,
+                force: false,
+            },
+        )
+        .await
+        .expect("burn to provision card state template");
+        crate::mock_transport::MockTransport::with_state(
+            card_keys,
+            *burned.key_versions(),
+            burned.ndef().to_vec(),
+            burned.file_settings().to_vec(),
+        )
+    }
+
+    fn raw_wipe_options<'a>(confirm_uid: Option<&'a [u8; 7]>) -> WipeOptions<'a> {
+        WipeOptions {
+            verbose: false,
+            dry_run: false,
+            skip_preverify: true,
+            confirm_uid,
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_wipe_requires_confirm_uid() {
+        let mut transport = raw_provisioned_transport(static_keyset()).await;
+        let raw = static_keyset();
+        let keys_before = *transport.keys();
+        let ndef_before = transport.ndef().to_vec();
+
+        let result = cmd_wipe(
+            &mut transport,
+            WipeKeySource {
+                issuer_key: None,
+                raw_keys: Some(&raw),
+                version: 1,
+            },
+            raw_wipe_options(None),
+        )
+        .await;
+        let err = result.expect_err("raw wipe without --confirm-uid must refuse");
+        assert!(
+            err.to_string().contains("--confirm-uid"),
+            "error must demand --confirm-uid, got: {err}"
+        );
+        assert_eq!(
+            transport.keys(),
+            &keys_before,
+            "no mutation before the gate"
+        );
+        assert_eq!(transport.ndef(), &ndef_before[..], "NDEF untouched");
+    }
+
+    #[tokio::test]
+    async fn raw_wipe_refuses_wrong_uid() {
+        let mut transport = raw_provisioned_transport(static_keyset()).await;
+        let raw = static_keyset();
+        let wrong_uid = [0xAAu8; 7];
+
+        let result = cmd_wipe(
+            &mut transport,
+            WipeKeySource {
+                issuer_key: None,
+                raw_keys: Some(&raw),
+                version: 1,
+            },
+            raw_wipe_options(Some(&wrong_uid)),
+        )
+        .await;
+        let err = result.expect_err("raw wipe against a mismatched UID must refuse");
+        assert!(
+            err.to_string().contains("UID mismatch"),
+            "error must name the UID mismatch, got: {err}"
+        );
+    }
+
+    // #155 P1: a mistyped K1–K4 must refuse BEFORE the first mutation —
+    // bolty_ntag::wipe clears SDM and NDEF ahead of the first ChangeKey,
+    // so the K0-only gate would leave a partially wiped card.
+    #[tokio::test]
+    async fn raw_wipe_refuses_wrong_slot_before_any_mutation() {
+        let mut card_keys = static_keyset();
+        card_keys[2] = [0x99u8; 16]; // the card's real K2 differs
+        let mut transport = raw_provisioned_transport(card_keys).await;
+
+        let keys_before = *transport.keys();
+        let ndef_before = transport.ndef().to_vec();
+        let settings_before = transport.file_settings().to_vec();
+
+        let raw = static_keyset(); // supplied K2 is wrong
+        let uid = crate::mock_transport::UID;
+        let result = cmd_wipe(
+            &mut transport,
+            WipeKeySource {
+                issuer_key: None,
+                raw_keys: Some(&raw),
+                version: 1,
+            },
+            raw_wipe_options(Some(&uid)),
+        )
+        .await;
+        let err = result.expect_err("wrong K2 in the raw keyset must refuse the wipe");
+        assert!(
+            err.to_string().contains("K2"),
+            "error must name the failing slot, got: {err}"
+        );
+        assert!(
+            err.to_string().contains("partially wiped"),
+            "error must state the partial-wipe refusal reason, got: {err}"
+        );
+        assert_eq!(
+            transport.keys(),
+            &keys_before,
+            "card keys must be untouched by the refusal"
+        );
+        assert_eq!(
+            transport.ndef(),
+            &ndef_before[..],
+            "NDEF must be untouched — the old code path cleared it before the failing ChangeKey"
+        );
+        assert_eq!(
+            transport.file_settings(),
+            &settings_before[..],
+            "SDM file settings must be untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn raw_wipe_succeeds_with_verified_keyset() {
+        let card_keys = static_keyset();
+        let mut transport = raw_provisioned_transport(card_keys).await;
+        let raw = static_keyset();
+        let uid = crate::mock_transport::UID;
+
+        let result = cmd_wipe(
+            &mut transport,
+            WipeKeySource {
+                issuer_key: None,
+                raw_keys: Some(&raw),
+                version: 1,
+            },
+            raw_wipe_options(Some(&uid)),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "raw wipe with the full verified keyset must succeed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            transport.keys(),
+            &[FACTORY_KEY; 5],
+            "all five slots must be back at factory after the wipe"
+        );
     }
 
     async fn provisioned_with_sdm_p_c(

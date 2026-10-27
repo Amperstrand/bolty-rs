@@ -341,3 +341,57 @@ fn diversify_ntag424_matches_known_vector() {
         ]
     );
 }
+
+// ------------------------------------------------------ sdm_mirroring ----
+
+use bolty_ntag::{SdmMirroring, safe_inspect};
+
+fn burned_sdm_transport() -> MockTransport {
+    let keys = test_keys();
+    let params = burn_params(burn_lnurl(), keys);
+    let mut transport = MockTransport::new();
+    block_on(burn(&mut transport, &params, AesKey::new(RND_A))).unwrap();
+    transport
+}
+
+#[test]
+fn safe_inspect_reports_live_mirroring_when_ndef_ticks_between_reads() {
+    let mut transport = burned_sdm_transport();
+    let ticked = transport.ndef().to_vec();
+    #[allow(clippy::indexing_slicing)]
+    let ticked = {
+        let mut t = ticked;
+        // Flip a byte inside the SDM-mirrored p= region: the card served
+        // fresh PICC data on the second read.
+        let last = t.len() - 1;
+        t[last] ^= 0x01;
+        t
+    };
+    transport.override_next_ndef_read(ticked);
+
+    let result = block_on(safe_inspect(&mut transport, None, None)).unwrap();
+
+    assert_eq!(result.sdm_mirroring, SdmMirroring::Live);
+    // Key-free inspect never claims cryptographic verification.
+    assert!(result.sdm_verification.is_none());
+}
+
+#[test]
+fn safe_inspect_reports_static_when_two_reads_are_identical() {
+    let mut transport = burned_sdm_transport();
+
+    let result = block_on(safe_inspect(&mut transport, None, None)).unwrap();
+
+    assert_eq!(result.sdm_mirroring, SdmMirroring::Static);
+}
+
+#[test]
+fn safe_inspect_reports_off_when_sdm_not_configured() {
+    // Factory-fresh mock: DEFAULT_FILE_SETTINGS carry no SDM config.
+    let mut transport = MockTransport::new();
+    transport.override_next_ndef_read(Vec::new());
+
+    let result = block_on(safe_inspect(&mut transport, None, None)).unwrap();
+
+    assert_eq!(result.sdm_mirroring, SdmMirroring::Off);
+}
