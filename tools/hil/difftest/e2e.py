@@ -19,6 +19,11 @@ runs remotely via ssh; result JSONs are fetched back into local results/.
 File-only phases (diff.py, unit tests) always run locally. Without the env
 vars nothing changes — local execution, byte for byte.
 
+Role-switching phases (switch-ccid / switch-bolty / all) are OWNER-GATED
+(#178): they reflash the M5Stick and put nucula/wallet state at risk.
+Interactive runs get a confirmation prompt; scripts pass --yes or set
+BOLTY_DIFFTEST_YES=1. Anything else is refused — fail closed.
+
 Each phase produces results in results/ and prints a summary.
 """
 
@@ -388,8 +393,52 @@ def phase_unit_tests() -> dict:
     return results
 
 
-def phase_switch(target: str) -> dict:
-    """Switch M5Stick role (bolty ↔ ccid)."""
+ROLE_SWITCH_RISK = (
+    "Role-switching REFLASHES the M5Stick (prebuilt merged image via "
+    "role_switch.py) — any nucula/wallet state on the stick is at risk. "
+    "AGENTS.md: no reflash/role-switch without an explicit owner decision."
+)
+
+ROLE_SWITCH_CONFIRM_WORD = "switch"
+
+
+def owner_approved_role_switch(assume_yes=False, stdin=None, env=None):
+    """Owner-approval gate for M5Stick role-switching (issue #178).
+
+    Fail-closed: approved only via --yes, BOLTY_DIFFTEST_YES != 0/empty,
+    or an interactive terminal where the operator types the confirmation
+    word after reading the risk statement. Everything else — non-tty
+    stdin (CI, cron, piped), EOF, wrong word — refuses.
+    """
+    env = os.environ if env is None else env
+    if assume_yes:
+        return True
+    if env.get("BOLTY_DIFFTEST_YES", "").strip() not in ("", "0"):
+        return True
+    stdin = stdin if stdin is not None else sys.stdin
+    try:
+        if not stdin.isatty():
+            return False
+    except Exception:  # noqa: BLE001 — a weird stdin object is not approval
+        return False
+    print(f"\n{ROLE_SWITCH_RISK}")
+    print(f"Type '{ROLE_SWITCH_CONFIRM_WORD}' to proceed: ", end="",
+          flush=True)
+    try:
+        answer = stdin.readline().strip()
+    except Exception:  # noqa: BLE001 — a broken stdin is not approval
+        return False
+    return answer == ROLE_SWITCH_CONFIRM_WORD
+
+
+def phase_switch(target: str, assume_yes: bool = False) -> dict:
+    """Switch M5Stick role (bolty ↔ ccid) — owner-gated (#178)."""
+    if not owner_approved_role_switch(assume_yes=assume_yes):
+        print(f"REFUSED: role switch to {target} needs owner approval "
+              f"(--yes or BOLTY_DIFFTEST_YES=1; interactive runs get a "
+              f"prompt). {ROLE_SWITCH_RISK}")
+        return {"phase": f"switch-{target}", "status": "REFUSED",
+                "output": "owner approval required"}
     print(f"Switching M5Stick to {target} role...")
 
     overnight_dir = HERE.parent / "overnight"
@@ -420,6 +469,10 @@ def main(argv=None):
     parser.add_argument("--quick", action="store_true",
                         help="APDU phase: gem capture + diff only (skip ACR re-capture, "
                              "skip fuzz, 0.02s repeat sleeps)")
+    parser.add_argument("--yes", action="store_true",
+                        help="Pre-approve the M5Stick role switches (#178 owner gate): "
+                             "skips the interactive confirmation. Non-interactive runs "
+                             "without this (or BOLTY_DIFFTEST_YES=1) are REFUSED.")
     args = parser.parse_args(argv)
 
     note_rig_state(test=f"difftest:{args.phase}")
@@ -431,13 +484,19 @@ def main(argv=None):
         # Full sequence
         all_results.append(phase_unit_tests())
         all_results.append(phase_bolty_acr())
-        all_results.append(phase_switch("ccid"))
-        all_results.append(phase_apdu(golden))
-        all_results.append(phase_bolty_diff())
-        all_results.append(phase_switch("bolty"))
+        all_results.append(phase_switch("ccid", assume_yes=args.yes))
+        if all_results[-1].get("status") == "REFUSED":
+            # Without the ccid role the APDU/bolty-diff phases have no
+            # GemPCTwin reader — abort the sequence instead of failing
+            # them noisily for the wrong reason.
+            print("\nRole switch refused — aborting the remaining phases.")
+        else:
+            all_results.append(phase_apdu(golden))
+            all_results.append(phase_bolty_diff())
+            all_results.append(phase_switch("bolty", assume_yes=args.yes))
     elif args.phase.startswith("switch-"):
         target = args.phase.split("-", 1)[1]
-        all_results.append(phase_switch(target))
+        all_results.append(phase_switch(target, assume_yes=args.yes))
     else:
         func = {
             "apdu": lambda: phase_apdu(golden, quick=args.quick),
