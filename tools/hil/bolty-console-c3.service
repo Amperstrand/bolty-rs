@@ -12,7 +12,7 @@ StartLimitBurst=3
 [Service]
 Type=simple
 # Deployed on ai-legion (rig re-homed from ai-legion-small 2026-10-25).
-ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --port /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_90:DA:72:9A:50:18-if00 --socket /run/bolty/console-c3.sock --log /root/.bolty/console-c3.log
+ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --port /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_90:DA:72:9A:50:18-if00 --socket /run/bolty/console-c3.sock --log /root/.bolty/console-c3.log --seat nucula-c3
 Restart=always
 RestartSec=30
 

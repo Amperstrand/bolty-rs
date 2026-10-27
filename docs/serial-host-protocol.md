@@ -76,10 +76,11 @@ esp32-check lane).
 | `provision-cert` | none | pre-dispatch: generate + store RSA-2048 self-signed TLS cert (needs `rest`) | not via `parse_command`; surplus args → `UnknownCommand` |
 | `provision-ota-key <hex64>` | 64-hex-char Ed25519 public key | pre-dispatch: store OTA verification key (needs `ota`) | handler `fail` if length ≠ 64 or non-hex |
 | `force [on\|off]` | optional `on` \| `off` | pre-dispatch: toggle/print the safety-check override | not via `parse_command`; unknown arg → `UnknownCommand` |
+| `grove [on\|off]` | optional `on` \| `off` | pre-dispatch: toggle/print the Grove 5 V boost (AXP192 EXTEN — remote power lever for the MFRC522 front-end, m5stick display builds only; other boards fail with `grove: no grove power rail on this board`) | not via `parse_command`; unknown arg → `UnknownCommand` |
 | *(anything else)* | — | — | `UnknownCommand` |
 
-Five command words (`crashlog`, `hwtest`, `provision-cert`,
-`provision-ota-key`, `force`) are matched by the console loop **before**
+Six command words (`crashlog`, `hwtest`, `provision-cert`,
+`provision-ota-key`, `force`, `grove`) are matched by the console loop **before**
 `handle_line`: they need loop-local state (buttons, NVS, feature-gated
 provisioning) instead of the `dispatch_command` path. Their matchers
 live beside `parse_command` (`commands.rs::parse_pre_dispatch_command`)

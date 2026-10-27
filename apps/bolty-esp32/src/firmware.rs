@@ -484,6 +484,39 @@ pub fn main() {
                                 if state { "DISABLED" } else { "enabled" },
                             ));
                         }
+                        Some(cmd @ (PreDispatchCommand::GroveOn
+                        | PreDispatchCommand::GroveOff
+                        | PreDispatchCommand::GroveStatus)) => {
+                            // Remote power lever for the MFRC522 front-end
+                            // (issue #222: the reader stayed latched across
+                            // ESP32 POWERON resets because those never drop
+                            // the AXP-managed Grove 5 V rail).
+                            #[cfg(feature = "display-st7789")]
+                            {
+                                let (label, res) = match cmd {
+                                    PreDispatchCommand::GroveStatus => {
+                                        ("status", display::grove_5v_status())
+                                    }
+                                    PreDispatchCommand::GroveOn => {
+                                        ("on", display::grove_5v(true))
+                                    }
+                                    PreDispatchCommand::GroveOff => {
+                                        ("off", display::grove_5v(false))
+                                    }
+                                    _ => unreachable!("matched above"),
+                                };
+                                match res {
+                                    Ok(on) => {
+                                        serial.line(&format!("[OK] grove 5V {label} (boost={on})"))
+                                    }
+                                    Err(e) => serial.fail(e),
+                                }
+                            }
+                            #[cfg(not(feature = "display-st7789"))]
+                            {
+                                serial.fail("grove: no grove power rail on this board");
+                            }
+                        }
                         None => {
                             handle_line(
                                 &mut serial,

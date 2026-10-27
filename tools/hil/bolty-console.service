@@ -13,7 +13,7 @@ User=root
 # that stops would sweep the directory — stopping this unit for a flash
 # deleted the c3 socket that way on 2026-10-27. Both daemons already
 # os.makedirs() the directory themselves; nothing needs systemd to own it.
-ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --socket /run/bolty/console.sock
+ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --socket /run/bolty/console.sock --seat m5stick
 Restart=always
 RestartSec=2
 
