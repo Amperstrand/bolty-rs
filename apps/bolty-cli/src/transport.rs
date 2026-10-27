@@ -269,14 +269,20 @@ impl Transport for PcscTransport {
         if let Some(u) = std::env::var_os("BOLTY_UID_OVERRIDE") {
             let s = u.to_string_lossy().to_ascii_lowercase();
             if s.len() == 14 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-                // byte-wise decode (clippy string_slice: &s[i..i+2] can
-                // panic inside a UTF-8 char — impossible here after the
-                // hexdigit check, but decode without slicing anyway)
+                // byte-wise decode via .get() (clippy string_slice/
+                // indexing_slicing are CI-fatal here: &s[i..i+2] and b[i]
+                // both flag)
                 let b = s.as_bytes();
                 let mut out = Vec::with_capacity(7);
                 for i in (0..14).step_by(2) {
-                    let hi = (b[i] as char).to_digit(16).unwrap_or(0) as u8;
-                    let lo = (b[i + 1] as char).to_digit(16).unwrap_or(0) as u8;
+                    let hi = b
+                        .get(i)
+                        .and_then(|c| (*c as char).to_digit(16))
+                        .unwrap_or(0) as u8;
+                    let lo = b
+                        .get(i + 1)
+                        .and_then(|c| (*c as char).to_digit(16))
+                        .unwrap_or(0) as u8;
                     out.push((hi << 4) | lo);
                 }
                 return Ok(out);
