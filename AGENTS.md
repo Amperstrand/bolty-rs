@@ -68,14 +68,20 @@ Rules learned the hard way (2026-08-25):
 
 ## Lab & Service Topology (documented 2026-08-27)
 
-**RIG STATE CHANGE (2026-09-09 audit):** the M5Stick now runs **nucula**
-firmware (Cashu wallet — holds sats/keys; `nucula>` serial prompt), NOT bolty.
-It was reflashed around 2026-09-03 by another project. DO NOT reflash, role-
-switch, or run difftest/test-hil-lg without an explicit owner decision — that
-destroys nucula state. Stick-based HIL (burn cycles, labgrid place, button
-tests) is therefore OFF until restored. ACR1252 is attached but had no card
-on it at audit; `bolty-console` daemon was revived (it had died 2026-09-03)
-and serves the nucula console fine.
+**RIG STATE CHANGE (2026-09-09 audit — SUPERSEDED, see below):** the M5Stick
+ran **nucula** firmware (Cashu wallet) from ~2026-09-03; that role-switch
+warning is historical.
+
+**CURRENT m5stick STATE (2026-10-27):** the stick runs **bolty bench
+firmware at main `630eb62`** (owner-authorized reflash, elf `18464bf2…`,
+replacing an `ota-test-v1` artifact) — but the **MFRC522 reader module is
+electrically dead/disconnected**: `i2cscan: found none` across three POWERON
+cycles AND the fresh-main reflash. It died at a bench power glitch
+(2026-10-26 04:55:01, board idle mid-uptime, `rst:0x1 POWERON_RESET`;
+was `i2c_scan=0x28` the boot before). Stick-based HIL is DOWN until a
+hands visit reseats/replaces the Grove MFRC522 module. Full story:
+docs/hil-incident-2026-10-26-222.md.
+
 
 Two lab machines + Cloudflare edge. **Use mDNS names, not IPs** (DHCP drift:
 this box was .218 in early docs, .221 now).

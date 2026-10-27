@@ -1,15 +1,19 @@
 [Unit]
-Description=bolty persistent serial console (M5Stick rig, ai-legion-small)
+Description=bolty persistent serial console (M5Stick rig, ai-legion)
 # Bind to the device unit: on USB re-enumeration (rebind/unplug) the service
 # stops and Restart=always reopens the port cleanly when the device returns.
 BindsTo=dev-serial-by\x2did-usb\x2dHades2001_M5stack_49D6163EBE\x2dif00\x2dport0.device
-After=dev-serial-by\x2did-usb\x2dHades2001_M5stack_49D6163EBE\x2dif00\x2dport0.device
+After=dev-serial-by\x2did-usb-Hades2001_M5stack_49D6163EBE\x2dif00\x2dport0.device
 
 [Service]
 Type=simple
-User=ubuntu
-RuntimeDirectory=bolty
-ExecStart=/usr/bin/python3 /home/ubuntu/src/bolty-rs/tools/hil/bolty-console.py --socket /run/bolty/console.sock
+User=root
+# No RuntimeDirectory here: /run/bolty is SHARED with
+# bolty-console-c3.service (its socket lives in the same dir), and a unit
+# that stops would sweep the directory — stopping this unit for a flash
+# deleted the c3 socket that way on 2026-10-27. Both daemons already
+# os.makedirs() the directory themselves; nothing needs systemd to own it.
+ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --socket /run/bolty/console.sock
 Restart=always
 RestartSec=2
 
