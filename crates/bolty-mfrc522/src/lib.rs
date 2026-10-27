@@ -434,4 +434,52 @@ mod tests {
         assert_eq!(fwi_from_ats(&shortest), None);
         assert_eq!(frame_wait_time_ms(&shortest), 14);
     }
+
+    /// The programmed-timeout arithmetic of the rev-pinned mfrc522-pcd
+    /// driver (ccid-firmware-rs @ a0b1f742, crates/mfrc522-pcd/src/lib.rs,
+    /// `set_timeout_ms`), mirrored byte-for-byte so this crate's tests can
+    /// see what the PCD timer ACTUALLY gets for a requested timeout.
+    /// Bench proof blocked 2026-10-27: the m5stick's MFRC522 is invisible
+    /// on I2C (issue #222) — this model is the CI-visible half of the
+    /// hardware test; run both once the reader is back.
+    fn pcd_programmed_timeout_ms(requested_ms: u32) -> u32 {
+        let prescaler = 0xA9u16;
+        let timer_hz = 13_560_000u32 / (2 * prescaler as u32 + 1);
+        let reload = (requested_ms.saturating_mul(timer_hz) / 1000).min(0xFFFF);
+        reload * 1000 / timer_hz
+    }
+
+    /// Issue #180: this crate computes FWI-derived FWTs correctly (FWI 13 ->
+    /// 2483 ms, FWI 14 -> 4957 ms) and passes them to set_timeout_ms, but
+    /// the pinned PCD driver programs the MFRC522 timer with a FIXED
+    /// prescaler (0xA9 = 169 -> 13.56 MHz / 339 = exactly 40.000 kHz) and
+    /// caps TReload at 0xFFFF — a 65_535-tick ceiling of 1638 ms. Cards
+    /// advertising FWI 13/14 therefore time out ~850 ms / ~3.3 s before
+    /// their declared FWT. Pins BOTH sides of the divergence so the fix
+    /// (bigger prescaler for long waits, or chunked timer periods)
+    /// un-clamps visibly here.
+    #[test]
+    fn issue180_fwi13_14_fwt_exceeds_pcd_timer_ceiling() {
+        // Ground truth for the tick rate: 13.56 MHz / (2*169+1) = 40 kHz.
+        assert_eq!(13_560_000u32 / (2 * 0xA9 + 1), 40_000);
+        for (fwi, want_requested) in [(4u8, 14u32), (13, 2483), (14, 4957)] {
+            let ats = Ats::from_crc_verified(&[0x03, 0x20, fwi << 4]).unwrap();
+            let requested = frame_wait_time_ms(&ats);
+            assert_eq!(requested, want_requested, "FWI {fwi} requested FWT");
+            let programmed = pcd_programmed_timeout_ms(requested);
+            if fwi >= 13 {
+                assert_eq!(
+                    programmed, 1638,
+                    "issue #180: FWI {fwi} requests {requested} ms but the \
+                     pinned PCD timer clamps to the 1638 ms ceiling"
+                );
+            } else {
+                assert_eq!(programmed, requested, "FWI {fwi} fits the timer");
+            }
+        }
+        // The ceiling is a property of the fixed prescaler alone: any
+        // request at or below 1638 ms round-trips unchanged.
+        assert_eq!(pcd_programmed_timeout_ms(1638), 1638);
+        assert_eq!(pcd_programmed_timeout_ms(1639), 1638);
+    }
 }
