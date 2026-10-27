@@ -1,0 +1,52 @@
+[package]
+name = "ntag424"
+version = "0.1.0"
+keywords = ["nfc", "ntag424"]
+categories = ["embedded", "cryptography", "no-std"]
+authors = ["Jannik Schürg <jannik.schuerg+crates@posteo.de>"]
+description = "Implementation of the application protocol of NTAG 424 DNA chips."
+readme = "../README.md"
+license.workspace = true
+repository.workspace = true
+edition = "2024"
+rust-version = "1.88.0"
+
+[features]
+default = ["high-level-api", "originality"]
+alloc = ["serde/alloc"]
+key-diversification = []
+sdm = []
+# high-level provision() embeds originality verification.
+high-level-api = ["key-diversification", "sdm", "alloc", "originality"]
+# NXP originality-signature verification (ECDSA P-224). Default-on so the
+# public API is unchanged; disable to drop p224 + crypto-bigint (~150 KB
+# pre-link) from the dependency tree — the verification calls are the only
+# consumers.
+originality = ["dep:p224"]
+serde = ["dep:serde"]
+
+[dependencies]
+aes = "0.9.0"
+serde = { version = "1.0.193", default-features = false, features = [
+  "derive",
+], optional = true }
+arrayvec = { version = "0.7.4", default-features = false }
+cmac = "0.8.0"
+p224 = { version = "0.13.2", default-features = false, features = [
+  "ecdsa",
+], optional = true }
+subtle = { version = "2.4", default-features = false }
+thiserror = { version = "2.0.18", default-features = false }
+rand = { version = "0.10.1", default-features = false }
+zeroize = { version = "1.8.2", default-features = false, features = [
+  "derive",
+  "zeroize_derive",
+] }
+
+[dev-dependencies]
+serde_json = "1"
+sha2 = "0.10"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

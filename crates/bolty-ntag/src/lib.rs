@@ -217,18 +217,31 @@ pub async fn read_uid<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error<
 /// Returns the card UID on success, or an error if the card doesn't
 /// respond or isn't an NTAG424 DNA (vendor=0x04, type=0x04).
 pub async fn preflight<T: Transport>(transport: &mut T) -> Result<[u8; 7], Error<T::Error>> {
+    preflight_with_chip_check(transport, false).await
+}
+
+pub async fn preflight_with_chip_check<T: Transport>(
+    transport: &mut T,
+    assume_ntag424: bool,
+) -> Result<[u8; 7], Error<T::Error>> {
     let session = Session::default();
 
     let uid = session.get_selected_uid(transport).await?;
     let uid_fixed = uid_to_fixed(&uid);
 
-    let version = session.get_version(transport).await?;
+    if assume_ntag424 {
+        // Emulator personalities (e.g. the J3R180 NTAG424 applet) may
+        // implement the full command set EXCEPT GetVersion; the caller
+        // opts out of the chip check (registry + --confirm-uid remain).
+    } else {
+        let version = session.get_version(transport).await?;
 
-    if version.hw_vendor_id() != 0x04 || version.hw_type() != 0x04 {
-        return Err(Error::WrongCardType {
-            vendor: version.hw_vendor_id(),
-            card_type: version.hw_type(),
-        });
+        if version.hw_vendor_id() != 0x04 || version.hw_type() != 0x04 {
+            return Err(Error::WrongCardType {
+                vendor: version.hw_vendor_id(),
+                card_type: version.hw_type(),
+            });
+        }
     }
 
     Ok(uid_fixed)
@@ -1124,4 +1137,58 @@ mod hil_output_contract_tests {
             assert!(dbg.contains(needle), "{needle} missing from {dbg}");
         }
     }
+}
+
+pub async fn f5probe<T: Transport>(
+    transport: &mut T,
+    rnd_a: [u8; 16],
+) -> Result<((u8, u8), (u8, u8)), Error<T::Error>> {
+    let session = Session::default();
+    let s = session
+        .authenticate_aes(transport, KeyNumber::Key0, &[0u8; 16], rnd_a)
+        .await?;
+    let mut s = s;
+    let mut f5a = 0u8;
+    let mut ad = 0u8;
+    // interleave: F5, AD, F5, AD, F5
+    for _ in 0..3u8 {
+        match s.get_file_settings(transport, File::Ndef).await {
+            Ok((_f, s2)) => {
+                f5a += 1;
+                s = s2;
+            }
+            Err(_) => return Ok(((f5a, ad), (0, 0))),
+        }
+        let mut buf = [0u8; 8];
+        match s
+            .read_file_plain(transport, File::Ndef, 0, 4, &mut buf)
+            .await
+        {
+            Ok(_) => ad += 1,
+            Err(_) => return Ok(((f5a, ad), (0, 0))),
+        }
+    }
+    // now with writes: F5, 8D(4 bytes), F5
+    let mut f5w = 0u8;
+    let mut wd = 0u8;
+    match s.get_file_settings(transport, File::Ndef).await {
+        Ok((_f, s2)) => {
+            f5w += 1;
+            s = s2;
+        }
+        Err(_) => return Ok(((f5a, ad), (f5w, wd))),
+    }
+    let payload = [0u8; 4];
+    match s.write_file_plain(transport, File::Ndef, 0, &payload).await {
+        Ok(_) => wd += 1,
+        Err(_) => return Ok(((f5a, ad), (f5w, wd))),
+    }
+    if s.get_file_settings(transport, File::Ndef).await.is_ok() {
+        f5w += 1;
+    }
+    Ok(((f5a, ad), (f5w, wd)))
+}
+
+pub fn set_plain_advance_compat(on: bool) {
+    ntag424::set_plain_advance_compat(on);
 }

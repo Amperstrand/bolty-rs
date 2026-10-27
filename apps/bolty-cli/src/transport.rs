@@ -263,6 +263,31 @@ impl Transport for PcscTransport {
     }
 
     async fn get_uid(&mut self) -> Result<Self::Data, Self::Error> {
+        // BOLTY_UID_OVERRIDE (hex, no spaces): skip the FF CA pseudo-APDU
+        // entirely — vpcd drivers race their presence-poll ATR against the
+        // first client transmit (observed: ATR tail delivered as SW).
+        if let Some(u) = std::env::var_os("BOLTY_UID_OVERRIDE") {
+            let s = u.to_string_lossy().to_ascii_lowercase();
+            if s.len() == 14 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+                // byte-wise decode via .get() (clippy string_slice/
+                // indexing_slicing are CI-fatal here: &s[i..i+2] and b[i]
+                // both flag)
+                let b = s.as_bytes();
+                let mut out = Vec::with_capacity(7);
+                for i in (0..14).step_by(2) {
+                    let hi = b
+                        .get(i)
+                        .and_then(|c| (*c as char).to_digit(16))
+                        .unwrap_or(0) as u8;
+                    let lo = b
+                        .get(i + 1)
+                        .and_then(|c| (*c as char).to_digit(16))
+                        .unwrap_or(0) as u8;
+                    out.push((hi << 4) | lo);
+                }
+                return Ok(out);
+            }
+        }
         // GET DATA (INS CA) for UID — standard PCSC GET DATA APDU
         let apdu = [0xff, 0xca, 0x00, 0x00, 0x00];
         let response = self.transmit(&apdu).await?;
@@ -271,23 +296,28 @@ impl Transport for PcscTransport {
         // card. On some readers (e.g. ACS ACR1252), this corrupts the ISO
         // 14443-4 protocol state — subsequent native NTAG424 APDUs fail with
         // "card reset". Reconnect to restore a clean card session.
-        let _ = self.card.reconnect(
-            pcsc::ShareMode::Shared,
-            self.protocol,
-            pcsc::Disposition::ResetCard,
-        );
-        // A reconnect re-activates the card, and javacard NTAG424 emulators
-        // (unlike real NTAG424 tags) do NOT implicitly re-select the NDEF
-        // application at activation — native 0x90 commands then land on the
-        // wrong app and fail 6E00. Re-select explicitly; idempotent on real
-        // tags. (Bench-proven on the J3R180 ntag424-applet, 2026-10-26.)
-        let select_ndef = [
-            0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00,
-        ];
-        let _ = self
-            .card
-            .transmit(&select_ndef, &mut [0u8; 261])
-            .map_err(|e| PcscError::Transmit(format!("NDEF re-select after reconnect: {e}")))?;
+        // BOLTY_SKIP_FFCA_RECONNECT=1: vpcd/virtual readers — the reconnect
+        // desyncs the vpcd IFD exchange stream (stale ATR as SW); skip the
+        // reconnect AND the post-reconnect re-select.
+        if std::env::var_os("BOLTY_SKIP_FFCA_RECONNECT").is_none() {
+            let _ = self.card.reconnect(
+                pcsc::ShareMode::Shared,
+                self.protocol,
+                pcsc::Disposition::ResetCard,
+            );
+            // A reconnect re-activates the card, and javacard NTAG424 emulators
+            // (unlike real NTAG424 tags) do NOT implicitly re-select the NDEF
+            // application at activation — native 0x90 commands then land on the
+            // wrong app and fail 6E00. Re-select explicitly; idempotent on real
+            // tags. (Bench-proven on the J3R180 ntag424-applet, 2026-10-26.)
+            let select_ndef = [
+                0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00,
+            ];
+            let _ = self
+                .card
+                .transmit(&select_ndef, &mut [0u8; 261])
+                .map_err(|e| PcscError::Transmit(format!("NDEF re-select after reconnect: {e}")))?;
+        }
 
         if response.sw1 != 0x90 || response.sw2 != 0x00 {
             return Err(PcscError::Transmit(format!(
