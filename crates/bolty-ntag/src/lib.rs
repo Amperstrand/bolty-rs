@@ -1139,9 +1139,6 @@ mod hil_output_contract_tests {
     }
 }
 
-
-
-
 pub async fn f5probe<T: Transport>(
     transport: &mut T,
     rnd_a: [u8; 16],
@@ -1156,11 +1153,17 @@ pub async fn f5probe<T: Transport>(
     // interleave: F5, AD, F5, AD, F5
     for _ in 0..3u8 {
         match s.get_file_settings(transport, File::Ndef).await {
-            Ok((_f, s2)) => { f5a += 1; s = s2; }
+            Ok((_f, s2)) => {
+                f5a += 1;
+                s = s2;
+            }
             Err(_) => return Ok(((f5a, ad), (0, 0))),
         }
         let mut buf = [0u8; 8];
-        match s.read_file_plain(transport, File::Ndef, 0, 4, &mut buf).await {
+        match s
+            .read_file_plain(transport, File::Ndef, 0, 4, &mut buf)
+            .await
+        {
             Ok(_) => ad += 1,
             Err(_) => return Ok(((f5a, ad), (0, 0))),
         }
@@ -1169,7 +1172,10 @@ pub async fn f5probe<T: Transport>(
     let mut f5w = 0u8;
     let mut wd = 0u8;
     match s.get_file_settings(transport, File::Ndef).await {
-        Ok((_f, s2)) => { f5w += 1; s = s2; }
+        Ok((_f, s2)) => {
+            f5w += 1;
+            s = s2;
+        }
         Err(_) => return Ok(((f5a, ad), (f5w, wd))),
     }
     let payload = [0u8; 4];
@@ -1177,13 +1183,11 @@ pub async fn f5probe<T: Transport>(
         Ok(_) => wd += 1,
         Err(_) => return Ok(((f5a, ad), (f5w, wd))),
     }
-    match s.get_file_settings(transport, File::Ndef).await {
-        Ok(_) => f5w += 1,
-        Err(_) => {}
+    if s.get_file_settings(transport, File::Ndef).await.is_ok() {
+        f5w += 1;
     }
     Ok(((f5a, ad), (f5w, wd)))
 }
-
 
 pub fn set_plain_advance_compat(on: bool) {
     ntag424::set_plain_advance_compat(on);
