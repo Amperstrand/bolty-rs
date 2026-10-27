@@ -5,6 +5,7 @@ pub(crate) mod budget;
 mod burn;
 mod common;
 mod diagnose;
+mod f5probe;
 #[cfg(test)]
 #[path = "golden_matrix_tests.rs"]
 mod golden_matrix_tests;
@@ -17,11 +18,10 @@ mod output;
 mod picc;
 mod provision;
 mod scan_keys;
+mod set_card_uid;
 mod testck;
 mod transport;
 mod try_key;
-mod f5probe;
-mod set_card_uid;
 pub(crate) mod uid;
 mod ver;
 mod wipe;

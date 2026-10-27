@@ -35,7 +35,10 @@ where
                     break 'probe;
                 }
             }
-            match s.read_file_plain(transport, File::Ndef, 0, 4, &mut buf).await {
+            match s
+                .read_file_plain(transport, File::Ndef, 0, 4, &mut buf)
+                .await
+            {
                 Ok(_) => ad += 1,
                 Err(e) => {
                     println!("  read err (read loop, after {ad} ok): {e:?}");

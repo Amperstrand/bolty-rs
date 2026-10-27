@@ -11,8 +11,7 @@ pub async fn cmd_set_card_uid<T: Transport>(transport: &mut T, uid_hex: &str) ->
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let uid = crate::decode_hex::<7>(uid_hex.trim())
-        .map_err(|e| anyhow::anyhow!("uid: {e}"))?;
+    let uid = crate::decode_hex::<7>(uid_hex.trim()).map_err(|e| anyhow::anyhow!("uid: {e}"))?;
 
     let session = Session::default();
     let card_uid = session.get_selected_uid(transport).await?;
