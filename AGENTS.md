@@ -72,15 +72,15 @@ Rules learned the hard way (2026-08-25):
 ran **nucula** firmware (Cashu wallet) from ~2026-09-03; that role-switch
 warning is historical.
 
-**CURRENT m5stick STATE (2026-10-27):** the stick runs **bolty bench
-firmware at main `630eb62`** (owner-authorized reflash, elf `18464bf2…`,
-replacing an `ota-test-v1` artifact) — but the **MFRC522 reader module is
-electrically dead/disconnected**: `i2cscan: found none` across three POWERON
-cycles AND the fresh-main reflash. It died at a bench power glitch
-(2026-10-26 04:55:01, board idle mid-uptime, `rst:0x1 POWERON_RESET`;
-was `i2c_scan=0x28` the boot before). Stick-based HIL is DOWN until a
-hands visit reseats/replaces the Grove MFRC522 module. Full story:
-docs/hil-incident-2026-10-26-222.md.
+**CURRENT m5stick STATE (2026-10-27, RESOLVED):** the stick runs **bolty bench
+firmware at main + the `grove` command** (elf `91db62bb…`). The MFRC522 that
+died at the Oct 26 04:55 stick-local brownout (see below) was **LATCHED, not
+dead** — no ESP32 reset drops the AXP-managed Grove 5 V rail, so it never
+power-cycled until the new fw `grove off`→`grove on` (AXP192 EXTEN) console
+command did it remotely: reader back at `i2c_scan=0x28`, `nfc=ok`. This
+failure class is now self-service. The stick took TWO ~4:5x AM stick-local
+brownouts (Oct 26 + Oct 27) with zero kernel USB events — recurring pattern,
+watch it. Full story + recovery runbook: docs/hil-incident-2026-10-26-222.md.
 
 
 Two lab machines + Cloudflare edge. **Use mDNS names, not IPs** (DHCP drift:
