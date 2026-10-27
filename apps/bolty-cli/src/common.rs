@@ -128,7 +128,3 @@ where
         bolty_ntag::Error::Transport(e) => anyhow::anyhow!("transport error: {e}"),
     }
 }
-
-pub fn assume_ntag424() -> bool {
-    std::env::var_os("BOLTY_ASSUME_NTAG424").is_some()
-}
