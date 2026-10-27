@@ -29,6 +29,15 @@ import serial
 DEFAULT_PORT = "/dev/serial/by-id/usb-Hades2001_M5stack_49D6163EBE-if00-port0"
 QUIET_S = 1.0
 HARD_CAP_S = 40.0
+# How long a SerialException read storm is retried on the SAME fd before
+# escalating to exit(3) (systemd reopen). Every reopen pulses DTR/RTS:
+# pyserial drops the two lines with sequential TIOCMBIC ioctls (cdc_acm
+# rejects atomic TIOCMSET with EINVAL), and on the ESP32-C3's USB-Serial/
+# JTAG console the DTR-low/RTS-high intermediate state is a
+# USB_UART_CHIP_RESET. Keep this window long enough that a transient CDC
+# stall never costs a board reset (C3 incident 2026-10-26/27, issue #222:
+# a crash-restart loop reset the nucula every ~6 s for 10+ minutes).
+STALL_RETRY_S = 30.0
 
 state = {
     "lock": threading.Lock(),          # serializes command execution
@@ -49,14 +58,37 @@ def journal(line: str) -> None:
 
 def reader_thread(ser) -> None:
     buf = b""
+    stall_deadline = None
     while True:
         try:
             chunk = ser.read(512)
         except serial.SerialException as e:
-            # Device vanished (rebind/unplug). Exit; systemd Restart=always
-            # reopens when the device unit returns.
-            print(f"[bolty-console] serial read failed: {e}", file=sys.stderr, flush=True)
-            os._exit(3)
+            # Device vanished (rebind/unplug) or the CDC reads stall
+            # ("device reports readiness to read but returned no data").
+            # A wedged-but-present device stalls forever: retry on the same
+            # fd for STALL_RETRY_S before exiting — see the constant's
+            # comment for why reopens must stay rare on the C3.
+            now = time.time()
+            if stall_deadline is None:
+                stall_deadline = now + STALL_RETRY_S
+                print(
+                    f"[bolty-console] serial read failed (retrying on same"
+                    f" fd for {STALL_RETRY_S:.0f}s): {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            elif now > stall_deadline:
+                print(
+                    f"[bolty-console] serial read still failing after"
+                    f" {STALL_RETRY_S:.0f}s: exiting for a systemd reopen"
+                    " (NOTE: reopen pulses DTR/RTS = C3 board reset)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                os._exit(3)
+            time.sleep(1.0)
+            continue
+        stall_deadline = None
         if not chunk:
             continue
         state["last_rx_t"] = time.time()
