@@ -7,6 +7,18 @@ Usage:
     python3 e2e.py --phase bolty-diff    # bolty-cli against both readers
     python3 e2e.py --phase all           # Everything (requires ccid mode switch)
 
+Host-aware mode (#216 — the readers left ai-legion; the ACR1252 lives on
+ai-legion-small as labgrid place ref-acr1252-small). Set:
+
+    BOLTY_DIFFTEST_HOST=ai-legion-small   # ssh target owning pcscd + readers
+    BOLTY_DIFFTEST_REMOTE_DIR=<path>      # difftest dir there (default
+                                          # ~/src/bolty-rs-acr-h1/tools/hil/difftest)
+
+and every reader-touching command (reader inventory, capture.py, bolty_diff.py)
+runs remotely via ssh; result JSONs are fetched back into local results/.
+File-only phases (diff.py, unit tests) always run locally. Without the env
+vars nothing changes — local execution, byte for byte.
+
 Each phase produces results in results/ and prints a summary.
 """
 
@@ -14,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import subprocess
 import sys
 import time
@@ -22,6 +36,44 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
+
+SSH_HOST = os.environ.get("BOLTY_DIFFTEST_HOST", "").strip() or None
+REMOTE_DIR = os.environ.get(
+    "BOLTY_DIFFTEST_REMOTE_DIR", "~/src/bolty-rs-acr-h1/tools/hil/difftest"
+).strip()
+REMOTE_TMP = "/tmp/bolty-difftest-remote"
+
+
+_remote_home_cache: str | None = None
+
+
+def _remote_home() -> str:
+    """Remote $HOME (cached; '' if unresolvable — the run then fails loudly
+    at cd, which is the honest outcome)."""
+    global _remote_home_cache
+    if _remote_home_cache is None:
+        _remote_home_cache = ""
+        try:
+            r = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                 SSH_HOST, "echo $HOME"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                _remote_home_cache = r.stdout.strip().splitlines()[-1]
+        except Exception:
+            pass
+    return _remote_home_cache
+
+
+def _remote_dir_abs() -> str:
+    """REMOTE_DIR as an absolute remote path. shlex.quote freezes a literal
+    tilde mid-command, so ~/ forms are resolved against the remote $HOME."""
+    if REMOTE_DIR.startswith("~/") and SSH_HOST:
+        home = _remote_home()
+        if home:
+            return home + REMOTE_DIR[1:]
+    return REMOTE_DIR
 
 sys.path.insert(0, str(HERE.parent))  # hil package (tools/hil/hil)
 
@@ -40,6 +92,81 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[in
         return -1, f"TIMEOUT after {timeout}s"
     except Exception as e:
         return -2, f"{type(e).__name__}: {e}"
+
+
+def run_reader_cmd(
+    cmd: list[str],
+    cwd: Path | None = None,
+    timeout: int = 120,
+    output: Path | None = None,
+) -> tuple[int, str, Path | None]:
+    """Run a reader-touching command.
+
+    Local mode: plain run(); `output` (if any) is produced at its own path
+    by the tool itself.
+
+    Host mode (BOLTY_DIFFTEST_HOST): executes via non-interactive ssh in
+    REMOTE_DIR. An `output` path argument is rewritten to a remote scratch
+    file, fetched back after the run, and returned as the effective local
+    result path. Caller-independent: local callers see the same contract.
+    """
+    if not SSH_HOST:
+        rc, out = run(cmd, cwd=cwd, timeout=timeout)
+        return rc, out, output if (output and output.exists()) else None
+
+    remote_cmd = list(cmd)
+    remote_out: str | None = None
+    if output is not None:
+        # rewrite the --output argument to a remote scratch path
+        remote_out = f"{REMOTE_TMP}/{output.name}"
+        remote_cmd = [
+            remote_out if a == str(output) else a for a in remote_cmd
+        ]
+    # map local difftest paths onto the remote checkout (capture.py,
+    # bolty_diff.py, ... are executed from the remote difftest dir)
+    rdir = _remote_dir_abs()
+    remote_cmd = [a.replace(f"{HERE}/", f"{rdir}/") for a in remote_cmd]
+    shell = (f"mkdir -p {shlex.quote(REMOTE_TMP)} && "
+             f"cd {shlex.quote(rdir)} && {shlex.join(remote_cmd)}")
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+             SSH_HOST, shell],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        rc, out = r.returncode, r.stdout + r.stderr
+    except subprocess.TimeoutExpired:
+        return -1, f"TIMEOUT after {timeout}s (ssh {SSH_HOST})", None
+
+    fetched: Path | None = None
+    if remote_out is not None and rc == 0:
+        fr = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+             SSH_HOST, f"cat {shlex.quote(remote_out)}"],
+            capture_output=True, timeout=60,
+        )
+        if fr.returncode == 0 and fr.stdout:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(fr.stdout)
+            fetched = output
+        else:
+            rc, out = -3, f"remote output fetch failed for {remote_out}: {fr.stderr[-200:]!r}"
+    return rc, out, fetched
+
+
+def reader_inventory() -> list[str]:
+    """List pcsc reader names — remotely when host mode is active."""
+    probe = ["python3", "-c",
+             "import json; from smartcard.System import readers; "
+             "print(json.dumps([str(r) for r in readers()]))"]
+    rc, out, _ = run_reader_cmd(probe, cwd=HERE, timeout=60)
+    if rc != 0:
+        return []
+    line = next((l for l in out.splitlines() if l.startswith("[")), "")
+    try:
+        return json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 
 def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
@@ -61,25 +188,29 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
         print(f"ERROR: golden reference not found: {golden_path}")
         return {"phase": "apdu", "status": "SKIP", "reason": "no golden"}
 
-    # Check if GemPCTwin is available (ccid mode)
-    rc, out = run([
-        "python3", "-c",
-        "from smartcard.System import readers; print([str(r) for r in readers()])"
-    ])
-    has_gem = "GemPCTwin" in out
-    has_acr = "ACR1252" in out
+    if SSH_HOST:
+        print(f"HOST MODE: reader phases via ssh {SSH_HOST} ({REMOTE_DIR})")
+
+    readers = reader_inventory()
+    has_gem = any("GemPCTwin" in r for r in readers)
+    has_acr = any("ACR1252" in r for r in readers)
 
     print(f"Readers: GemPCTwin={'yes' if has_gem else 'no'}, ACR1252={'yes' if has_acr else 'no'}")
 
     results = {"phase": "apdu", "timestamp": datetime.now(timezone.utc).isoformat(),
                "quick": quick}
+    if SSH_HOST:
+        results["host"] = SSH_HOST
 
     # Capture from ACR1252 (always available; sanity check vs committed golden)
     if has_acr and not quick:
         acr_out = RESULTS / "e2e_acr_capture.json"
         print(f"\n--- Capturing from ACR1252 ---")
-        rc, out = run(["python3", str(HERE / "capture.py"), "--reader", "PICC", "--output", str(acr_out)])
-        if rc == 0:
+        rc, out, got = run_reader_cmd(
+            ["python3", str(HERE / "capture.py"), "--reader", "PICC", "--output", str(acr_out)],
+            output=acr_out,
+        )
+        if rc == 0 and got:
             print(f"  Saved: {acr_out}")
             results["acr_capture"] = str(acr_out)
         else:
@@ -96,8 +227,8 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
         if quick:
             gem_cmd += ["--no-fuzz", "--repeat-sleep", "0.02"]
         print(f"\n--- Capturing from GemPCTwin{' (no fuzz, 0.02s repeat sleep)' if quick else ''} ---")
-        rc, out = run(gem_cmd)
-        if rc == 0:
+        rc, out, got = run_reader_cmd(gem_cmd, output=gem_out)
+        if rc == 0 and got:
             print(f"  Saved: {gem_out}")
             results["gem_capture"] = str(gem_out)
 
@@ -156,16 +287,20 @@ def phase_bolty_acr() -> dict:
     print("=" * 60)
     print("PHASE: bolty-cli against ACR1252")
     print("=" * 60)
+    if SSH_HOST:
+        print(f"HOST MODE: reader phases via ssh {SSH_HOST} ({REMOTE_DIR})")
 
     out_path = RESULTS / "e2e_bolty_acr.json"
-    rc, out = run([
+    rc, out, got = run_reader_cmd([
         "python3", str(HERE / "bolty_diff.py"),
         "--reader1", "PICC",
         "--output", str(out_path),
-    ], timeout=180)
+    ], timeout=180, output=out_path)
 
-    if out_path.exists():
-        d = json.loads(out_path.read_text())
+    # `got` is the freshly-produced result (None on failure — a stale
+    # committed results/e2e_bolty_acr.json must never read as PASS)
+    if got:
+        d = json.loads(got.read_text())
         cmds = d.get("session1", {}).get("commands", [])
         ok = sum(1 for c in cmds if c.get("success"))
         print(f"\nbolty-cli on ACR1252: {ok}/{len(cmds)} commands OK")
@@ -184,24 +319,23 @@ def phase_bolty_diff() -> dict:
     print("=" * 60)
 
     # Check for GemPCTwin
-    rc, out = run([
-        "python3", "-c",
-        "from smartcard.System import readers; print([str(r) for r in readers()])"
-    ])
-    if "GemPCTwin" not in out:
+    readers = reader_inventory()
+    if not any("GemPCTwin" in r for r in readers):
         print("GemPCTwin not visible — skipping (need ccid mode)")
         return {"phase": "bolty-diff", "status": "SKIP", "reason": "no GemPCTwin"}
 
     out_path = RESULTS / "e2e_bolty_diff.json"
-    rc, out = run([
+    rc, out, got = run_reader_cmd([
         "python3", str(HERE / "bolty_diff.py"),
         "--reader1", "PICC",
         "--reader2", "GemPCTwin",
         "--output", str(out_path),
-    ], timeout=300)
+    ], timeout=300, output=out_path)
 
-    if out_path.exists():
-        d = json.loads(out_path.read_text())
+    # `got` is the freshly-produced result (None on failure — a stale
+    # committed results/e2e_bolty_diff.json must never read as PASS)
+    if got:
+        d = json.loads(got.read_text())
         comp = d.get("comparison", {})
         print(f"\nComparison: {comp.get('total_matches', 0)}/{comp.get('total_commands', 0)} match")
         if comp.get("mismatches"):

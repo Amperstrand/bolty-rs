@@ -1,0 +1,20 @@
+[Unit]
+Description=bolty-console — nucula-c3 persistent serial console (bolty nucula fw, issue #115; B11 doctrine)
+After=network-online.target
+# C3 lesson 2026-10-26/27 (issue #222): every service start opens the USB
+# CDC port, and pyserial's DTR/RTS settle sequence is a USB_UART_CHIP_RESET
+# on the ESP32-C3 USB-Serial/JTAG console. Rate-limit restarts so a wedged
+# device cannot turn a crash-restart loop into a 6-second-cadence board
+# reset storm (38 restarts observed on the bench that night).
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Deployed on ai-legion (rig re-homed from ai-legion-small 2026-10-25).
+ExecStart=/usr/bin/python3 /root/src/bolty-rs/tools/hil/bolty-console.py --port /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_90:DA:72:9A:50:18-if00 --socket /run/bolty/console-c3.sock --log /root/.bolty/console-c3.log --seat nucula-c3
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

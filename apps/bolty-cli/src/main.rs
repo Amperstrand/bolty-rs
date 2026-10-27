@@ -238,6 +238,10 @@ enum Cli {
 
     /// Try a raw AES key against a specific key slot (read-only, no writes).
     /// Useful for card recovery when you don't know which key is on the card.
+    /// On NTAG424-emulation applets (J3R180 etc.) set
+    /// BOLTY_EMU_COUNTER_COMPAT=1 — plain reads advance CmdCtr on the
+    /// applet, and without the compat flag every probe after the first
+    /// F5/AD pair fails with a MAC-desync look (2026-10-27 lane finding).
     F5Probe,
 
     /// Applet-only helper: set the stored (SDM-embedded) UID

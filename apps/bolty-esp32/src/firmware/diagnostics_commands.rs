@@ -17,7 +17,7 @@ pub(super) fn print_help(serial: &mut SerialConsole) {
     // Issue #148: the pre-dispatch commands (crashlog, hwtest, force,
     // provision-*) used to be handled by the console loop but listed
     // nowhere a client could see. Help and docs now show the real surface.
-    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check crashlog hwtest force [on|off]");
+    serial.line("Commands: help status uid i2cscan hwinfo keys <k0..k4> issuer [hex] url <lnurl> burn wipe inspect picc diagnose check crashlog hwtest force [on|off] grove [on|off]");
     #[cfg(feature = "board-m5stick")]
     serial.line("Buttons: button-mode [simple|legacy]");
     #[cfg(feature = "wifi")]

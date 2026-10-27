@@ -217,6 +217,9 @@ pub enum PreDispatchCommand<'a> {
     ForceOn,
     ForceOff,
     ForceStatus,
+    GroveOn,
+    GroveOff,
+    GroveStatus,
 }
 
 /// First words of the pre-dispatch surface, pinned against the command
@@ -228,6 +231,7 @@ pub const PRE_DISPATCH_COMMAND_WORDS: &[&str] = &[
     "provision-cert",
     "provision-ota-key",
     "force",
+    "grove",
 ];
 
 /// Match the pre-dispatch surface with the same framing as
@@ -262,6 +266,16 @@ pub fn parse_pre_dispatch_command(line: &str) -> Option<PreDispatchCommand<'_>> 
             None => Some(PreDispatchCommand::ForceStatus),
             Some(arg) if arg.eq_ignore_ascii_case("on") => Some(PreDispatchCommand::ForceOn),
             Some(arg) if arg.eq_ignore_ascii_case("off") => Some(PreDispatchCommand::ForceOff),
+            Some(_) => None,
+        };
+    }
+    if head.eq_ignore_ascii_case("grove") {
+        // Grove 5 V boost lever (AXP192 EXTEN) — m5stick only; the handler
+        // is board-gated, other boards answer unknown command.
+        return match rest {
+            None => Some(PreDispatchCommand::GroveStatus),
+            Some(arg) if arg.eq_ignore_ascii_case("on") => Some(PreDispatchCommand::GroveOn),
+            Some(arg) if arg.eq_ignore_ascii_case("off") => Some(PreDispatchCommand::GroveOff),
             Some(_) => None,
         };
     }

@@ -55,8 +55,8 @@ reader_hint  = "ACR1252"
 ops          = ["read", "burn", "wipe"]
 state        = "any"
 
-# J3R180 JavaCard with NTAG424-emulation applet (vjavacard lane, Oct 2026).
-# Applet ≠ NTAG424 silicon — valid for toolchain/wire-compat proof only.
+# J3R180 JavaCard with NTAG424-emulation applet (Play2BReal/ntag424-applet).
+# Applet ≠ NTAG424 silicon — use --emu-card flag on the harness.
 # Owner-sanctioned for the H1 regression run 2026-10-24; rides with the
 # harness PR for repo-level review.
 [cards.04337d8aae1790]

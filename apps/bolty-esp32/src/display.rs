@@ -302,6 +302,71 @@ pub unsafe fn init(
     Ok(())
 }
 
+/// Grove 5 V boost control (AXP192 EXTEN bit in REG_DCDC1_VOLTAGE, the
+/// same bit init sets — mirror of the proven init path). This is the
+/// remote power lever for the MFRC522 front-end: the 2026-10-26 brownout
+/// (issue #222) left the reader latched/invisible on I2C0 across ESP32
+/// POWERON resets, but an ESP32 reset does NOT drop the AXP-managed Grove
+/// rail — only this bit does. Returns the verified state of the bit.
+pub fn grove_5v(enable: bool) -> Result<bool, &'static str> {
+    let Ok(mut guard) = I2C1_DRIVER.lock() else {
+        return Err("axp192 driver unavailable");
+    };
+    let Some(i2c) = guard.as_mut() else {
+        return Err("axp192 driver unavailable");
+    };
+
+    let mut reg = [0u8; 1];
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_DCDC1_VOLTAGE],
+        &mut reg,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|e| {
+        warn!("AXP192 grove read failed: {e:?}");
+        "axp192 i2c read failed"
+    })?;
+    let desired = if enable {
+        reg[0] | (1 << 2)
+    } else {
+        reg[0] & !(1 << 2)
+    };
+    axp192_write_reg(i2c, REG_DCDC1_VOLTAGE, desired, "Grove 5V boost")?;
+
+    let mut verify = [0u8; 1];
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_DCDC1_VOLTAGE],
+        &mut verify,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|_| "axp192 verify read failed")?;
+    if verify[0] & (1 << 2) != desired & (1 << 2) {
+        return Err("axp192 grove verify mismatch");
+    }
+    Ok(verify[0] & (1 << 2) != 0)
+}
+
+/// Read-only Grove 5 V boost state (AXP192 EXTEN bit).
+pub fn grove_5v_status() -> Result<bool, &'static str> {
+    let Ok(mut guard) = I2C1_DRIVER.lock() else {
+        return Err("axp192 driver unavailable");
+    };
+    let Some(i2c) = guard.as_mut() else {
+        return Err("axp192 driver unavailable");
+    };
+    let mut reg = [0u8; 1];
+    i2c.write_read(
+        AXP192_ADDRESS,
+        &[REG_DCDC1_VOLTAGE],
+        &mut reg,
+        AXP192_TIMEOUT,
+    )
+    .map_err(|_| "axp192 i2c read failed")?;
+    Ok(reg[0] & (1 << 2) != 0)
+}
+
 pub fn read_battery_mv() -> Option<u32> {
     let mut guard = I2C1_DRIVER.lock().ok()?;
     let i2c = guard.as_mut()?;

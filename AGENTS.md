@@ -68,22 +68,28 @@ Rules learned the hard way (2026-08-25):
 
 ## Lab & Service Topology (documented 2026-08-27)
 
-**RIG STATE CHANGE (2026-09-09 audit):** the M5Stick now runs **nucula**
-firmware (Cashu wallet — holds sats/keys; `nucula>` serial prompt), NOT bolty.
-It was reflashed around 2026-09-03 by another project. DO NOT reflash, role-
-switch, or run difftest/test-hil-lg without an explicit owner decision — that
-destroys nucula state. Stick-based HIL (burn cycles, labgrid place, button
-tests) is therefore OFF until restored. ACR1252 is attached but had no card
-on it at audit; `bolty-console` daemon was revived (it had died 2026-09-03)
-and serves the nucula console fine.
+**RIG STATE CHANGE (2026-09-09 audit — SUPERSEDED, see below):** the M5Stick
+ran **nucula** firmware (Cashu wallet) from ~2026-09-03; that role-switch
+warning is historical.
+
+**CURRENT m5stick STATE (2026-10-27, RESOLVED):** the stick runs **bolty bench
+firmware at main + the `grove` command** (elf `91db62bb…`). The MFRC522 that
+died at the Oct 26 04:55 stick-local brownout (see below) was **LATCHED, not
+dead** — no ESP32 reset drops the AXP-managed Grove 5 V rail, so it never
+power-cycled until the new fw `grove off`→`grove on` (AXP192 EXTEN) console
+command did it remotely: reader back at `i2c_scan=0x28`, `nfc=ok`. This
+failure class is now self-service. The stick took TWO ~4:5x AM stick-local
+brownouts (Oct 26 + Oct 27) with zero kernel USB events — recurring pattern,
+watch it. Full story + recovery runbook: docs/hil-incident-2026-10-26-222.md.
+
 
 Two lab machines + Cloudflare edge. **Use mDNS names, not IPs** (DHCP drift:
 this box was .218 in early docs, .221 now).
 
 | Host | What runs there | Why |
 |---|---|---|
-| `ai-legion-small` (Lenovo, GNOME, WiFi, mDNS `ai-legion-small.local`) | bolty-rs dev + esp toolchain; M5Stick HIL rig (`/dev/ttyUSB0`) + `bolty-console` daemon; `proxy-healthcheck` timer; parallel AI-agent sessions; rotating Docker LN/regtest lab (CLN nodes, swapserver experiments) | the working machine; rig colocated with the human |
-| `ai-legion` (RTX 3080 box, `192.168.13.208`, mDNS `ai-legion.local`, SSH-only from outside) | archival Bitcoin full node (coldcardforensic project). **Currently hosts NO visible boltcard/proxy services** (ports 9000/9001/5432 closed at 2026-08-27 audit) — whether the psbt.me proxy stack ever ran here is unconfirmed | heavy always-on-ish compute |
+| `ai-legion-small` (Lenovo, GNOME, WiFi, mDNS `ai-legion-small.local`) | bolty-rs dev + esp toolchain; `proxy-healthcheck` timer; parallel AI-agent sessions; rotating Docker LN/regtest lab (CLN nodes, swapserver experiments); **ACR1252 bench reader** (place `ref-acr1252-small`, the ACR lane) | the working machine |
+| `ai-legion` (RTX 3080 box, `192.168.13.208`, mDNS `ai-legion.local`, SSH-only from outside) | archival Bitcoin full node (coldcardforensic project); labgrid coordinator (:20408); **m5stick + nucula-c3 HIL seats RE-HOMED HERE ~2026-10-25** (both `bolty-console*` services + `/run/bolty/*.sock` live here now — the ai-legion-small-rig exporter is dead; incident write-up: docs/hil-incident-2026-10-26-222.md) | heavy always-on-ish compute |
 | Cloudflare edge | `boltcardpoc.psbt.me` = edge-native HIL tap worker (Worker-style headers; routes deterministic-key anonymous taps — B12); DNS/proxying for `*.psbt.me` | edge = immune to lab-host outages |
 | **UNKNOWN — the gap** | `proxy.psbt.me` origin: Go boltcard + PostgreSQL + LND + `cloudflared` tunnel. DOWN since ≤2026-08-27 18:25 (530/err 1033, tunnel disconnected). Not on ai-legion-small (verified), not listening on ai-legion (verified) | undocumented host = bus factor 1 |
 
@@ -328,12 +334,24 @@ cd /home/ubuntu/src/bolty-rs
 - NXP Community: Change Keys and "lock" NTAG DNA 424
 - AndroidCrypto: A comprehensive overview of all keys for the NTAG424 NFC chip
 
-## KNOWN-GOOD NUCULA C3 — board-nucula firmware (2026-10-23, re-verified 2026-10-25 @ main c562a1d)
+## KNOWN-GOOD NUCULA C3 — board-nucula firmware (2026-10-23, re-verified 2026-10-25 @ main c562a1d; re-flashed 2026-10-27 @ main 630eb62)
 
 The nucula C3 runs bolty `board-nucula` firmware at main (PRs #185/#186/#193;
 re-flashed + re-verified at `c562a1d` on 2026-10-25, see the console-contract
 bullet), fully functional with a coupled card. This is the reference state
 for the #115 frontend and any future nucula work:
+
+**STATE 2026-10-27 (issue #222 close-out):** the board was found wedged
+(console garbage → deterministic app_main hang after an overnight fw panic;
+coredump preserved in `/root/bench/c3-incident-20261027/` on ai-legion) and
+was RECOVERED by reflashing main @ `630eb62` (console verified: status/uid/
+poll OK, `nfc=ok`). Full root cause — including the bolty-console restart
+loop that reset the board every ~6 s (pyserial DTR reopen pulse =
+USB_UART_CHIP_RESET; now fixed: same-fd stall retry + StartLimit on the
+c3 unit) — in **docs/hil-incident-2026-10-26-222.md**. The seat now lives
+on ai-legion (see the topology table), NOT ai-legion-small. A random-ID
+emitter (S20-class) is coupled to the antenna — decouple before console
+work (junk-spray lesson below).
 
 - **Console**: fully interactive over `/dev/ttyACM0` at 115200 (commands:
   help/status/uid/poll/inspect/ver/wifi). Requires the `UsbSerialDriver`
