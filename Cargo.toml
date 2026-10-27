@@ -56,3 +56,6 @@ panic = "abort"
 # _SEGGER_RTT symbol — stripping the symtab makes `probe-rs run` silently
 # show no RTT output (found during the 2026-10-19 F469 bring-up; the flash
 # image is unaffected — only host-side debug symbols are kept).
+
+[patch."https://github.com/Amperstrand/ntag424.git"]
+ntag424 = { path = "vendor/ntag424" }

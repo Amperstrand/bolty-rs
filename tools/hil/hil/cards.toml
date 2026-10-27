@@ -57,6 +57,8 @@ state        = "any"
 
 # J3R180 JavaCard with NTAG424-emulation applet (Play2BReal/ntag424-applet).
 # Applet ≠ NTAG424 silicon — use --emu-card flag on the harness.
+# Owner-sanctioned for the H1 regression run 2026-10-24; rides with the
+# harness PR for repo-level review.
 [cards.04337d8aae1790]
 alias        = "j3r180-vntag424-emulator"
 reader_hint  = "ACR1252"
