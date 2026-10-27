@@ -28,9 +28,10 @@ where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
     let version = opts.version;
-    let uid_fixed = bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
-        .await
-        .map_err(map_ntag_error)?;
+    let uid_fixed =
+        bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
+            .await
+            .map_err(map_ntag_error)?;
 
     let keys = BoltcardDeterministicDeriver::derive_keys(
         issuer_key,
@@ -87,9 +88,10 @@ where
         force,
     } = opts;
 
-    let uid_fixed = bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
-        .await
-        .map_err(map_ntag_error)?;
+    let uid_fixed =
+        bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
+            .await
+            .map_err(map_ntag_error)?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     if let Some(expected) = confirm_uid {

@@ -52,9 +52,10 @@ where
         confirm_uid,
     } = opts;
 
-    let uid_fixed = bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
-        .await
-        .map_err(map_ntag_error)?;
+    let uid_fixed =
+        bolty_ntag::preflight_with_chip_check(transport, crate::common::assume_ntag424())
+            .await
+            .map_err(map_ntag_error)?;
     println!("Card UID: {}", crate::to_hex(uid_fixed));
 
     if let Some(expected) = confirm_uid {
