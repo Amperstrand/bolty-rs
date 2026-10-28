@@ -45,7 +45,7 @@ class BenchOwnership:
     place: str | None = None
     place_inherited: bool = False
     bench_lock: object | None = None
-    log=print  # noqa: E702  (injected in tests)
+    log: object = print  # injected in tests
     _released: bool = field(default=False, repr=False)
 
     def release(self) -> None:
