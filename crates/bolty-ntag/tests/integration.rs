@@ -11,8 +11,8 @@ mod mock;
 
 use bolty_core::secret::{AesKey, CardKeys};
 use bolty_ntag::{
-    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, burn, check_key_versions, preflight, read_uid,
-    wipe,
+    BurnParams, Error, FACTORY_KEY, FACTORY_KEY_VERSION, burn, check_key_versions, f5probe,
+    preflight, read_uid, wipe,
 };
 use mock::{MockTransport, UID, block_on};
 use ntag424::{
@@ -394,4 +394,121 @@ fn safe_inspect_reports_off_when_sdm_not_configured() {
     let result = block_on(safe_inspect(&mut transport, None, None)).unwrap();
 
     assert_eq!(result.sdm_mirroring, SdmMirroring::Off);
+}
+
+// ── f5probe (#233): content-preserving write leg + non-blank gate ──────
+
+#[test]
+fn f5probe_refuses_non_blank_ndef_without_force() {
+    let mut ndef = vec![0u8; 256];
+    ndef[1] = 0x21; // any nonzero byte = data present
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+
+    let err = block_on(f5probe(&mut transport, RND_A, false)).unwrap_err();
+    match err {
+        Error::NdefNotEmpty { len } => assert_eq!(len, 256),
+        other => panic!("expected NdefNotEmpty, got {other:?}"),
+    }
+    // untouched: the refusal fires before ANY interleaved op
+    assert_eq!(transport.ndef(), &ndef[..]);
+}
+
+#[test]
+fn f5probe_blank_ndef_probes_without_force() {
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        vec![0u8; 256],
+        MockTransport::default_file_settings(),
+    );
+
+    let r = block_on(f5probe(&mut transport, RND_A, false)).unwrap();
+    assert_eq!(
+        (
+            r.read_f5,
+            r.read_ad,
+            r.write_f5,
+            r.write_8d,
+            r.write_skipped
+        ),
+        (3, 3, 2, 1, false)
+    );
+    assert_eq!(transport.writes_served, 1);
+    assert!(transport.ndef().iter().all(|&b| b == 0));
+}
+
+#[test]
+fn f5probe_gate_survives_applet_len0_quirk() {
+    // J3R180 applet: length=0 plain reads answer EMPTY (hardware-observed
+    // 2026-10-28) — without the explicit-window fallback the #233 gate
+    // saw nothing and happily probed a card with residual NDEF
+    let mut ndef = vec![0u8; 256];
+    ndef[1] = 0x21;
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+    transport.applet_len0_empty = true;
+
+    let err = block_on(f5probe(&mut transport, RND_A, false)).unwrap_err();
+    assert!(matches!(err, Error::NdefNotEmpty { .. }));
+    assert_eq!(transport.ndef(), &ndef[..]);
+
+    // and the forced run is read-only through the quirk — content intact
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+    transport.applet_len0_empty = true;
+    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
+    assert_eq!((r.read_f5, r.read_ad, r.write_skipped), (3, 3, true));
+    assert_eq!(
+        transport.writes_served, 0,
+        "forced non-blank run must not write"
+    );
+    assert_eq!(transport.ndef(), &ndef[..]);
+}
+
+#[test]
+fn f5probe_forced_non_blank_is_read_only() {
+    // hardware-taught (J3R180, 2026-10-28): with SDM mirroring the
+    // ReadData view is PROCESSED data, not the raw template — a
+    // write-back of the read view corrupted NLEN live. Forced runs on a
+    // non-blank card therefore skip the 8D leg entirely.
+    let mut ndef = vec![0u8; 256];
+    ndef[0] = 0x00;
+    ndef[1] = 0x21;
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+
+    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
+    assert_eq!(
+        (
+            r.read_f5,
+            r.read_ad,
+            r.write_f5,
+            r.write_8d,
+            r.write_skipped
+        ),
+        (3, 3, 0, 0, true)
+    );
+    assert_eq!(transport.writes_served, 0);
+    assert_eq!(
+        transport.ndef(),
+        &ndef[..],
+        "no byte may move on a forced run"
+    );
 }

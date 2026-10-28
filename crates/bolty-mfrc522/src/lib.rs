@@ -449,7 +449,7 @@ mod tests {
         // terms), rounded UP to odd (2*TPrescaler+1), <= 8191.
         let min_div = (requested_ms.saturating_mul(904).saturating_add(4_368)) / 4_369;
         let mut div = min_div.max(2 * 0xA9 + 1);
-        if div % 2 == 0 {
+        if div.is_multiple_of(2) {
             div += 1;
         }
         if div > 8191 {
