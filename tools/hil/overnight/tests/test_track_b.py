@@ -436,6 +436,32 @@ def test_bolty_cli_pick_mirrors_transport_rs():
     assert track_b.bolty_cli_pick([]) is None
 
 
+# #177: the CLI's select_reader excludes virtual/vpcd readers from
+# auto-selection (transport.rs::is_virtual — case-insensitive, real bench
+# names have appeared as both "vpcd" and "vPICC"); the mirror must too.
+VIRTUAL_PICC = "Virtual PICC boltcard vpcd 00 00"
+VPICC_CASE = "vPICC boltcard 00 00"
+
+
+def test_bolty_cli_pick_excludes_virtual_readers():
+    # virtual PICC enumerated BEFORE the real ACR: exclusion wins over
+    # the "first PICC" preference (the pre-#177 mirror picked it and
+    # assert_reader_set aborted Track B even though the CLI was right)
+    assert track_b.bolty_cli_pick([VIRTUAL_PICC, ACR_PICC, ACR_SAM]) == ACR_PICC
+    assert track_b.bolty_cli_pick([VPICC_CASE, ACR_PICC]) == ACR_PICC
+    # virtual entries never leak through the non-SAM / first fallbacks
+    assert track_b.bolty_cli_pick([VIRTUAL_PICC, "Foo Reader"]) == "Foo Reader"
+    assert track_b.bolty_cli_pick([VIRTUAL_PICC]) is None
+    # virtual-only bench == CLI NoReaders (None, never a silent vpcd grab)
+    assert track_b.bolty_cli_pick(
+        [VIRTUAL_PICC, "Virtual SAM vpcd 01 00"]) is None
+
+
+def test_reader_set_tolerates_virtual_picc_ahead_of_acr():
+    info = track_b.assert_reader_set([VIRTUAL_PICC, GEMPC, ACR_PICC, ACR_SAM])
+    assert info["pick"] == ACR_PICC
+
+
 # --------------------------------------------------------------- monitors ----
 
 def test_monitor_runs_uid_picc_diagnose_when_state_known(tmp_path):

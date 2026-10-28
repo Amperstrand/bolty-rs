@@ -93,6 +93,12 @@ lane's tracking issue; statuses cite commit hashes, never "should work"):
                    discipline honored — no blind retries on write/auth-budgeted cards (ccid #127)
 [ ] Bench confirmation: host suite → `make difftest` → `make test-hil` →
                          burn cycle `tools/hil/burn_cycle.py` (labgrid path: `make test-hil-lg`)
+[ ] OWNER APPROVAL before any stick role-switching step (#178): `make difftest`
+                        / `--phase switch-*` / `all` reflash the M5Stick and put nucula/wallet
+                        state at risk (AGENTS.md: no reflash/role-switch without an explicit
+                        owner decision). The e2e gate prompts; record the approval here
+                        (who/when) — `--yes`/BOLTY_DIFFTEST_YES=1 are certificates that this
+                        line was actually ticked, not ways around it
 [ ] Findings cross-posted to the ccid lane issue if a shared fact was consumed/changed
 ```
 
