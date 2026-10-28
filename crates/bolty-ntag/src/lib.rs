@@ -1146,23 +1146,44 @@ mod hil_output_contract_tests {
     }
 }
 
+/// f5-probe report. `write_skipped` is true when the NDEF held data and
+/// the caller forced the run anyway — the write leg is deliberately
+/// omitted (see [#233] and the SDM-view note on [`f5probe`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct F5ProbeReport {
+    pub read_f5: u8,
+    pub read_ad: u8,
+    pub write_f5: u8,
+    pub write_8d: u8,
+    pub write_skipped: bool,
+}
+
+/// Interleaved GetFileSettings/ReadData/WriteData probe for CmdCtr
+/// lockstep (the silicon-vs-applet A/B tool).
+///
+/// #233 safety model, hardware-taught (J3R180, 2026-10-28):
+/// - the NDEF is snapshotted after auth; a NON-BLANK file (any nonzero
+///   byte) refuses the probe outright unless `force`
+/// - the write leg runs ONLY on an all-zero (blank) NDEF: it writes the
+///   first snapshot bytes back — a true no-op — which is the only case
+///   where read/write-back is an identity. With SDM mirroring active the
+///   ReadData view is PROCESSED data, not the raw template; writing that
+///   view back would corrupt the template (observed live: NLEN zeroed).
+/// - forced runs on a non-blank card are READ-ONLY (`write_skipped`)
 pub async fn f5probe<T: Transport>(
     transport: &mut T,
     rnd_a: [u8; 16],
     force: bool,
-) -> Result<((u8, u8), (u8, u8)), Error<T::Error>> {
+) -> Result<F5ProbeReport, Error<T::Error>> {
     let session = Session::default();
     let s = session
         .authenticate_aes(transport, KeyNumber::Key0, &[0u8; 16], rnd_a)
         .await?;
     let mut s = s;
 
-    // #233: the write leg must be content-preserving. Snapshot the whole
-    // NDEF first: (a) refuse a non-blank file unless forced — a
-    // factory-keyed card can carry residual/test NDEF, and offset 0 is
-    // NLEN (a blind 4-zero-byte write destroys the message header);
-    // (b) the write leg writes back exactly the bytes it read — the
-    // probe needs "a write succeeds", not zeros.
+    // #233: snapshot the whole NDEF after auth: the gate needs to know
+    // whether the file holds data, and the write leg needs to know it is
+    // a no-op.
     let mut snapshot = [0u8; 256];
     let mut ndef_len = s
         .read_file_plain(transport, File::Ndef, 0, 0, &mut snapshot)
@@ -1170,8 +1191,7 @@ pub async fn f5probe<T: Transport>(
     if ndef_len == 0 {
         // J3R180 ntag424-applet quirk (hardware-observed 2026-10-28):
         // length=0 plain reads answer an EMPTY success instead of the
-        // whole file — an explicit window still returns content, so the
-        // gate and write-back fall back to reading it directly
+        // whole file — an explicit window still returns content
         ndef_len = s
             .read_file_plain(transport, File::Ndef, 0, 16, &mut snapshot)
             .await?;
@@ -1180,6 +1200,7 @@ pub async fn f5probe<T: Transport>(
     if !force && snapshot.iter().any(|&b| b != 0) {
         return Err(Error::NdefNotEmpty { len: ndef_len });
     }
+    let blank = snapshot.iter().all(|&b| b == 0);
 
     let mut f5a = 0u8;
     let mut ad = 0u8;
@@ -1190,7 +1211,15 @@ pub async fn f5probe<T: Transport>(
                 f5a += 1;
                 s = s2;
             }
-            Err(_) => return Ok(((f5a, ad), (0, 0))),
+            Err(_) => {
+                return Ok(F5ProbeReport {
+                    read_f5: f5a,
+                    read_ad: ad,
+                    write_f5: 0,
+                    write_8d: 0,
+                    write_skipped: false,
+                });
+            }
         }
         let mut buf = [0u8; 8];
         match s
@@ -1198,35 +1227,81 @@ pub async fn f5probe<T: Transport>(
             .await
         {
             Ok(_) => ad += 1,
-            Err(_) => return Ok(((f5a, ad), (0, 0))),
+            Err(_) => {
+                return Ok(F5ProbeReport {
+                    read_f5: f5a,
+                    read_ad: ad,
+                    write_f5: 0,
+                    write_8d: 0,
+                    write_skipped: false,
+                });
+            }
         }
     }
-    // now with writes: F5, 8D(first snapshot bytes, verbatim), F5
+    // write section: F5, 8D(first snapshot bytes, verbatim — no-op on a
+    // blank file), F5. SKIPPED entirely when the file holds data.
     let mut f5w = 0u8;
-    let mut wd = 0u8;
+    if !blank {
+        return Ok(F5ProbeReport {
+            read_f5: f5a,
+            read_ad: ad,
+            write_f5: 0,
+            write_8d: 0,
+            write_skipped: true,
+        });
+    }
     match s.get_file_settings(transport, File::Ndef).await {
         Ok((_f, s2)) => {
             f5w += 1;
             s = s2;
         }
-        Err(_) => return Ok(((f5a, ad), (f5w, wd))),
+        Err(_) => {
+            return Ok(F5ProbeReport {
+                read_f5: f5a,
+                read_ad: ad,
+                write_f5: f5w,
+                write_8d: 0,
+                write_skipped: false,
+            });
+        }
     }
     let write_len = 4.min(snapshot.len());
     if write_len == 0 {
         // degenerate zero-length file (mock artifact / broken card): the
         // 8D leg has nothing to write back — report without it rather
         // than send an empty write APDU
-        return Ok(((f5a, ad), (f5w, 0)));
+        return Ok(F5ProbeReport {
+            read_f5: f5a,
+            read_ad: ad,
+            write_f5: f5w,
+            write_8d: 0,
+            write_skipped: false,
+        });
     }
     let payload = snapshot.get(..write_len).unwrap_or(snapshot);
+    let mut wd = 0u8;
     match s.write_file_plain(transport, File::Ndef, 0, payload).await {
         Ok(_) => wd += 1,
-        Err(_) => return Ok(((f5a, ad), (f5w, wd))),
+        Err(_) => {
+            return Ok(F5ProbeReport {
+                read_f5: f5a,
+                read_ad: ad,
+                write_f5: f5w,
+                write_8d: wd,
+                write_skipped: false,
+            });
+        }
     }
     if s.get_file_settings(transport, File::Ndef).await.is_ok() {
         f5w += 1;
     }
-    Ok(((f5a, ad), (f5w, wd)))
+    Ok(F5ProbeReport {
+        read_f5: f5a,
+        read_ad: ad,
+        write_f5: f5w,
+        write_8d: wd,
+        write_skipped: false,
+    })
 }
 
 pub fn set_plain_advance_compat(on: bool) {

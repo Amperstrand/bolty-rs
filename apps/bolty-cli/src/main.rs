@@ -237,18 +237,19 @@ enum Cli {
     },
 
     /// Interleaved GetFileSettings/ReadData/WriteData probe for CmdCtr
-    /// lockstep (the silicon-vs-applet A/B tool). NOT read-only: the
-    /// write leg re-writes the NDEF's first bytes VERBATIM
-    /// (content-preserving since #233) — but it still refuses a
-    /// non-blank NDEF unless --force (factory-keyed cards can carry
-    /// residual/test NDEF; offset 0 is the NLEN header).
+    /// lockstep (the silicon-vs-applet A/B tool). NOT read-only on a
+    /// BLANK card: the write leg re-writes the NDEF's first bytes
+    /// verbatim (a no-op) to exercise the 8D path. A non-blank NDEF is
+    /// refused unless --force, and forced runs are read-only (the write
+    /// leg is skipped — with SDM active the read view is processed data;
+    /// writing it back would corrupt the template).
     /// On NTAG424-emulation applets (J3R180 etc.) set
     /// BOLTY_EMU_COUNTER_COMPAT=1 — plain reads advance CmdCtr on the
     /// applet, and without the compat flag every probe after the first
     /// F5/AD pair fails with a MAC-desync look (2026-10-27 lane finding).
     F5Probe {
-        /// Allow the probe on a card whose NDEF holds data (the write
-        /// leg preserves content, but the gate is verify-before-mutation)
+        /// Allow the probe on a card whose NDEF holds data (the run is
+        /// then read-only — the write leg is deliberately skipped)
         #[arg(long)]
         force: bool,
     },

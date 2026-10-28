@@ -15,15 +15,33 @@ where
         Ok(r) => r,
         Err(bolty_ntag::Error::NdefNotEmpty { len }) => anyhow::bail!(
             "NDEF holds {len} bytes of data — refusing to probe without --force\n\
-             (the write leg preserves content, but verify-before-mutation wins; \
-             burn/wipe the card first if this is lab stock)"
+             (verify-before-mutation; burn/wipe the card first if this is lab stock)"
         ),
         Err(e) => return Err(anyhow::anyhow!("f5probe: {e:?}")),
     };
-    let ((f5a, ad), (f5w, wd)) = r;
-    println!("read-interleave:  F5 ok={f5a}/3, AD ok={ad}/3");
-    println!("write-interleave: F5 ok={f5w}/2, 8D ok={wd}/1");
-    if f5a == 3 && ad == 3 && f5w == 2 && wd == 1 {
+    println!(
+        "read-interleave:  F5 ok={}/3, AD ok={}/3",
+        r.read_f5, r.read_ad
+    );
+    if r.write_skipped {
+        // deliberate, not a failure: with SDM mirroring the ReadData view
+        // is PROCESSED data, not the raw template — an 8D write-back would
+        // corrupt the template (hardware-observed on the J3R180, NLEN
+        // zeroed). Forced runs on a non-blank card are read-only.
+        println!(
+            "write-interleave: SKIPPED (NDEF holds data — the write-back\n\
+             would corrupt the raw template through the SDM-mirrored read view)"
+        );
+        if r.read_f5 == 3 && r.read_ad == 3 {
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+    println!(
+        "write-interleave: F5 ok={}/2, 8D ok={}/1",
+        r.write_f5, r.write_8d
+    );
+    if r.read_f5 == 3 && r.read_ad == 3 && r.write_f5 == 2 && r.write_8d == 1 {
         return Ok(());
     }
     // Emulator footgun (2026-10-27 lane finding): without the compat flag

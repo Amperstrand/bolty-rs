@@ -61,6 +61,8 @@ pub struct MockTransport {
     /// J3R180 applet quirk: length=0 plain reads answer empty (see
     /// handle_read_data_plain)
     pub applet_len0_empty: bool,
+    /// Count of 0x8D WriteData APDUs served (probe-safety assertions)
+    pub writes_served: usize,
 }
 
 struct PendingAuth {
@@ -125,6 +127,7 @@ impl MockTransport {
             session: None,
             version_step: 0,
             applet_len0_empty: false,
+            writes_served: 0,
         }
     }
 
@@ -394,6 +397,7 @@ impl MockTransport {
     }
 
     fn handle_write_data_plain(&mut self, apdu: &[u8]) -> Response<Vec<u8>> {
+        self.writes_served += 1;
         self.require_ndef_selected();
         assert_eq!(apdu[0], 0x90);
         assert_eq!(apdu[1], 0x8D);

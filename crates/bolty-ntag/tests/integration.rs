@@ -399,30 +399,6 @@ fn safe_inspect_reports_off_when_sdm_not_configured() {
 // ── f5probe (#233): content-preserving write leg + non-blank gate ──────
 
 #[test]
-fn f5probe_write_leg_preserves_ndef_content() {
-    // factory-keyed card with a residual NDEF message (NLEN header + payload)
-    let mut ndef = vec![0u8; 256];
-    ndef[0] = 0x00; // NLEN = 0x0021 (33 bytes)
-    ndef[1] = 0x21;
-    ndef[2] = 0xD1; // TNF well-known, SR
-    ndef[3] = 0x02;
-    ndef[4] = 0x65;
-    let mut transport = MockTransport::provisioned(
-        [[0u8; 16]; 5],
-        [0u8; 5],
-        ndef.clone(),
-        MockTransport::default_file_settings(),
-    );
-
-    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
-    assert_eq!(r, ((3, 3), (2, 1)), "all interleave legs must succeed");
-
-    // #233 regression: the old write leg put four ZERO bytes at offset 0,
-    // destroying NLEN — the write-back must leave the file byte-identical
-    assert_eq!(transport.ndef(), &ndef[..]);
-}
-
-#[test]
 fn f5probe_refuses_non_blank_ndef_without_force() {
     let mut ndef = vec![0u8; 256];
     ndef[1] = 0x21; // any nonzero byte = data present
@@ -452,7 +428,17 @@ fn f5probe_blank_ndef_probes_without_force() {
     );
 
     let r = block_on(f5probe(&mut transport, RND_A, false)).unwrap();
-    assert_eq!(r, ((3, 3), (2, 1)));
+    assert_eq!(
+        (
+            r.read_f5,
+            r.read_ad,
+            r.write_f5,
+            r.write_8d,
+            r.write_skipped
+        ),
+        (3, 3, 2, 1, false)
+    );
+    assert_eq!(transport.writes_served, 1);
     assert!(transport.ndef().iter().all(|&b| b == 0));
 }
 
@@ -475,7 +461,7 @@ fn f5probe_gate_survives_applet_len0_quirk() {
     assert!(matches!(err, Error::NdefNotEmpty { .. }));
     assert_eq!(transport.ndef(), &ndef[..]);
 
-    // and the forced probe still preserves content through the quirk
+    // and the forced run is read-only through the quirk — content intact
     let mut transport = MockTransport::provisioned(
         [[0u8; 16]; 5],
         [0u8; 5],
@@ -484,6 +470,45 @@ fn f5probe_gate_survives_applet_len0_quirk() {
     );
     transport.applet_len0_empty = true;
     let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
-    assert_eq!(r, ((3, 3), (2, 1)));
+    assert_eq!((r.read_f5, r.read_ad, r.write_skipped), (3, 3, true));
+    assert_eq!(
+        transport.writes_served, 0,
+        "forced non-blank run must not write"
+    );
     assert_eq!(transport.ndef(), &ndef[..]);
+}
+
+#[test]
+fn f5probe_forced_non_blank_is_read_only() {
+    // hardware-taught (J3R180, 2026-10-28): with SDM mirroring the
+    // ReadData view is PROCESSED data, not the raw template — a
+    // write-back of the read view corrupted NLEN live. Forced runs on a
+    // non-blank card therefore skip the 8D leg entirely.
+    let mut ndef = vec![0u8; 256];
+    ndef[0] = 0x00;
+    ndef[1] = 0x21;
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+
+    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
+    assert_eq!(
+        (
+            r.read_f5,
+            r.read_ad,
+            r.write_f5,
+            r.write_8d,
+            r.write_skipped
+        ),
+        (3, 3, 0, 0, true)
+    );
+    assert_eq!(transport.writes_served, 0);
+    assert_eq!(
+        transport.ndef(),
+        &ndef[..],
+        "no byte may move on a forced run"
+    );
 }
