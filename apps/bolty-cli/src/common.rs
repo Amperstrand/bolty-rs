@@ -127,6 +127,10 @@ where
         bolty_ntag::Error::SdmVerificationFailed => {
             anyhow::anyhow!("SDM verification failed.\nRecovery: re-run the operation.")
         }
+        bolty_ntag::Error::NdefNotEmpty { len } => anyhow::anyhow!(
+            "NDEF holds {len} bytes of data — the requested operation is\n\
+             refused without an explicit override (verify-before-mutation)"
+        ),
         bolty_ntag::Error::SdmUrl(e) => anyhow::anyhow!("SDM URL config error: {e}"),
         bolty_ntag::Error::Session(e) => anyhow::anyhow!("operation failed: {e}"),
         bolty_ntag::Error::Transport(e) => anyhow::anyhow!("transport error: {e}"),

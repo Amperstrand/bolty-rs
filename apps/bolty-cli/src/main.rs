@@ -236,13 +236,22 @@ enum Cli {
         verbose: bool,
     },
 
-    /// Try a raw AES key against a specific key slot (read-only, no writes).
-    /// Useful for card recovery when you don't know which key is on the card.
+    /// Interleaved GetFileSettings/ReadData/WriteData probe for CmdCtr
+    /// lockstep (the silicon-vs-applet A/B tool). NOT read-only: the
+    /// write leg re-writes the NDEF's first bytes VERBATIM
+    /// (content-preserving since #233) — but it still refuses a
+    /// non-blank NDEF unless --force (factory-keyed cards can carry
+    /// residual/test NDEF; offset 0 is the NLEN header).
     /// On NTAG424-emulation applets (J3R180 etc.) set
     /// BOLTY_EMU_COUNTER_COMPAT=1 — plain reads advance CmdCtr on the
     /// applet, and without the compat flag every probe after the first
     /// F5/AD pair fails with a MAC-desync look (2026-10-27 lane finding).
-    F5Probe,
+    F5Probe {
+        /// Allow the probe on a card whose NDEF holds data (the write
+        /// leg preserves content, but the gate is verify-before-mutation)
+        #[arg(long)]
+        force: bool,
+    },
 
     /// Applet-only helper: set the stored (SDM-embedded) UID
     SetCardUid {
@@ -387,9 +396,9 @@ async fn run() -> anyhow::Result<()> {
             let mut transport = connect_transport()?;
             set_card_uid::cmd_set_card_uid(&mut transport, &uid).await?;
         }
-        Cli::F5Probe => {
+        Cli::F5Probe { force } => {
             let mut transport = connect_transport()?;
-            f5probe::cmd_f5probe(&mut transport).await?;
+            f5probe::cmd_f5probe(&mut transport, force).await?;
         }
         Cli::Readers => {
             let readers =

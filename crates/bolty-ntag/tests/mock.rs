@@ -89,6 +89,11 @@ impl MockTransport {
         )
     }
 
+    /// The default (factory, no-SDM) file-settings blob used by `new()`.
+    pub fn default_file_settings() -> Vec<u8> {
+        DEFAULT_FILE_SETTINGS.to_vec()
+    }
+
     pub fn provisioned(
         keys: [[u8; 16]; 5],
         key_versions: [u8; 5],

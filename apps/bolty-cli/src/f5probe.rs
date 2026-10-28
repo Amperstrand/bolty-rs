@@ -5,14 +5,21 @@ use crate::common::gen_rnd_a;
 /// f5-probe: interleaved GetFileSettings/ReadData/WriteData to verify
 /// CmdCtr lockstep between host and card (the silicon-vs-applet A/B tool).
 /// Counter semantics live in bolty_ntag::f5probe; this wrapper keeps the
-/// run self-diagnosing (hint + machine-readable exit code).
-pub async fn cmd_f5probe<T: Transport>(transport: &mut T) -> anyhow::Result<()>
+/// run self-diagnosing (hint + machine-readable exit code) and maps the
+/// #233 non-blank-NDEF gate to an actionable message.
+pub async fn cmd_f5probe<T: Transport>(transport: &mut T, force: bool) -> anyhow::Result<()>
 where
     T::Error: std::error::Error + Send + Sync + 'static,
 {
-    let r = bolty_ntag::f5probe(transport, gen_rnd_a()?)
-        .await
-        .map_err(|e| anyhow::anyhow!("f5probe: {e:?}"))?;
+    let r = match bolty_ntag::f5probe(transport, gen_rnd_a()?, force).await {
+        Ok(r) => r,
+        Err(bolty_ntag::Error::NdefNotEmpty { len }) => anyhow::bail!(
+            "NDEF holds {len} bytes of data — refusing to probe without --force\n\
+             (the write leg preserves content, but verify-before-mutation wins; \
+             burn/wipe the card first if this is lab stock)"
+        ),
+        Err(e) => return Err(anyhow::anyhow!("f5probe: {e:?}")),
+    };
     let ((f5a, ad), (f5w, wd)) = r;
     println!("read-interleave:  F5 ok={f5a}/3, AD ok={ad}/3");
     println!("write-interleave: F5 ok={f5w}/2, 8D ok={wd}/1");

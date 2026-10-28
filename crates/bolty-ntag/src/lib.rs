@@ -154,6 +154,13 @@ pub enum Error<T: core::error::Error + core::fmt::Debug> {
         actual: u8,
     },
     SdmVerificationFailed,
+    /// f5-probe gate (#233): the NDEF file holds data (nonzero bytes) and
+    /// the caller did not pass force. The probe's write leg is
+    /// content-preserving, but the gate still refuses — verify coupling
+    /// before mutation.
+    NdefNotEmpty {
+        len: usize,
+    },
 }
 
 impl<T: core::error::Error + core::fmt::Debug> From<SessionError<T>> for Error<T> {
@@ -1142,12 +1149,29 @@ mod hil_output_contract_tests {
 pub async fn f5probe<T: Transport>(
     transport: &mut T,
     rnd_a: [u8; 16],
+    force: bool,
 ) -> Result<((u8, u8), (u8, u8)), Error<T::Error>> {
     let session = Session::default();
     let s = session
         .authenticate_aes(transport, KeyNumber::Key0, &[0u8; 16], rnd_a)
         .await?;
     let mut s = s;
+
+    // #233: the write leg must be content-preserving. Snapshot the whole
+    // NDEF first: (a) refuse a non-blank file unless forced — a
+    // factory-keyed card can carry residual/test NDEF, and offset 0 is
+    // NLEN (a blind 4-zero-byte write destroys the message header);
+    // (b) the write leg writes back exactly the bytes it read — the
+    // probe needs "a write succeeds", not zeros.
+    let mut snapshot = [0u8; 256];
+    let ndef_len = s
+        .read_file_plain(transport, File::Ndef, 0, 0, &mut snapshot)
+        .await?;
+    let snapshot = snapshot.get(..ndef_len).unwrap_or(&snapshot);
+    if !force && snapshot.iter().any(|&b| b != 0) {
+        return Err(Error::NdefNotEmpty { len: ndef_len });
+    }
+
     let mut f5a = 0u8;
     let mut ad = 0u8;
     // interleave: F5, AD, F5, AD, F5
@@ -1168,7 +1192,7 @@ pub async fn f5probe<T: Transport>(
             Err(_) => return Ok(((f5a, ad), (0, 0))),
         }
     }
-    // now with writes: F5, 8D(4 bytes), F5
+    // now with writes: F5, 8D(first snapshot bytes, verbatim), F5
     let mut f5w = 0u8;
     let mut wd = 0u8;
     match s.get_file_settings(transport, File::Ndef).await {
@@ -1178,8 +1202,15 @@ pub async fn f5probe<T: Transport>(
         }
         Err(_) => return Ok(((f5a, ad), (f5w, wd))),
     }
-    let payload = [0u8; 4];
-    match s.write_file_plain(transport, File::Ndef, 0, &payload).await {
+    let write_len = 4.min(snapshot.len());
+    if write_len == 0 {
+        // degenerate zero-length file (mock artifact / broken card): the
+        // 8D leg has nothing to write back — report without it rather
+        // than send an empty write APDU
+        return Ok(((f5a, ad), (f5w, 0)));
+    }
+    let payload = snapshot.get(..write_len).unwrap_or(snapshot);
+    match s.write_file_plain(transport, File::Ndef, 0, payload).await {
         Ok(_) => wd += 1,
         Err(_) => return Ok(((f5a, ad), (f5w, wd))),
     }

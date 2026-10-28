@@ -11,8 +11,8 @@ mod mock;
 
 use bolty_core::secret::{AesKey, CardKeys};
 use bolty_ntag::{
-    BurnParams, FACTORY_KEY, FACTORY_KEY_VERSION, burn, check_key_versions, preflight, read_uid,
-    wipe,
+    BurnParams, Error, FACTORY_KEY, FACTORY_KEY_VERSION, burn, check_key_versions, f5probe,
+    preflight, read_uid, wipe,
 };
 use mock::{MockTransport, UID, block_on};
 use ntag424::{
@@ -394,4 +394,64 @@ fn safe_inspect_reports_off_when_sdm_not_configured() {
     let result = block_on(safe_inspect(&mut transport, None, None)).unwrap();
 
     assert_eq!(result.sdm_mirroring, SdmMirroring::Off);
+}
+
+// ── f5probe (#233): content-preserving write leg + non-blank gate ──────
+
+#[test]
+fn f5probe_write_leg_preserves_ndef_content() {
+    // factory-keyed card with a residual NDEF message (NLEN header + payload)
+    let mut ndef = vec![0u8; 256];
+    ndef[0] = 0x00; // NLEN = 0x0021 (33 bytes)
+    ndef[1] = 0x21;
+    ndef[2] = 0xD1; // TNF well-known, SR
+    ndef[3] = 0x02;
+    ndef[4] = 0x65;
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+
+    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
+    assert_eq!(r, ((3, 3), (2, 1)), "all interleave legs must succeed");
+
+    // #233 regression: the old write leg put four ZERO bytes at offset 0,
+    // destroying NLEN — the write-back must leave the file byte-identical
+    assert_eq!(transport.ndef(), &ndef[..]);
+}
+
+#[test]
+fn f5probe_refuses_non_blank_ndef_without_force() {
+    let mut ndef = vec![0u8; 256];
+    ndef[1] = 0x21; // any nonzero byte = data present
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+
+    let err = block_on(f5probe(&mut transport, RND_A, false)).unwrap_err();
+    match err {
+        Error::NdefNotEmpty { len } => assert_eq!(len, 256),
+        other => panic!("expected NdefNotEmpty, got {other:?}"),
+    }
+    // untouched: the refusal fires before ANY interleaved op
+    assert_eq!(transport.ndef(), &ndef[..]);
+}
+
+#[test]
+fn f5probe_blank_ndef_probes_without_force() {
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        vec![0u8; 256],
+        MockTransport::default_file_settings(),
+    );
+
+    let r = block_on(f5probe(&mut transport, RND_A, false)).unwrap();
+    assert_eq!(r, ((3, 3), (2, 1)));
+    assert!(transport.ndef().iter().all(|&b| b == 0));
 }
