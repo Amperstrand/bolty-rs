@@ -1164,9 +1164,18 @@ pub async fn f5probe<T: Transport>(
     // (b) the write leg writes back exactly the bytes it read — the
     // probe needs "a write succeeds", not zeros.
     let mut snapshot = [0u8; 256];
-    let ndef_len = s
+    let mut ndef_len = s
         .read_file_plain(transport, File::Ndef, 0, 0, &mut snapshot)
         .await?;
+    if ndef_len == 0 {
+        // J3R180 ntag424-applet quirk (hardware-observed 2026-10-28):
+        // length=0 plain reads answer an EMPTY success instead of the
+        // whole file — an explicit window still returns content, so the
+        // gate and write-back fall back to reading it directly
+        ndef_len = s
+            .read_file_plain(transport, File::Ndef, 0, 16, &mut snapshot)
+            .await?;
+    }
     let snapshot = snapshot.get(..ndef_len).unwrap_or(&snapshot);
     if !force && snapshot.iter().any(|&b| b != 0) {
         return Err(Error::NdefNotEmpty { len: ndef_len });

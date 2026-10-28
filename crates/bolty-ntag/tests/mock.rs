@@ -58,6 +58,9 @@ pub struct MockTransport {
     pending_auth: Option<PendingAuth>,
     session: Option<SessionState>,
     version_step: u8,
+    /// J3R180 applet quirk: length=0 plain reads answer empty (see
+    /// handle_read_data_plain)
+    pub applet_len0_empty: bool,
 }
 
 struct PendingAuth {
@@ -121,6 +124,7 @@ impl MockTransport {
             pending_auth: None,
             session: None,
             version_step: 0,
+            applet_len0_empty: false,
         }
     }
 
@@ -370,7 +374,15 @@ impl MockTransport {
         let length = u32::from_le_bytes([apdu[9], apdu[10], apdu[11], 0]);
         let start = offset as usize;
         let end = if length == 0 {
-            self.ndef.len()
+            if self.applet_len0_empty {
+                // J3R180 ntag424-applet quirk (hardware-observed
+                // 2026-10-28): length=0 answers an EMPTY success instead
+                // of the whole file — callers must fall back to an
+                // explicit window
+                start
+            } else {
+                self.ndef.len()
+            }
         } else {
             start + length as usize
         };

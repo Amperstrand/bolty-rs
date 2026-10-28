@@ -455,3 +455,35 @@ fn f5probe_blank_ndef_probes_without_force() {
     assert_eq!(r, ((3, 3), (2, 1)));
     assert!(transport.ndef().iter().all(|&b| b == 0));
 }
+
+#[test]
+fn f5probe_gate_survives_applet_len0_quirk() {
+    // J3R180 applet: length=0 plain reads answer EMPTY (hardware-observed
+    // 2026-10-28) — without the explicit-window fallback the #233 gate
+    // saw nothing and happily probed a card with residual NDEF
+    let mut ndef = vec![0u8; 256];
+    ndef[1] = 0x21;
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+    transport.applet_len0_empty = true;
+
+    let err = block_on(f5probe(&mut transport, RND_A, false)).unwrap_err();
+    assert!(matches!(err, Error::NdefNotEmpty { .. }));
+    assert_eq!(transport.ndef(), &ndef[..]);
+
+    // and the forced probe still preserves content through the quirk
+    let mut transport = MockTransport::provisioned(
+        [[0u8; 16]; 5],
+        [0u8; 5],
+        ndef.clone(),
+        MockTransport::default_file_settings(),
+    );
+    transport.applet_len0_empty = true;
+    let r = block_on(f5probe(&mut transport, RND_A, true)).unwrap();
+    assert_eq!(r, ((3, 3), (2, 1)));
+    assert_eq!(transport.ndef(), &ndef[..]);
+}
