@@ -436,50 +436,62 @@ mod tests {
     }
 
     /// The programmed-timeout arithmetic of the rev-pinned mfrc522-pcd
-    /// driver (ccid-firmware-rs @ a0b1f742, crates/mfrc522-pcd/src/lib.rs,
-    /// `set_timeout_ms`), mirrored byte-for-byte so this crate's tests can
-    /// see what the PCD timer ACTUALLY gets for a requested timeout.
-    /// Bench proof blocked 2026-10-27: the m5stick's MFRC522 is invisible
-    /// on I2C (issue #222) — this model is the CI-visible half of the
-    /// hardware test; run both once the reader is back.
-    fn pcd_programmed_timeout_ms(requested_ms: u32) -> u32 {
-        let prescaler = 0xA9u16;
-        let timer_hz = 13_560_000u32 / (2 * prescaler as u32 + 1);
-        let reload = (requested_ms.saturating_mul(timer_hz) / 1000).min(0xFFFF);
-        reload * 1000 / timer_hz
+    /// driver (ccid-firmware-rs @ d8f2520e4, crates/mfrc522-pcd/src/lib.rs,
+    /// `set_timeout_ms`, PR #464), mirrored so this crate's tests can see
+    /// what the PCD timer ACTUALLY gets for a requested timeout. Returns
+    /// None where the driver errors (request beyond the ~39.6 s hardware
+    /// maximum: 12-bit prescaler x 16-bit reload). Bench proof of the
+    /// register bytes lives in ccid's own suite; this model is the
+    /// bolty-visible half (bench rerun pending the #222 reader return).
+    fn pcd_programmed_timeout_ms(requested_ms: u32) -> Option<u32> {
+        // smallest divisor >= the historical 339 whose tick keeps the
+        // reload within 16 bits (13560000/65535000 = 904/4369 in lowest
+        // terms), rounded UP to odd (2*TPrescaler+1), <= 8191.
+        let min_div = (requested_ms.saturating_mul(904).saturating_add(4_368)) / 4_369;
+        let mut div = min_div.max(2 * 0xA9 + 1);
+        if div % 2 == 0 {
+            div += 1;
+        }
+        if div > 8191 {
+            return None; // driver: Err(Timeout) — loud, never a silent clamp
+        }
+        // reload = ceil(ms * f_in / (1000*div)) against the TRUE divisor
+        // (u64: ms * 13.56 MHz overflows u32 from ~317 ms).
+        let reload = ((u64::from(requested_ms) * 13_560_000 + u64::from(div) * 1000 - 1)
+            / (u64::from(div) * 1000)) as u32;
+        Some((reload as u64 * u64::from(div) * 1000 / 13_560_000) as u32)
     }
 
-    /// Issue #180: this crate computes FWI-derived FWTs correctly (FWI 13 ->
-    /// 2483 ms, FWI 14 -> 4957 ms) and passes them to set_timeout_ms, but
-    /// the pinned PCD driver programs the MFRC522 timer with a FIXED
-    /// prescaler (0xA9 = 169 -> 13.56 MHz / 339 = exactly 40.000 kHz) and
-    /// caps TReload at 0xFFFF — a 65_535-tick ceiling of 1638 ms. Cards
-    /// advertising FWI 13/14 therefore time out ~850 ms / ~3.3 s before
-    /// their declared FWT. Pins BOTH sides of the divergence so the fix
-    /// (bigger prescaler for long waits, or chunked timer periods)
-    /// un-clamps visibly here.
+    /// Issue #180, post-fix (ccid PR #464): this crate computes
+    /// FWI-derived FWTs correctly (FWI 13 -> 2483 ms, FWI 14 -> 4957 ms)
+    /// and the re-pinned PCD driver now ARMS THEM — the per-request
+    /// prescaler (12-bit: TModeReg[3:0] high nibble) replaces the fixed
+    /// 0xA9/40 kHz tick whose 16-bit reload capped everything at
+    /// 1638 ms. The pre-fix divergence this test pinned (FWI 13/14
+    /// clamped to 1638) is now asserted as RESOLVED; requests the old
+    /// timer could express still map identically.
     #[test]
-    fn issue180_fwi13_14_fwt_exceeds_pcd_timer_ceiling() {
-        // Ground truth for the tick rate: 13.56 MHz / (2*169+1) = 40 kHz.
+    fn issue180_fwi13_14_fwt_now_armed_in_full() {
+        // Ground truth for the historical tick: 13.56 MHz / (2*169+1) = 40 kHz.
         assert_eq!(13_560_000u32 / (2 * 0xA9 + 1), 40_000);
         for (fwi, want_requested) in [(4u8, 14u32), (13, 2483), (14, 4957)] {
             let ats = Ats::from_crc_verified(&[0x03, 0x20, fwi << 4]).unwrap();
             let requested = frame_wait_time_ms(&ats);
             assert_eq!(requested, want_requested, "FWI {fwi} requested FWT");
-            let programmed = pcd_programmed_timeout_ms(requested);
-            if fwi >= 13 {
-                assert_eq!(
-                    programmed, 1638,
-                    "issue #180: FWI {fwi} requests {requested} ms but the \
-                     pinned PCD timer clamps to the 1638 ms ceiling"
-                );
-            } else {
-                assert_eq!(programmed, requested, "FWI {fwi} fits the timer");
-            }
+            let programmed = pcd_programmed_timeout_ms(requested)
+                .expect("FWI FWTs are far inside the hardware maximum");
+            assert_eq!(
+                programmed, requested,
+                "issue #180 fixed: FWI {fwi} must arm its full FWT, no clamp"
+            );
         }
-        // The ceiling is a property of the fixed prescaler alone: any
-        // request at or below 1638 ms round-trips unchanged.
-        assert_eq!(pcd_programmed_timeout_ms(1638), 1638);
-        assert_eq!(pcd_programmed_timeout_ms(1639), 1638);
+        // The old ceiling boundary is gone: 1638 ms still round-trips on
+        // the historical tick (byte-identical register writes), and the
+        // next millisecond now WIDENS the prescaler instead of clamping.
+        assert_eq!(pcd_programmed_timeout_ms(1638), Some(1638));
+        assert_eq!(pcd_programmed_timeout_ms(1639), Some(1639));
+        // Beyond the ~39.6 s hardware maximum the driver ERRS loudly
+        // (None here) — the silent clamp was the bug.
+        assert_eq!(pcd_programmed_timeout_ms(60_000), None);
     }
 }
