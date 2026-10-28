@@ -27,12 +27,15 @@ iso14443 = { git = "https://github.com/Amperstrand/iso14443-rs.git", rev = "0f7d
 # Kernel M2 (t_e3335b39): mfrc522-pcd's canonical home is ccid-firmware-rs
 # (crates/mfrc522-pcd); bolty's duplicate local copy is deleted and every
 # consumer (bolty-mfrc522, apps/bolty-esp32, apps/bolty-stm32) rides this
-# rev-pinned git dep instead. Rev = ccid main at the flip
-# (79456d9947f643bd58a6a8fc4c688ff5bdfe4bc3, post-#426 frontend
-# constructors + FrontendDiagnostics). Bump = explicit reviewed commit
-# moving this rev AND the Cargo.lock entry together (fork-policy §2 rule 2),
-# keeping the rev byte-identical across every bolty manifest that pins it.
-mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "a0b1f7420fc82f186717e2f3a6029870372e1a15" }
+# rev-pinned git dep instead. Rev = ccid main at the #464 merge
+# (d8f2520e49928223ab82abcc8042cca414051fd4): set_timeout_ms arms the
+# full FWI 13/14 FWTs (12-bit prescaler, no 1638 ms silent clamp —
+# bolty #180). Bump = explicit reviewed commit moving this rev AND the
+# Cargo.lock entry together (fork-policy §2 rule 2), keeping the rev
+# byte-identical across every bolty manifest that pins it. The iso14443
+# and mfrc522 pins above still match ccid's at this rev (0f7d9d70 /
+# e9ced1e — verified against the d8f2520e4 tree).
+mfrc522-pcd = { git = "https://github.com/Amperstrand/ccid-firmware-rs.git", rev = "d8f2520e49928223ab82abcc8042cca414051fd4" }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

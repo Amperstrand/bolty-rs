@@ -1721,7 +1721,7 @@ dependencies = [
 [[package]]
 name = "mfrc522-pcd"
 version = "0.1.0"
-source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=a0b1f7420fc82f186717e2f3a6029870372e1a15#a0b1f7420fc82f186717e2f3a6029870372e1a15"
+source = "git+https://github.com/Amperstrand/ccid-firmware-rs.git?rev=d8f2520e49928223ab82abcc8042cca414051fd4#d8f2520e49928223ab82abcc8042cca414051fd4"
 dependencies = [
  "embedded-hal 1.0.0",
  "esp-idf-sys",
