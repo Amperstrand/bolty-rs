@@ -7,16 +7,35 @@ pattern from the role-switch boot-noise learnings (§178).
 """
 
 import os
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_CLI = REPO_ROOT / "target" / "debug" / "bolty-cli"
 DEFAULT_CONSOLE_CTL = REPO_ROOT / "tools" / "hil" / "bolty-ctl.py"
 
 UID_RETRY_DELAY_S = 2.0
+
+
+def _resolve_default_cli() -> Path:
+    """Newest existing build among the checkout target dir and the shared
+    ~/.cargo-target dir (ai-legion-small routes ALL cargo output there via
+    ~/.cargo/config.toml — the in-tree target/debug/bolty-cli then goes
+    STALE after rebuilds and the harness silently runs old code; caught
+    live during the #233 hardware validation, 2026-10-28)."""
+    candidates = [
+        REPO_ROOT / "target" / "debug" / "bolty-cli",
+        Path.home() / ".cargo-target" / "debug" / "bolty-cli",
+    ]
+    existing = [c for c in candidates if c.exists()]
+    if not existing:
+        return candidates[0]
+    return max(existing, key=lambda c: c.stat().st_mtime)
+
+
+DEFAULT_CLI = _resolve_default_cli()
 
 
 class BoltyError(RuntimeError):
