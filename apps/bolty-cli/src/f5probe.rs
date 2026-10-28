@@ -15,7 +15,9 @@ where
         Ok(r) => r,
         Err(bolty_ntag::Error::NdefNotEmpty { len }) => anyhow::bail!(
             "NDEF holds {len} bytes of data — refusing to probe without --force\n\
-             (verify-before-mutation; burn/wipe the card first if this is lab stock)"
+             (verify-before-mutation. NOTE: a wipe clears keys/SDM but NOT the\n\
+             NDEF payload — post-wipe cards still gate; use --force for a\n\
+             read-only probe, or a factory-fresh card for the full write leg)"
         ),
         Err(e) => return Err(anyhow::anyhow!("f5probe: {e:?}")),
     };
