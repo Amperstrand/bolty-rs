@@ -6,16 +6,50 @@
 //! exactly what was sent to the card and what it replied.
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bolty_core::provenance::KeyProvenance;
 use bolty_ntag::{Response, Transport};
 
 static AUDIT_LOG_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Issue #210: process-start wall clock, captured once. Every banner and
+/// clock-step note is judged against this, so a mid-process NTP step or a
+/// container re-entry with a skewed clock becomes visible in the log
+/// instead of silently interleaving wrong timestamps with other lanes'.
+static PROCESS_START_MS: LazyLock<u128> = LazyLock::new(now_epoch_ms);
+
+/// The session banner fires on the FIRST audit write of the process.
+static BANNER_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// One CLOCK_STEP_BACKWARD note per process (flag, not per-entry spam).
+static CLOCK_STEP_NOTED: AtomicBool = AtomicBool::new(false);
+
+/// Test hook: when non-zero, [`now_epoch_ms`] reports this instead of the
+/// real clock (issue #210 tests simulate backward clock steps).
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
+#[cfg(test)]
+static CLOCK_OVERRIDE_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_epoch_ms() -> u128 {
+    #[cfg(test)]
+    {
+        let o = CLOCK_OVERRIDE_MS.load(Ordering::Relaxed);
+        if o != 0 {
+            return u128::from(o);
+        }
+    }
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
 
 /// Set the audit log path. Called once at startup.
 /// Defaults to `/tmp/bolty-audit.log` if never called.
@@ -49,25 +83,138 @@ pub fn reset_audit_log_path_for_test() {
     }
 }
 
-fn log_entry(entry: &str) {
-    let path = audit_log_path();
+/// Test-only: re-arm the one-shot session banner and clear the clock-step
+/// flag (issue #210 tests exercise the banner repeatedly in one process).
+#[cfg(test)]
+pub fn reset_banner_for_test() {
+    BANNER_WRITTEN.store(false, Ordering::Relaxed);
+    CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
+}
+
+/// RFC 3339 UTC from epoch millis, dependency-free (civil-from-days per
+/// Howard Hinnant's algorithm — the crate pins deps tightly, so no chrono).
+fn wall_utc(epoch_ms: u128) -> String {
+    let secs = (epoch_ms / 1000) as i64;
+    let ms = (epoch_ms % 1000) as u32;
+    let days = secs.div_euclid(86_400);
+    let secs_of_day = secs.rem_euclid(86_400);
+    let (h, m, s) = (
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60,
+    );
+    // civil_from_days (era shift to 1970-03-01-based months)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}-{month:02}-{d:02}T{h:02}:{m:02}:{s:02}.{ms:03}Z")
+}
+
+fn hostname() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|h| h.trim().to_ascii_lowercase())
+        .ok()
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "unknown-host".into())
+}
+
+fn exe_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "unknown-exe".into())
+}
+
+/// Parse a leading `[<millis>]` timestamp from the last line of an
+/// existing audit log, if any (for future-dated-entry detection).
+fn last_line_epoch_ms(path: &std::path::Path) -> Option<u128> {
+    let f = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(f);
+    let mut last: Option<u128> = None;
+    for line in reader.lines().map_while(Result::ok) {
+        if let Some(v) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.split_once(']'))
+            .and_then(|(ts, _)| ts.parse::<u128>().ok())
+        {
+            last = Some(v);
+        }
+    }
+    last
+}
+
+/// Issue #210: session banner on the process's first audit write. Names the
+/// writer (pid/host/exe), stamps a human-readable wall clock next to the
+/// epoch millis, and flags future-dated entries left by other (skewed)
+/// writers so cross-lane slices stay attributable even with skew.
+fn write_session_banner(path: &std::path::Path) {
+    if BANNER_WRITTEN.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let now = now_epoch_ms();
+    let mut line = format!(
+        "[{now}] SESSION START pid={} host={} exe={} wall={}",
+        std::process::id(),
+        hostname(),
+        exe_name(),
+        wall_utc(now),
+    );
+    if let Some(last) = last_line_epoch_ms(path) {
+        // Entries in the future relative to OUR clock => another writer's
+        // clock is skewed (container/toolbox). Flag, don't reject: the log
+        // is shared and we don't own foreign lanes' entries.
+        if last > now + 1000 {
+            let delta = last - now;
+            line.push_str(&format!(" prior_future_delta_ms={delta}"));
+        }
+    }
+    write_raw(path, &line);
+}
+
+fn write_raw(path: &std::path::Path, entry: &str) {
     if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
-        .open(&path)
+        .open(path)
     {
         let _ = writeln!(f, "{entry}");
         let _ = f.flush();
     }
 }
 
+fn log_entry(entry: &str) {
+    let path = audit_log_path();
+    write_session_banner(&path);
+    write_raw(&path, entry);
+}
+
 fn timestamp() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    format!("{secs}")
+    let now = now_epoch_ms();
+    // Issue #210: a backward clock step mid-process (NTP correction, host
+    // resync) would interleave pre-step and post-step timestamps from THIS
+    // pid with no marker. Note it once, loudly.
+    if now + 1000 < *PROCESS_START_MS && !CLOCK_STEP_NOTED.swap(true, Ordering::Relaxed) {
+        let path = audit_log_path();
+        write_session_banner(&path);
+        write_raw(
+            &path,
+            &format!(
+                "[{now}] EVENT  CLOCK_STEP_BACKWARD delta_ms={} \
+                 (process start was {}; entries above/below may straddle the step)",
+                *PROCESS_START_MS - now,
+                *PROCESS_START_MS,
+            ),
+        );
+    }
+    format!("{now}")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -371,5 +518,164 @@ mod security_tests {
 
         let _ = std::fs::remove_file(&path);
         reset_audit_log_path_for_test();
+    }
+}
+
+/// Issue #210 suite: session banners + clock-sanity notes keep the shared
+/// audit log attributable across processes/lanes even when a writer's
+/// clock is skewed (containers, toolboxes, NTP steps).
+#[cfg(test)]
+mod issue210_tests {
+    use super::{
+        AUDIT_TEST_MUTEX, CLOCK_OVERRIDE_MS, PROCESS_START_MS, log_event,
+        reset_audit_log_path_for_test, reset_banner_for_test, set_audit_log_path, wall_utc,
+    };
+    use std::io::{Read, Write};
+    use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
+
+    fn fresh_path(label: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!(
+            "bolty-issue210-audit-{label}-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    fn read_audit(path: &std::path::Path) -> String {
+        let mut s = String::new();
+        std::fs::File::open(path)
+            .map(|mut f| f.read_to_string(&mut s))
+            .ok();
+        s
+    }
+
+    #[test]
+    fn session_banner_identifies_writer_exactly_once() {
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
+        let path = fresh_path("banner");
+        set_audit_log_path(path.clone());
+        reset_banner_for_test();
+
+        log_event("first entry");
+        log_event("second entry");
+
+        let content = read_audit(&path);
+        let banners = content
+            .lines()
+            .filter(|l| l.contains("SESSION START"))
+            .count();
+        assert_eq!(
+            banners, 1,
+            "exactly one banner per process, got: {content:?}"
+        );
+        let banner = content
+            .lines()
+            .find(|l| l.contains("SESSION START"))
+            .expect("banner present");
+        assert!(
+            banner.contains("wall="),
+            "banner carries wall clock: {banner:?}"
+        );
+        // Structural wall-clock check: wall=YYYY-MM-DDTHH:MM:SS.mmmZ.
+        let wall = banner
+            .split("wall=")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .unwrap_or_default();
+        let structural = wall.len() == 24
+            && wall.bytes().next().is_some_and(|b| b.is_ascii_digit())
+            && wall
+                .bytes()
+                .take(4)
+                .all(|b| b.is_ascii_digit())
+            && wall.get(4..5).is_some_and(|d| d == "-")
+            && wall.get(10..11).is_some_and(|d| d == "T")
+            && wall.ends_with('Z');
+        assert!(structural, "wall clock must be RFC3339 UTC, got: {wall:?}");
+        assert!(banner.contains(&format!("pid={}", std::process::id())));
+        assert!(banner.contains("host="));
+        assert!(banner.contains("exe="));
+
+        let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
+    }
+
+    #[test]
+    fn banner_flags_future_dated_entries_from_skewed_writers() {
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
+        let path = fresh_path("future");
+        // Pre-seed the shared log with a future-dated entry as a skewed
+        // foreign lane would leave it (1 hour ahead of us).
+        let future = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() + 3_600_000)
+            .unwrap_or(0);
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap();
+            writeln!(f, "[{future}] EVENT  foreign-lane entry (skewed clock)").unwrap();
+        }
+        set_audit_log_path(path.clone());
+        reset_banner_for_test();
+
+        log_event("our entry");
+
+        let content = read_audit(&path);
+        assert!(
+            content.contains("prior_future_delta_ms="),
+            "banner must flag the future-dated prior entry: {content:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
+    }
+
+    #[test]
+    fn backward_clock_step_emits_a_marker_once() {
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
+        let path = fresh_path("clockstep");
+        set_audit_log_path(path.clone());
+        reset_banner_for_test();
+
+        // Simulate the host clock stepping 5000 ms behind process start.
+        let stepped = u64::try_from(*PROCESS_START_MS)
+            .unwrap_or(0)
+            .saturating_sub(5000);
+        CLOCK_OVERRIDE_MS.store(stepped, Ordering::Relaxed);
+        log_event("entry under stepped clock");
+        CLOCK_OVERRIDE_MS.store(0, Ordering::Relaxed);
+
+        let content = read_audit(&path);
+        assert!(
+            content.contains("CLOCK_STEP_BACKWARD"),
+            "a backward step must be flagged: {content:?}"
+        );
+        let marks = content
+            .lines()
+            .filter(|l| l.contains("CLOCK_STEP_BACKWARD"))
+            .count();
+        assert_eq!(marks, 1, "flag fires exactly once: {content:?}");
+
+        let _ = std::fs::remove_file(&path);
+        reset_audit_log_path_for_test();
+    }
+
+    #[test]
+    fn wall_utc_matches_known_instants() {
+        assert_eq!(wall_utc(0), "1970-01-01T00:00:00.000Z");
+        // 2026-10-29T12:00:00.000Z (computed independently of this code)
+        assert_eq!(wall_utc(1_793_275_200_000), "2026-10-29T12:00:00.000Z");
+        // 2027-01-15T08:00:00.500Z — leap-year era boundary sanity
+        assert_eq!(wall_utc(1_800_000_000_500), "2027-01-15T08:00:00.500Z");
     }
 }
