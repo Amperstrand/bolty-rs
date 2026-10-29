@@ -591,10 +591,7 @@ mod issue210_tests {
             .unwrap_or_default();
         let structural = wall.len() == 24
             && wall.bytes().next().is_some_and(|b| b.is_ascii_digit())
-            && wall
-                .bytes()
-                .take(4)
-                .all(|b| b.is_ascii_digit())
+            && wall.bytes().take(4).all(|b| b.is_ascii_digit())
             && wall.get(4..5).is_some_and(|d| d == "-")
             && wall.get(10..11).is_some_and(|d| d == "T")
             && wall.ends_with('Z');
