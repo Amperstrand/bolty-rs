@@ -186,6 +186,22 @@ BIN="$CARGO_TARGET_DIR/$TRIPLE/release/bolty-esp32"
 # a freshly flashed unit then boots factory-only and every OTA push is
 # one-way. Pass the table explicitly; espflash without it writes the
 # SDK default layout, which has no ota slots on this config.
+#
+# Bootloader-offset rule (cross-project canonical, ccid-firmware-rs #494
+# audit / docs/BOOTLOADER_OTA_PRACTICES.md §2.2): bootloader offsets are
+# DERIVED from the chip family, never hardcoded by callers —
+#   esp32 (classic xtensa)     -> 0x1000
+#   esp32c3 / esp32s3 / esp32c2 -> 0x0
+#   partition table             -> always 0x8000
+# espflash (the call below) derives these itself and writes
+# bootloader+PT+app as its standard bundle, which is why this repo needs
+# no offset table of its own. Any RAW esptool/write_flash caller (recovery
+# ladders, whole-chip restores) must apply the same rule — the canonical
+# table is ccid-firmware-rs tools/hil/make_bundle.py (BOOTLOADER_OFFSETS,
+# unknown chip -> refuse). A bootloader written at the wrong chip's offset
+# is the 2026-10-08 m5stick `flash read err, 1000` boot-loop incident
+# class. Whole-chip merged images (role-switch fallback) are the one
+# exception: they flash at 0x0 by construction.
 PT="$SCRIPT_DIR/partitions.csv"
 [ -f "$PT" ] || die "partition table missing: $PT"
 

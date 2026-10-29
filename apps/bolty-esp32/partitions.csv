@@ -4,3 +4,10 @@ phy_init, data, phy,     0xf000,  0x1000,
 otadata,  data, ota,     0x10000, 0x2000,
 factory,  app,  factory, 0x20000, 0x1E0000,
 ota_0,    app,  ota_0,   0x200000,0x1E0000,
+# Crash forensics (ccid-firmware-rs #494 audit adoption; mirrors the
+# partitions-ota.csv coredump row, ccid issue #64): ESP-IDF
+# coredump-to-flash target partition at the SAME offset/size as the
+# canonical ccid layout — 0x3F0000..0x400000, the last 64 KB of the 4 MB
+# flash, past both app slots (factory ends 0x200000, ota_0 ends 0x3E0000).
+# Activated by CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH in sdkconfig.defaults.
+coredump, data, coredump, 0x3F0000, 0x10000,
