@@ -90,6 +90,7 @@ pub fn main() {
     esp_idf_sys::link_patches();
     esp_idf_hal::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    crate::log_reset_reason();
 
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,

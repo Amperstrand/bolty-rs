@@ -15,6 +15,39 @@ pub(crate) fn block_on<F: Future>(fut: F) -> F::Output {
     }
 }
 
+// Boot observability (ccid-firmware-rs #494 audit adoption; pattern:
+// wifi_common::log_reset_reason): a reboot that writes no panic line has
+// exactly one discriminator — the ROM reset reason. Log it on EVERY boot
+// (not just abnormal ones, which the NVS crashlog below already covers)
+// so serial/bench log capture carries it. `warn!` matches ccid so the
+// line survives default level filters. Names follow the pinned IDF
+// v5.5.5 `esp_reset_reason_t` ordering (esp_system.h) — NOT the ROM
+// rtc_get_reset_reason numbering.
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+pub(crate) fn log_reset_reason() {
+    let r = unsafe { esp_idf_sys::esp_reset_reason() };
+    let name = match r {
+        0 => "UNKNOWN",
+        1 => "POWERON",
+        2 => "EXT",
+        3 => "SW",
+        4 => "PANIC",
+        5 => "INT_WDT",
+        6 => "TASK_WDT",
+        7 => "WDT",
+        8 => "DEEPSLEEP",
+        9 => "BROWNOUT",
+        10 => "SDIO",
+        11 => "USB",
+        12 => "JTAG",
+        13 => "EFUSE",
+        14 => "PWR_GLITCH",
+        15 => "CPU_LOCKUP",
+        _ => "OTHER",
+    };
+    log::warn!("boot: reset reason {} ({})", r, name);
+}
+
 #[cfg(all(any(target_arch = "xtensa", target_arch = "riscv32"), feature = "wifi"))]
 mod wifi;
 
