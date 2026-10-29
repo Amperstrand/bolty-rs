@@ -24,6 +24,17 @@ CONFIG_APP_REPRODUCIBLE_BUILD=y
 # See https://github.com/esp-rs/esp-idf-sys/issues/395.
 # Supply the partition table at flash time instead:
 #   espflash flash --partition-table partitions.csv ...
+# Crash forensics (ccid-firmware-rs #494 audit adoption): dump panics to
+# the `coredump` partition in partitions.csv (ELF format, explicit — the
+# Kconfig choice defaults to NONE). Complements the NVS crashlog with a
+# real ELF core (heap-exhaustion-class postmortems previously needed a
+# debug build). NOT yet enabled in sdkconfig.defaults.nucula: the C3's
+# ~143 KB shared heap needs a bench RAM-headroom check first (lesson:
+# #193 heap exhaustion) before the coredump writer's footprint is
+# proven safe there. A missing/blank coredump partition at boot is
+# non-fatal (espcoredump logs and disables itself).
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_TASK_WDT_EN=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
