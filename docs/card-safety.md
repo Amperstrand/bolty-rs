@@ -442,3 +442,24 @@ If OTA flashes corrupt firmware and the device doesn't boot:
 1. Use `espflash erase-flash` to wipe everything
 2. Re-flash with known-good firmware via USB
 3. Re-provision keys and settings (NVS is preserved across OTA but wiped on erase-flash)
+
+### Flash offsets when using raw esptool
+
+`espflash` (build.sh `--flash`) writes bootloader + partition table + app as
+one bundle and derives the per-chip offsets itself. Recovery paths that drop
+to raw `esptool write_flash` must apply the same chip-derived rule —
+bootloader offsets are never guessed (the 2026-10-08 m5stick incident: a
+bootloader written at the C3 offset on a classic ESP32 boot-loops with
+`flash read err, 1000`):
+
+| Chip family | Bootloader | Partition table | App |
+|---|---|---|---|
+| ESP32 (classic, xtensa) | 0x1000 | 0x8000 | table-defined (factory @ 0x20000) |
+| ESP32-C3 / S3 / C2 | 0x0 | 0x8000 | table-defined |
+
+The canonical table lives in ccid-firmware-rs `tools/hil/make_bundle.py`
+(`BOOTLOADER_OFFSETS`; unknown chip → refuse) — see
+ccid-firmware-rs `docs/BOOTLOADER_OTA_PRACTICES.md` §2.2. Whole-chip merged
+dumps (role-switch fallback, full backup/restore) flash at 0x0 by
+construction: the image already contains the bootloader and table at their
+final offsets.
