@@ -32,7 +32,8 @@ bytes.
     HAVE_DECL_MSG_NOSIGNAL 1, as ./configure produces on Linux)
   - `vpicc_sim.py` — vpicc simulator, modes: spec / deviant (answers
     RESET, mirroring the bench convention) / zeroack (RESET → 0-length
-    frame — the eject hazard)
+    frame — the eject hazard) / fraghdr (RESET → length prefix only,
+    payload never comes — regression for unbounded drains)
   - `recproxy.py` — TCP recording proxy; writes Wireshark-decodable
     pcaps (LINKTYPE_RAW; tshark-verified)
   - `run_scenario.sh`, `run_e2e.sh` — runners
@@ -47,6 +48,7 @@ bytes.
 | B1 | e484c2c8 × deviant | clean (consume works in this world) |
 | C1 | e484c2c8 × spec | HANG — SIGALRM exit 42; pcap = one frame |
 | D1/D1b/D2b/D2c | guarded drain | tuning tension quantified |
+| FRAG1000 | guarded drain × fraghdr | bounded + LOUD failure (rc=-1 at the deadline) — the drain assembles the whole frame against one absolute deadline; a partial frame aborts with an error instead of hanging or corrupting |
 | E1 | upstream × zeroack | slot death — getatr→0 → vicc_eject |
 | E2E-ORIGINAL | upstream × REAL vpicc_table.py (pre-fix) | **SW=1084** — the production signature |
 | E2E-FIXED | upstream × REAL vpicc_table.py (PR #509) | clean — own R-APDU, paired frames |

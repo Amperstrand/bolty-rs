@@ -254,6 +254,53 @@ static ssize_t sendToVICC(struct vicc_ctx *ctx, size_t length, const unsigned ch
     return r;
 }
 
+/* Deadline-bounded framed receive for the drain path: assembles one
+ * 2-byte-length-prefixed frame with MSG_DONTWAIT + poll against a single
+ * absolute deadline. Returns 1 = full frame drained, 0 = silence for the
+ * whole window (spec-correct peer), -1 = partial frame consumed (stream
+ * now MISALIGNED — caller must fail loudly, never silently continue). */
+static int drain_one_frame_deadline(SOCKET sock, int ms)
+{
+    struct pollfd pfd = { sock, POLLIN, 0 };
+    struct timeval tv;
+    long deadline_us;
+    unsigned char hdr[2];
+    size_t got = 0;
+
+    gettimeofday(&tv, NULL);
+    deadline_us = tv.tv_sec * 1000000L + tv.tv_usec + (long)ms * 1000L;
+
+    while (got < 2) {
+        gettimeofday(&tv, NULL);
+        long now_us = tv.tv_sec * 1000000L + tv.tv_usec;
+        if (now_us >= deadline_us)
+            return got ? -1 : 0;
+        if (poll(&pfd, 1, (int)((deadline_us - now_us) / 1000L) + 1) != 1
+                || !(pfd.revents & POLLIN))
+            return got ? -1 : 0;
+        ssize_t n = recv(sock, hdr + got, 2 - got, MSG_DONTWAIT);
+        if (n <= 0)
+            return got ? -1 : 0;
+        got += (size_t)n;
+    }
+
+    unsigned len = ((unsigned)hdr[0] << 8) | hdr[1];
+    unsigned char *buf = len ? malloc(len) : NULL;
+    got = 0;
+    while (got < len) {
+        gettimeofday(&tv, NULL);
+        long now_us = tv.tv_sec * 1000000L + tv.tv_usec;
+        if (now_us >= deadline_us) { free(buf); return -1; }
+        if (poll(&pfd, 1, (int)((deadline_us - now_us) / 1000L) + 1) != 1
+                || !(pfd.revents & POLLIN)) { free(buf); return -1; }
+        ssize_t n = recv(sock, buf + got, len - got, MSG_DONTWAIT);
+        if (n <= 0) { free(buf); return -1; }
+        got += (size_t)n;
+    }
+    free(buf);
+    return 1;
+}
+
 static ssize_t recvFromVICC(struct vicc_ctx *ctx, unsigned char **buffer)
 {
     ssize_t r;
@@ -455,7 +502,6 @@ int vicc_poweroff(struct vicc_ctx *ctx) {
 
 int vicc_reset(struct vicc_ctx *ctx) {
     unsigned char i = VPCD_CTRL_RESET;
-    unsigned char *atr = NULL;
     int r = 0;
 
     if (ctx && lock(ctx->io_lock)) {
@@ -468,11 +514,15 @@ int vicc_reset(struct vicc_ctx *ctx) {
             char *env = getenv("VPCD_DRAIN_MS");
             int ms = env ? atoi(env) : 50;
             if (ms > 0) {
-                struct pollfd pfd = { ctx->client_sock, POLLIN, 0 };
-                if (poll(&pfd, 1, ms) == 1 && (pfd.revents & POLLIN)) {
-                    r = recvFromVICC(ctx, &atr);
-                    free(atr);
+                int dr = drain_one_frame_deadline(ctx->client_sock, ms);
+                if (dr < 0) {
+                    /* Partial frame consumed: the stream is misaligned.
+                     * Fail loudly (r < 0 → IFDHPowerICC error) rather
+                     * than corrupt later exchanges. */
+                    r = -1;
                 }
+                /* dr == 1: off-spec reply fully drained;
+                 * dr == 0: silence for the whole window — spec peer. */
             }
         }
         unlock(ctx->io_lock);

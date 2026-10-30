@@ -57,6 +57,9 @@ def handle(sock, mode):
             elif c == 0x02 and mode == "zeroack":   # RESET answered with EMPTY frame
                 send_frame(sock, b"")
                 log.write(f"{time.time():.6f} CTRL RESET  -> 0-length frame  [ZEROACK]\n")
+            elif c == 0x02 and mode == "fraghdr":   # RESET answered with a LENGTH PREFIX ONLY
+                sock.sendall(b"\x00\x03")           # frame header, payload never comes
+                log.write(f"{time.time():.6f} CTRL RESET  -> header 0003 only  [FRAGHDR — regression for unbounded drains]\n")
             else:
                 log.write(f"{time.time():.6f} CTRL {c:#04x}    -> (silent, per spec)\n")
             log.flush()
@@ -72,7 +75,7 @@ def handle(sock, mode):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, required=True)
-    p.add_argument("--mode", choices=["spec", "deviant", "zeroack"], required=True)
+    p.add_argument("--mode", choices=["spec", "deviant", "zeroack", "fraghdr"], required=True)
     a = p.parse_args()
 
     srv = socket.create_connection(("127.0.0.1", a.port))
