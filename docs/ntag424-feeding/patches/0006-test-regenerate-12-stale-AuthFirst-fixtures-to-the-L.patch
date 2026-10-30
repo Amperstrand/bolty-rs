@@ -8,8 +8,8 @@ Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
 
 All 12 failures shared one root cause: fixtures pinned the pre-bring-up
-AuthFirst encoding (Lc=02, LenCap=0x00) while the production code sends
-the NT4H2421Gx §10.4.1 form (Lc=05, LenCap=0x03 + PCDcap2 zero bytes)
+AuthFirst encoding (Lc=02, LenCap=0x00) while the production code sends the explicit LenCap=0x03 form (Lc=05 + PCDcap2 zeros;
+AN12196's own worked examples use LenCap=0x00 — both accepted per issue #3 A/B)
 that real NTAG424 hardware requires — proven by every bolty burn/inspect
 cycle. Single-form replacement; suite now 313/313 green.
 ---

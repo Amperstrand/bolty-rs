@@ -1,8 +1,8 @@
 From e1dcc0b95924d6af05baabe1f03e9a139b997cd7 Mon Sep 17 00:00:00 2001
 From: Amperstrand <amperstrand@localhost>
 Date: Tue, 16 Jun 2026 10:29:05 +0200
-Subject: [PATCH 2/7] fix: AuthenticateEV2First LenCap=0x03 for NTAG 424 DNA
- hardware compat
+Subject: [PATCH 2/7] fix(auth): AuthenticateEV2First LenCap=0x03 — explicit AES-128
+ signaling (0x00/0x03 both accepted per issue #3 hardware A/B)
 
 ---
  ntag424/src/commands/authenticate/aes.rs | 8 +++++---
@@ -20,9 +20,9 @@ index 3e2697d..009eff1 100644
 -    // LenCap = 0 means no `PCDcap2` is carried (§10.4.1, Table 25).
 -    let part1_apdu = [0x90, 0x71, 0x00, 0x00, 0x02, key_no.as_byte(), 0x00, 0x00];
 +    // Part 1: CLA=90 CMD=71 P1=00 P2=00 Lc=05 [KeyNo LenCap=03 PCDcap2=000000] Le=00.
-+    // LenCap = 0x03 signals AES-128 key type and carries 3 zero bytes of PCDcap2
-+    // (NT4H2421Gx §10.4.1, Table 25). The NTAG 424 DNA rejects LenCap=0x00 for
-+    // AES-authenticated applications.
++    // LenCap=0x03 explicitly signals AES-128 and carries 3 zero PCDcap2 bytes
++    // (Table 25 encoding). Hardware A/B (issue #3): cards accept both 0x00 and
++    // 0x03 — AN12196 Tables 14/19 example 0x00; explicit signaling, not a fix.
 +    let part1_apdu = [0x90, 0x71, 0x00, 0x00, 0x05, key_no.as_byte(), 0x03, 0x00, 0x00, 0x00, 0x00];
      let r1 = transport.transmit(&part1_apdu).await?;
      let code = ResponseCode::desfire(r1.sw1, r1.sw2);

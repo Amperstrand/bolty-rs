@@ -13,6 +13,15 @@ Contents:
   fix, `Sdm::disabled()`, licensing docs, reference-parity tests,
   fixture regen, fmt). Verified applying cleanly to upstream main
   `f540830`.
+
+  Rationale scrub (2026-10-30): patch 0002/0005/0006 wording corrected —
+  the original comment claimed the card *rejects* LenCap=0x00, refuted by
+  issue #3's own hardware A/B (both encodings pass on NTAG 424 DNA ×
+  MFRC522 + ACR1252) and by NXP AN12196 Tables 14/19, whose worked
+  examples send LenCap=0x00 (`90 71 00 00 02 [KeyNo] 00 00`). The change
+  is explicit AES-128/PCDcap2 signaling per the Table 25 encoding — a
+  functional no-op. Matches ntag424 fork issue #10 (open) and PR #6's
+  direction; series re-verified to apply cleanly to `f540830`.
 - Post-from-here convenience copy with the guide files:
   `/tmp/opencode/ntag424-feed-packet/` (OWNER_STEPS.md + PR text) — the
   /tmp copy is regenerable from THIS directory at any time:
