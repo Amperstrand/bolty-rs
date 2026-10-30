@@ -205,6 +205,34 @@ def _ota0_offset_from_csv() -> int:
 
 OTA0_OFFSET = _ota0_offset_from_csv()
 
+PARTITION_TABLE_OFFSET = 0x8000  # canonical table location (build.sh / make_bundle)
+
+
+def _ota0_offset_from_merged_image(images_dir) -> int:
+    """Codex P2 (#247): derive the ota_0 offset from the ACTUAL merged
+    image being flashed, not the checked-out CSV. Prebuilt artifacts can
+    predate a table change (ota_0 0x200000 -> 0x170000): their embedded
+    table is what the bootloader will honor, and writing the CCID app at
+    a CSV-derived offset into an old-layout image would leave it outside
+    the selected OTA partition. Parse the binary partition table at
+    0x8000 (32-byte entries: magic AA50, type, subtype, offset u32le,
+    size u32le, 16-byte label) and refuse if ota_0 is absent."""
+    merged = Path(images_dir) / "bolty-merged.bin"
+    with open(merged, "rb") as f:
+        f.seek(PARTITION_TABLE_OFFSET)
+        table = f.read(0x1000)
+    for i in range(0, len(table) - 95 + 1, 32):
+        entry = table[i:i + 32]
+        if entry[:2] != b"\xaa\x50":
+            break  # end of table (0xFF padding)
+        label = entry[12:28].split(b"\x00", 1)[0].decode("ascii", "replace")
+        if label == "ota_0":
+            return int.from_bytes(entry[4:8], "little")
+    raise SystemExit(
+        f"{merged}: partition table has no ota_0 entry — factory-only "
+        f"layout artifact cannot be dual-slot provisioned"
+    )
+
 ESPTOOL_TIMEOUT_S = 900.0   # 4 MB merged image @115200
 SYSTEMCTL_TIMEOUT_S = 90.0
 TEE_TIMEOUT_S = 30.0
@@ -452,11 +480,16 @@ def _otadata_write_step(port: str, images_dir) -> dict:
 
 def _ota_slot_write_step(port: str, images_dir) -> dict:
     binp = Path(images_dir) / "ccid-factory.bin"
+    # Codex P2 (#247): the write offset comes from the merged image being
+    # flashed in the SAME plan (the table its bootloader will honor), not
+    # the checked-out CSV — old-layout artifacts stay self-consistent.
+    ota0 = _ota0_offset_from_merged_image(images_dir)
     step = _cmd(["sudo", "esptool.py", "--chip", "esp32", "--port", port,
                  "--baud", "115200", "--after", "no-reset", "write-flash",
-                 hex(OTA0_OFFSET), binp],
-                label=f"write ccid app into ota_0 @ {OTA0_OFFSET:#x} "
-                      "(split artifact, partition-relative image)",
+                 hex(ota0), binp],
+                label=f"write ccid app into ota_0 @ {ota0:#x} "
+                      "(from the merged image's own table; split artifact, "
+                      "partition-relative image)",
                 timeout=ESPTOOL_TIMEOUT_S)
     step["ladder"] = True
     return step
