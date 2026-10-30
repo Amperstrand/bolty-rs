@@ -616,12 +616,18 @@ fn respond_json(
     // card/config → JSON-respond stack — exactly the bar a freshly
     // OTA-booted image must clear before it may mark itself valid.
     // Errors (401/404/429/5xx) prove nothing and never mark.
-    if (200..300).contains(&status) {
+    // Codex P2 (#247, the ccid #473 class): evidence fires only AFTER
+    // the response actually reached the wire — into_response() and
+    // write_all() are fallible (a disconnected client fails the write),
+    // and an image that cannot complete a REST exchange must not
+    // self-validate and cancel rollback.
+    let sent = request
+        .into_response(status, Some(status_message(status)), &[JSON_CONTENT_TYPE])?
+        .write_all(body.as_bytes());
+    if sent.is_ok() && (200..300).contains(&status) {
         crate::ota_validity::note_serve_evidence("rest-2xx");
     }
-    request
-        .into_response(status, Some(status_message(status)), &[JSON_CONTENT_TYPE])?
-        .write_all(body.as_bytes())
+    sent
 }
 
 fn check_rate_limit(rate_limiter: &SharedRateLimiter) -> Result<(), u64> {
