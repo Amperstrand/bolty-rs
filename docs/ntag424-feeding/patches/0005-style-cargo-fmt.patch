@@ -13,9 +13,9 @@ index 009eff1..5091158 100644
 --- a/ntag424/src/commands/authenticate/aes.rs
 +++ b/ntag424/src/commands/authenticate/aes.rs
 @@ -98,7 +98,19 @@ pub(crate) async fn authenticate_ev2_first<T: Transport>(
-     // LenCap = 0x03 signals AES-128 key type and carries 3 zero bytes of PCDcap2
-     // (NT4H2421Gx §10.4.1, Table 25). The NTAG 424 DNA rejects LenCap=0x00 for
-     // AES-authenticated applications.
+     // LenCap=0x03 explicitly signals AES-128 and carries 3 zero PCDcap2 bytes
+     // (Table 25 encoding). Hardware A/B (issue #3): cards accept both 0x00 and
+     // 0x03 — AN12196 Tables 14/19 example 0x00; explicit signaling, not a fix.
 -    let part1_apdu = [0x90, 0x71, 0x00, 0x00, 0x05, key_no.as_byte(), 0x03, 0x00, 0x00, 0x00, 0x00];
 +    let part1_apdu = [
 +        0x90,
