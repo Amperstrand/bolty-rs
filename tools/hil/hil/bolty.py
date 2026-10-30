@@ -54,7 +54,16 @@ class BoltyCli:
     def run(self, *args: str, timeout_s: int | None = None) -> str:
         """Run bolty-cli; return stdout; raise BoltyError on nonzero exit."""
         cmd = [str(self.binary), *args]
-        env = dict(os.environ, BOLTY_READER=self.reader) if self.reader else None
+        # bolty-cli takes the cross-project bench flock itself on
+        # physical-reader connects (#209). Lock-holding parents export
+        # BOLTY_SKIP_BENCH_LOCK=1 for their children (bench_own does this
+        # on BenchLock acquisition) — flock is per-open-file-description,
+        # a child would otherwise refuse against its own parent. This
+        # wrapper only passes the environment through: no lock held, no
+        # skip — the child then gates itself.
+        env = dict(os.environ)
+        if self.reader:
+            env["BOLTY_READER"] = self.reader
         try:
             out = subprocess.run(
                 cmd, capture_output=True, text=True,

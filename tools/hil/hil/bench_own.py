@@ -116,6 +116,10 @@ def acquire_bench_ownership(
     except BenchLockHeldError as exc:
         raise BenchOwnershipError(f"BenchLock held by another session: {exc}") from exc
     log(f"bench-own: BenchLock taken (place {place} next)")
+    # #209: bolty-cli children take this same flock themselves on
+    # physical-reader connects; export the child-skip so they don't
+    # refuse against their own parent (flock is per-fd).
+    os.environ.setdefault("BOLTY_SKIP_BENCH_LOCK", "1")
 
     # 2. labgrid place — SECOND (network-visible exclusivity)
     _sign_identity()

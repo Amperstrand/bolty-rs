@@ -1,6 +1,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod audit;
+mod bench_lock;
 pub(crate) mod budget;
 mod burn;
 mod common;

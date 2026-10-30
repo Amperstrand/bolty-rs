@@ -377,6 +377,10 @@ def rig_lock(request):
         )
     except BenchLockHeldError as exc:
         pytest.exit(f"bench flock held: {exc}", returncode=3)
+    # #209: this session holds the bench flock — bolty-cli children spawned
+    # by tests must skip their own flock (flock is per-open-fd; a child
+    # would otherwise refuse against this, the holding, parent).
+    os.environ.setdefault("BOLTY_SKIP_BENCH_LOCK", "1")
     bench_lock = _wrap_pcscd_reader(bench_lock)
 
     # Pattern 15 (docs/labgrid-bench-sharing.md P1): mirror rig state onto
