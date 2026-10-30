@@ -72,7 +72,21 @@ int main(int argc, char **argv) {
     double dt_reset = now_ms() - t0;
     alarm(0);
     printf("[step1] vicc_reset()            -> rc=%d  (%.1f ms)\n", rr, dt_reset);
-    if (rr < 0) { printf("VERDICT: reset failed\n"); return 1; }
+    if (rr < 0) {
+        printf("VERDICT: reset failed\n");
+        if (argc > 3 && !strcmp(argv[3], "afterfail")) {
+            /* regression continuation: a consuming-drain failure must
+             * leave the connection ejected — present() then reconnects
+             * or reports absent instead of blocking on misaligned bytes */
+            alarm(alarm_secs);
+            t0 = now_ms();
+            int present_after_fail = vicc_present(ctx);
+            alarm(0);
+            printf("[step3'] vicc_present() after failure -> %d  (%.1f ms)\n",
+                   present_after_fail, now_ms() - t0);
+        }
+        return 1;
+    }
 
     t0 = now_ms();
     n = vicc_getatr(ctx, &atr);

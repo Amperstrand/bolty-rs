@@ -516,9 +516,14 @@ int vicc_reset(struct vicc_ctx *ctx) {
             if (ms > 0) {
                 int dr = drain_one_frame_deadline(ctx->client_sock, ms);
                 if (dr < 0) {
-                    /* Partial frame consumed: the stream is misaligned.
-                     * Fail loudly (r < 0 → IFDHPowerICC error) rather
-                     * than corrupt later exchanges. */
+                    /* Partial frame consumed: the stream is misaligned
+                     * and cannot be un-read. Close the connection so no
+                     * later call (vicc_present → vicc_connect) reuses
+                     * the corrupted framing — a delayed payload fragment
+                     * would be read as a new length prefix and could
+                     * block. Mirrors upstream's eject-on-transport-error
+                     * convention in vicc_transmit. */
+                    vicc_eject(ctx);
                     r = -1;
                 }
                 /* dr == 1: off-spec reply fully drained;
