@@ -436,6 +436,26 @@ OTA updates require Ed25519 signatures (issue #31, resolved):
 Without a valid signature, the OTA update is rejected. An attacker who doesn't
 have the private key cannot flash malicious firmware.
 
+### Push-server token auth (:3232, nucula OTA seat)
+
+The TCP push server (feature `ota-server`, the nucula bench recovery door)
+takes the m5stick's place on boards without the HTTP-pull stack, and it has
+no Ed25519 chain — its authentication is the ccid-firmware-rs OTA2 token
+exchange (#494 audit adoption; ccid `ota_header.rs` is the reference):
+
+1. Build armed with a 32-byte token: `OTA_TOKEN=<exactly 32 chars> ./build.sh nucula`
+   (wrong length panics loudly at the first connection — never silently unarmed)
+2. Client sends `"OTA2"` + u32-LE image size + the 32-byte token + image bytes
+3. Token checked before any image byte is accepted; mismatch → refused
+4. Armed builds refuse tokenless `OTA1` clients outright; unarmed builds keep
+   the original OTA1 behavior bit-for-bit (forward compatible: unarmed + OTA2
+   ignores the token)
+
+Unarmed = anyone on the bench LAN can push an image — image integrity is
+still gated by `esp_ota_end`'s full `esp_image_verify` (a corrupt/truncated
+push cannot commit), but authenticity is only proven when the build is armed.
+Host client: ccid-firmware-rs `tests/hardware/vpcd/ota_push.py` (OTA2-aware).
+
 ### Recovery from bad OTA flash
 
 If OTA flashes corrupt firmware and the device doesn't boot:

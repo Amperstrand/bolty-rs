@@ -162,6 +162,11 @@ mod firmware;
 mod axp192_map;
 mod commands;
 mod console_framing;
+// Pure wire-protocol/token logic for the :3232 OTA push server —
+// unconditional (host-compilable, issue #63) so its #[cfg(test)] suite
+// runs under `cargo test -p bolty-esp32` even in builds that never
+// compile the esp-only server itself.
+mod ota_header;
 mod service;
 mod workflow;
 
