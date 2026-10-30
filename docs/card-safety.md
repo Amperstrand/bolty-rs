@@ -399,31 +399,66 @@ The issuer key is the single point of failure for the entire card fleet.
 
 ### How OTA works
 
-bolty-rs uses ESP-IDF's dual-partition OTA system:
-- Flash has two app partitions (ota_0, ota_1) + a factory partition
-- OTA downloads new firmware to the inactive partition
-- On next boot, bootloader switches to the newly written partition
-- If the new firmware crashes repeatedly, ESP-IDF can roll back automatically
+The flash layout is defined by `apps/bolty-esp32/partitions.csv` (the
+source of truth — this doc describes it, never the other way around).
+Since the #494 audit adoption it is a dual-bank table:
+
+- `factory` @0x20000 (1344 KB, serial-flash fallback) + `ota_0`/`ota_1`
+  (1280 KB each) + `otadata` + `coredump` (last 64 KB, issue #64 pattern)
+- NVS @0x9000 (frozen — provisioned credentials + OTA pubkey live there)
+- Two update mechanisms write the INACTIVE slot, never the running image:
+  - m5stick: HTTP pull with Ed25519 signature verification before commit
+    (feature `ota`, serial console trigger — see below)
+  - nucula: TCP push server on :3232 (feature `ota-server`, token
+    authentication — see the auth subsection below)
+- On next boot, the bootloader switches to the newly written partition;
+  `esp_ota_end` runs full image verification BEFORE the boot switch, so a
+  corrupt or truncated push never commits
+
+A partition-table change rides with the next flash (`build.sh --flash` or
+a merged image) — boards still running an older table keep it until
+reflashed.
 
 ### Rollback procedure (automatic)
 
-ESP-IDF supports automatic rollback when `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`:
-1. New firmware boots but doesn't call `esp_ota_mark_app_valid_cancel_rollback()` within
-   a timeout
-2. Watchdog triggers → bootloader marks new partition as invalid
-3. Next boot loads the previous (known-good) partition
-4. User sees the old firmware running
+With `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (both sdkconfig defaults;
+compiled into the BOOTLOADER, so the knob takes effect when a board is
+next flashed — until then it is inert-but-correct), a freshly booted OTA
+image runs in the pending-verify state and gets exactly ONE boot to prove
+itself — there is no timeout and no watchdog involved; ANY reset before
+confirmation reverts:
 
-This is the safest rollback — zero operator intervention required.
+1. New image boots pending-verify
+2. If it calls `esp_ota_mark_app_valid_cancel_rollback()` → marked valid,
+   stays booted
+3. If it crashes, hangs into a watchdog reset, brown-outs or reboots
+   before marking → the bootloader marks the slot ABORTED and boots the
+   PREVIOUS slot (factory images are never rolled back — erased otadata
+   falls back to factory)
+
+The mark is SERVE PROVEN, never "reached app_main" (`src/ota_validity.rs`,
+the ccid #294-WS2 pattern): the image must first complete a successful
+card transaction (burn/wipe/inspect/keyver/check — the shared workflow
+dispatch), a 2xx REST API response, or on the nucula console a successful
+poll/uid/inspect. A pending image that never serves still reverts — that
+is the defense working.
 
 ### Rollback procedure (manual)
 
-If automatic rollback is disabled or the firmware is running but broken:
+If the firmware is running but broken (or the running bootloader
+predates the rollback knob):
 
-1. Connect via serial (or BLE if serial is dead)
-2. Send: `ota <url> <signature>` with the URL of the previous firmware version
-3. Device downloads, verifies signature, flashes to inactive partition
-4. Device reboots into the new (old) firmware
+1. Erase both otadata sectors — offset 0x10000, size 0x2000
+   (`esptool.py erase_region 0x10000 0x2000`, the same step
+   `role_switch.py` runs) — invalid otadata makes
+   the bootloader boot FACTORY; this is also the role-switch primitive
+   (`tools/hil/overnight/role_switch.py`)
+2. Or push the previous version again over the OTA seat (nucula :3232)
+3. Or serial console on the m5stick: `ota <url> <signature_hex>` — the
+   ONLY trigger for the HTTP-pull path (there is no REST OTA route);
+   the device downloads, verifies the Ed25519 signature, flashes the
+   inactive partition and reboots
+4. Last resort: serial reflash via `./build.sh <board> --flash <port>`
 
 ### Signature verification
 
@@ -431,10 +466,13 @@ OTA updates require Ed25519 signatures (issue #31, resolved):
 1. Generate keypair: `python3 tools/ota-sign.py keygen --privkey ota_key.pem`
 2. Provision public key: `provision-ota-key <pubkey_hex>` (serial command)
 3. Sign firmware: `python3 tools/ota-sign.py sign --privkey ota_key.pem --firmware <bin>`
-4. Deploy: `ota <url> <signature_hex>` (serial command or REST API)
+4. Deploy: `ota <url> <signature_hex>` (serial console command — the only
+   trigger; there is no REST OTA route)
 
 Without a valid signature, the OTA update is rejected. An attacker who doesn't
-have the private key cannot flash malicious firmware.
+have the private key cannot flash malicious firmware. (This chain protects
+the m5stick HTTP-pull path; the nucula :3232 push path is authenticated by
+the token exchange below instead.)
 
 ### Push-server token auth (:3232, nucula OTA seat)
 
@@ -458,10 +496,20 @@ Host client: ccid-firmware-rs `tests/hardware/vpcd/ota_push.py` (OTA2-aware).
 
 ### Recovery from bad OTA flash
 
-If OTA flashes corrupt firmware and the device doesn't boot:
-1. Use `espflash erase-flash` to wipe everything
-2. Re-flash with known-good firmware via USB
-3. Re-provision keys and settings (NVS is preserved across OTA but wiped on erase-flash)
+Ordered from least to most invasive (NVS survives the first three — the
+provisioned credentials, OTA pubkey and crash counters live there):
+
+1. Automatic revert (once the board runs a rollback-enabled bootloader):
+   a bad OTA that never completes a card transaction / API serve reverts
+   on its next reset — nothing to do
+2. Erase otadata (offset 0x10000, size 0x2000) → bootloader falls back to factory
+3. Push a known-good image over the OTA seat (nucula :3232) or serial
+   `ota` command (m5stick)
+4. If the device doesn't boot at all: serial reflash of a known-good
+   image via `./build.sh <board> --flash <port>` (espflash writes
+   bootloader + partition table + app as one bundle)
+5. Last resort: `espflash erase-flash` wipes EVERYTHING including NVS —
+   keys and settings must then be re-provisioned
 
 ### Flash offsets when using raw esptool
 
