@@ -186,6 +186,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .unwrap();
         assert!(flock_ex_nb(first.as_fd()).unwrap(), "first flock must win");
@@ -193,6 +194,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .unwrap();
         assert!(
@@ -213,6 +215,7 @@ mod tests {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&path)
                 .unwrap();
             assert!(flock_ex_nb(file.as_fd()).unwrap());
@@ -225,6 +228,7 @@ mod tests {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)
             .unwrap();
         assert!(
