@@ -18,3 +18,13 @@ CONFIG_ESP_CONSOLE_UART_NUM=3
 # "Stack protection fault" at app_main (bring-up 2026-10-23; intermittent
 # on the first image = near-boundary). ccid's C3 boards run 32K.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
+# App-rollback (ccid-firmware-rs #494 audit adoption, item M): the
+# nucula is THE OTA seat (ota-server :3232) — a pushed image runs
+# pending-verify and reverts unless it proves itself with a real card
+# transaction over the console (src/ota_validity.rs wires the mark-valid
+# call; firmware_nucula.rs fires the evidence on poll/uid/inspect
+# success). Requires the dual ota slots in partitions.csv. BENCH CAVEAT:
+# the knob lives in the COMPILED bootloader — inert until the board is
+# next flashed, then enforced.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

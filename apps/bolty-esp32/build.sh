@@ -206,9 +206,19 @@ PT="$SCRIPT_DIR/partitions.csv"
 [ -f "$PT" ] || die "partition table missing: $PT"
 
 if [ -n "$FLASH_PORT" ]; then
-    info "flashing $BIN + PT $(basename "$PT") to $FLASH_PORT at 115200"
+    # Codex P1 (#247): flash the sdkconfig-BUILT bootloader, never the
+    # espflash default. Without --bootloader, espflash writes a
+    # default-settings bootloader — CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    # (and every other custom knob) would be INERT on the device even
+    # after a reflash: the exact present-but-unenforced gap the #494
+    # audit flagged on ccid. The esp-idf build copies the configured
+    # bootloader next to the app bin; refusing when it is absent is
+    # deliberate — a silent default-bootloader fallback is the bug.
+    BOOT="$CARGO_TARGET_DIR/$TRIPLE/release/bootloader.bin"
+    [ -f "$BOOT" ] || die "sdkconfig-built bootloader missing: $BOOT — refusing to flash a default-settings bootloader (rollback knob would be inert; rerun the build)"
+    info "flashing $BIN + configured bootloader + PT $(basename "$PT") to $FLASH_PORT at 115200"
     espflash flash --baud 115200 --port "$FLASH_PORT" \
-        --partition-table "$PT" "$BIN"
+        --partition-table "$PT" --bootloader "$BOOT" "$BIN"
 fi
 
 # Stamp-comparability line: name what was built + the table's hash so
