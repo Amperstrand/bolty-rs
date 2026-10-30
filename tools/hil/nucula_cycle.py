@@ -118,7 +118,10 @@ class Cycle:
     def _load_state(self) -> dict:
         if STATE_PATH.exists():
             return json.loads(STATE_PATH.read_text())
-        return {"variant": self.variant, "visits_done": [], "snapshots": {}, "events": []}
+        # fresh state must never persist a None variant (argparse default
+        # is None since #176 item 2) — the key existing with None defeated
+        # the "only an explicit flag overwrites" guard in main().
+        return {"variant": self.variant or "full", "visits_done": [], "snapshots": {}, "events": []}
 
     def save_state(self) -> None:
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -528,11 +531,11 @@ def main() -> int:
     # --variant (or --reset) overwrites it. A later visit without the flag
     # used to revert a minimal cycle to full and burn CARD_B.
     if args.variant is not None:
-        if "variant" in cycle.state and cycle.state["variant"] != args.variant:
+        if cycle.state.get("variant") not in (None, args.variant):
             print(f"[variant] explicit --variant {args.variant} overrides persisted "
                   f"{cycle.state['variant']}")
         cycle.state["variant"] = args.variant
-    elif "variant" not in cycle.state:
+    elif not cycle.state.get("variant"):
         cycle.state["variant"] = "full"
     cycle.variant = cycle.state["variant"]
 

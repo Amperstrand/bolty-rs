@@ -26,6 +26,10 @@ BURN_OK_LINE = "✅ Card burned and verified successfully!"
 class StubCli:
     def __init__(self, uid=UID):
         self._uid = uid
+        # dry-run's gated() wrapper (nucula_cycle dry-run plumbing) writes
+        # cli.uid_box[0] before gating — honor the FakeCli contract so this
+        # stub survives that global patch in a shared pytest process.
+        self.uid_box = [uid]
         self.calls = []
 
     def run(self, *cmd, timeout_s=60):
@@ -206,3 +210,21 @@ def _fake_subprocess(calls):
                 stderr = ""
             return R()
     return S
+
+
+def test_fresh_state_never_persists_none_variant(tmp_path):
+    # CI regression (first push of this PR): the Cycle ctor received the
+    # argparse default None and _load_state()'s fresh dict persisted
+    # {"variant": None} — the key existed, so main()'s explicit-flag guard
+    # never applied its "full" default and v4 aborted "exists only in the
+    # full variant".
+    import tempfile
+    real_state = nc.STATE_PATH
+    tmp_state = tmp_path / "state.json"
+    nc.STATE_PATH = tmp_state
+    try:
+        cycle = nc.Cycle(tmp_path / "ev", dry_run=True, variant=None)
+        assert cycle.state["variant"] == "full", cycle.state
+        assert not tmp_state.exists() or '"variant": None' not in tmp_state.read_text()
+    finally:
+        nc.STATE_PATH = real_state
