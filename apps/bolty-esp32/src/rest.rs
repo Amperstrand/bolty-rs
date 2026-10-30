@@ -611,6 +611,14 @@ fn respond_json(
     status: u16,
     body: &str,
 ) -> Result<(), EspIOError> {
+    // Serve evidence for the OTA validity gate (#494 audit item M): a
+    // 2xx response means a request survived the full parse → dispatch →
+    // card/config → JSON-respond stack — exactly the bar a freshly
+    // OTA-booted image must clear before it may mark itself valid.
+    // Errors (401/404/429/5xx) prove nothing and never mark.
+    if (200..300).contains(&status) {
+        crate::ota_validity::note_serve_evidence("rest-2xx");
+    }
     request
         .into_response(status, Some(status_message(status)), &[JSON_CONTENT_TYPE])?
         .write_all(body.as_bytes())

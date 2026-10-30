@@ -167,6 +167,10 @@ mod console_framing;
 // runs under `cargo test -p bolty-esp32` even in builds that never
 // compile the esp-only server itself.
 mod ota_header;
+// Serve-proven OTA validity gate (#494 audit item M; port of ccid
+// ccid_service::ota_validity) — same unconditional/host-testable deal;
+// the esp mains install the platform mark-valid call via arm_platform().
+mod ota_validity;
 mod service;
 mod workflow;
 

@@ -38,8 +38,10 @@ Mechanism per direction (exact sequences via ``dry_graph()``):
            readers() has ACR1252 and NO GemPC entry -> start bolty-console
            -> console PING alive.
 
-bolty-merged.bin embeds the repo partitions.csv (factory @ 0x1E0000 +
-otadata/ota_0; task-4 note) — both images flash as-is at 0x0, never
+bolty-merged.bin embeds the repo partitions.csv (factory + otadata/ota_0/
+ota_1 dual-slot table; task-4 note — #494 audit item M moved ota_0; the
+provisioning offset is derived from the CSV at import time) — both images
+flash as-is at 0x0, never
 repartitioned. NVS EXPECTATION (updated for #76): the DEFAULT switch is
 now the otadata flip (dual-slot provisioned once via provision_dualslot:
 bolty in factory, ccid app in ota_0) which does NOT touch NVS — WiFi,
@@ -171,14 +173,37 @@ IMAGE_FOR_ROLE = {  # role -> (merged bin name, MANIFEST sha256 key)
 ROLES = ("ccid", "bolty")
 
 # OTA-slot fast path (#76): the stick is provisioned once with the bolty
-# dual-slot table (bolty app in factory @0x20000, ccid app in ota_0
-# @0x200000 — from split_images.py artifacts); a role switch is then an
+# dual-slot table (bolty app in factory @0x20000, ccid app in ota_0 —
+# from split_images.py artifacts); a role switch is then an
 # otadata flip + reboot (~15s) instead of a 4MB reflash (~100s). Erasing
 # BOTH otadata sectors makes the bootloader fall back to factory (bolty);
 # writing the otadata-ota0.bin entry selects ota_0 (ccid).
 OTADATA_OFFSET = 0x10000
 OTADATA_SIZE = 0x2000      # both esp_ota_select sectors
-OTA0_OFFSET = 0x200000
+
+
+def _ota0_offset_from_csv() -> int:
+    """#494 audit item M companion: the dual-OTA-slot table MOVED ota_0
+    (0x200000 -> 0x170000 in apps/bolty-esp32/partitions.csv). Derive the
+    offset from the CSV itself so this tool can never drift from the
+    table again; refuse loudly if the row is missing (a factory-only
+    table has no ota seat to provision)."""
+    csv_path = (
+        Path(__file__).resolve().parents[3] / "apps/bolty-esp32/partitions.csv"
+    )
+    for raw in csv_path.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        cols = [c.strip() for c in line.split(",")]
+        if len(cols) >= 4 and cols[0] == "ota_0":
+            return int(cols[3], 0)
+    raise SystemExit(
+        f"{csv_path}: no ota_0 row — cannot provision the dual-slot seat"
+    )
+
+
+OTA0_OFFSET = _ota0_offset_from_csv()
 
 ESPTOOL_TIMEOUT_S = 900.0   # 4 MB merged image @115200
 SYSTEMCTL_TIMEOUT_S = 90.0
