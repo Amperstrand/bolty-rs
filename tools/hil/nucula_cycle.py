@@ -60,6 +60,8 @@ COORDINATOR = "192.168.13.208:20408"
 PLACE_ACR = "ref-acr1252"
 PLACE_NUCULA = "nucula-c3"
 NUCULA_READER_PIN = "Nucula"
+GATE_RETRY_S = 5
+UID_GATE_TRIES = 12
 UID_SETTLE_S = 2.0
 UID_ROUNDS = 20
 READ_ROUNDS = 5
@@ -170,6 +172,34 @@ class Cycle:
             )
         self.log(f"gate OK: {reader} carries {uid} (op={op})")
 
+    def require_absent(self, cli: BoltyCli, uid: str, reader: str,
+                       what: str = "card") -> None:
+        """Swap-window gate (#176 item 3): the named card must be OFF the
+        antenna before the batch continues — two coupled cards read as
+        whichever wins the field and every later gate is a coin flip."""
+        if self.dry_run:
+            self.log(f"swap-window (dry-run): assume {uid} removed from {reader}")
+            return
+        for attempt in range(1, UID_GATE_TRIES + 1):
+            try:
+                actual = cli.uid()
+            except BoltyError:
+                actual = ""
+            if actual != uid:
+                self.log(f"swap-window OK: {uid} off the {reader} antenna "
+                         f"(sees {actual or 'none'})")
+                return
+            self.log(
+                f"SWAP WINDOW: remove {what} {uid} from the {reader} antenna "
+                f"(attempt {attempt}/{UID_GATE_TRIES}, still coupled)"
+            )
+            time.sleep(0 if self.dry_run else GATE_RETRY_S)
+        raise GateError(
+            f"{reader}: {uid} still coupled after {UID_GATE_TRIES} tries — "
+            f"the swap window was ignored; ABORT before the next gate "
+            "mis-reads a stacked card"
+        )
+
     # ── batches ────────────────────────────────────────────────────────
 
     def read_battery(self, cli: BoltyCli, uid: str, reader: str,
@@ -198,7 +228,11 @@ class Cycle:
         self.gate(cli, uid, "burn", reader)
         burn = cli.run("burn", "--issuer-key", ISSUER, "--url", BURN_URL,
                        "--version", "1", "--confirm-uid", uid, timeout_s=120)
-        if "burn complete" not in burn.lower():
+        # #176 item 1: the REAL success marker is the CLI's BURN_OK line
+        # (apps/bolty-cli/src/output.rs:10, "burned and verified
+        # successfully") — the old "burn complete" grep never matched a
+        # real burn and aborted AFTER the card was already mutated.
+        if "burned and verified successfully" not in burn.lower():
             raise Abort(f"{reader}: burn did not complete on {uid}: {burn[-300:]}")
         insp = cli.run("inspect", "--issuer-key", ISSUER, "--verbose", timeout_s=60)
         if "PROVISIONED" not in insp.upper():
@@ -256,6 +290,14 @@ class Cycle:
         self.log(f"negative probe: uid={uid or '(error)'} "
                  f"{'ALL-ZEROS (silent-lie risk!)' if zeros else 'honest non-NTAG failure'}")
         self.snapshot(uid or "unknown", reader, kind="negative", zeros=zeros)
+        # #176 item 5: an all-zeros UID is the silent-lie signature —
+        # fail the visit loudly instead of recording-and-continuing.
+        if zeros:
+            raise Abort(
+                f"{reader}: negative probe returned an ALL-ZEROS uid "
+                f"({uid}) — the reader/transport is fabricating success; "
+                "do not trust anything from this seat until investigated"
+            )
 
     def ro_battery(self, cli: BoltyCli, reader: str) -> None:
         """Read-only recovery card: UNAUTHENTICATED reads only, forever."""
@@ -293,10 +335,17 @@ class Cycle:
             uids = {o.get("uid") for o in obs_list}
             if len(uids) > 1:
                 findings.append(f"{uid}: UID disagreement across observations: {uids}")
-            merged = sorted(
-                (o for o in obs_list if o.get("counter") is not None),
-                key=lambda o: o["ts"],
-            )
+            # #176 item 4: rotation snapshots carry `counters` (list) while
+            # read snapshots carry `counter` (scalar) — the old filter only
+            # saw the scalar, so backwards cross-reader rotation samples
+            # were invisible to the divergence report.
+            expanded = []
+            for o in obs_list:
+                if o.get("counter") is not None:
+                    expanded.append(o)
+                for c in o.get("counters") or []:
+                    expanded.append({**o, "counter": c})
+            merged = sorted(expanded, key=lambda o: o["ts"])
             counters = [o["counter"] for o in merged]
             if any(later < earlier for earlier, later in zip(counters, counters[1:])):
                 findings.append(f"{uid}: counter went BACKWARDS across readers: {counters}")
@@ -315,24 +364,19 @@ def place_guard(cycle: Cycle, place_name: str):
     if cycle.dry_run:
         yield
         return
-    deadline = time.monotonic() + cycle.place_wait_min * 60
-    attempt = 0
-    while True:
-        r = subprocess.run(
-            ["labgrid-client", "-x", COORDINATOR, "-p", place_name, "acquire"],
-            capture_output=True, text=True, timeout=30,
+    # #176 item 6: QUEUE, don't race — reserve --wait puts contended places
+    # in a FIFO reservation queue (AGENTS.md labgrid canon) instead of the
+    # old acquire-retry loop that could starve a queued lane forever.
+    from hil.bench_own import BenchOwnershipError, cancel_reservation, reserve_and_acquire_place
+    token = ""
+    try:
+        token = reserve_and_acquire_place(
+            place_name, log=lambda m: print(f"[place] {m}"),
+            wait_min=cycle.place_wait_min,
         )
-        if r.returncode == 0:
-            _audit(f"acquired place {place_name}")
-            break
-        err = (r.stderr or r.stdout).strip()
-        contended = "Failed to acquire resources" in err
-        if not contended or time.monotonic() > deadline:
-            raise Abort(f"could not acquire {place_name}: {err[:200]}")
-        attempt += 1
-        wait = min(5 * attempt, 30)
-        print(f"[place] {place_name} contended ({err[:80]}); retry {attempt} in {wait}s")
-        time.sleep(wait)
+        _audit(f"acquired place {place_name} (reservation {token})")
+    except BenchOwnershipError as exc:
+        raise Abort(f"could not acquire {place_name}: {exc}") from exc
     try:
         yield
     finally:
@@ -340,6 +384,7 @@ def place_guard(cycle: Cycle, place_name: str):
             ["labgrid-client", "-x", COORDINATOR, "-p", place_name, "release"],
             capture_output=True, timeout=30,
         )
+        cancel_reservation(token, log=lambda m: print(f"[place] {m}"))
         _audit(f"released place {place_name}")
 
 
@@ -403,6 +448,12 @@ def visit_v3(cycle: Cycle, args) -> None:
     with place_guard(cycle, PLACE_NUCULA):
         if args.with_ro:
             cycle.ro_battery(n, "nucula")
+            # #176 item 3: CARD_RO and CARD_B gate on the SAME antenna —
+            # force a physical swap window between them, else a stacked
+            # CARD_RO under CARD_B turns every later gate into a coin
+            # flip on which card wins the field.
+            cycle.require_absent(n, CARD_RO, "nucula",
+                                 what="read-only card")
         if cycle.variant == "full":
             cycle.gate(n, CARD_B, "read", "nucula")
             cycle.counter_rotation(n, CARD_B, "nucula")
@@ -451,7 +502,10 @@ def next_move_hint(cycle: Cycle) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--visit", choices=VISITS)
-    ap.add_argument("--variant", choices=["full", "minimal"], default="full")
+    # #176 item 2: default None — an explicit flag is the ONLY thing that
+    # may change the persisted variant; visits without the flag must not
+    # silently revert a minimal cycle to full (which would burn CARD_B).
+    ap.add_argument("--variant", choices=["full", "minimal"], default=None)
     ap.add_argument("--with-negative", action="store_true",
                     help="V1: J3R180 negative probe on the nucula first")
     ap.add_argument("--with-ro", action="store_true",
@@ -467,10 +521,20 @@ def main() -> int:
     cycle = Cycle(args.evidence_dir, dry_run=args.dry_run,
                   variant=args.variant, place_wait_min=args.place_wait_min)
     if args.reset:
-        cycle.state = {"variant": args.variant, "visits_done": [], "snapshots": {}, "events": []}
+        cycle.state = {"variant": args.variant or "full", "visits_done": [], "snapshots": {}, "events": []}
         cycle.save_state()
         print("state reset")
-    cycle.state["variant"] = args.variant
+    # #176 item 2: the variant persists across visits — only an EXPLICIT
+    # --variant (or --reset) overwrites it. A later visit without the flag
+    # used to revert a minimal cycle to full and burn CARD_B.
+    if args.variant is not None:
+        if "variant" in cycle.state and cycle.state["variant"] != args.variant:
+            print(f"[variant] explicit --variant {args.variant} overrides persisted "
+                  f"{cycle.state['variant']}")
+        cycle.state["variant"] = args.variant
+    elif "variant" not in cycle.state:
+        cycle.state["variant"] = "full"
+    cycle.variant = cycle.state["variant"]
 
     if args.status:
         print(json.dumps(cycle.state, indent=2))
@@ -527,7 +591,10 @@ def _install_dry_run_fakes(cycle: Cycle) -> None:
             if cmd == "url":
                 return "https://boltcardpoc.psbt.me/?p=FAKE&c=FAKE"
             if cmd == "burn":
-                return "burn complete"
+                # #176 item 1: the fake must carry the REAL BURN_OK marker
+                # (output.rs:10) so the dry-run path exercises the same
+                # grep as hardware.
+                return "✅ Card burned and verified successfully!"
             if cmd == "inspect":
                 return "Card state: PROVISIONED\nK0 auth: SUCCESS"
             if cmd == "picc":
