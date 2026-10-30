@@ -15,4 +15,4 @@ EPID=$!
 wait $DPID; RC=$?
 sleep 0.5
 kill $RXPID $EPID 2>/dev/null; wait $RXPID $EPID 2>/dev/null
-echo "== $NAME driver-exit=$RC"; cat results/${NAME}.driver.log
+echo "== $NAME driver-exit=$RC"; cat ../captures/${NAME}.driver.log

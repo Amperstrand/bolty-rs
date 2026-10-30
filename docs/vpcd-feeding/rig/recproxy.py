@@ -19,26 +19,28 @@ import time
 class PcapWriter:
     def __init__(self, path):
         self.f = open(path, "wb")
+        self.lock = threading.Lock()  # whole-record writes: both relay threads share this writer
         # magic, v2.4, tz, sigfigs, snaplen, LINKTYPE_RAW(101)
         self.f.write(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 101))
         self.f.flush()
 
     def packet(self, ts, src_port, dst_port, payload, seq):
-        tcp = struct.pack("!HHIIBBHHH",
-                          src_port, dst_port, seq, 0,          # sport dport seq ack
-                          5 << 4,                              # data offset 5 words
-                          0x18,                                # PSH|ACK
-                          8192, 0, 0)                          # window, cksum=0, urg
-        total = 20 + len(tcp) + len(payload)
-        ip = struct.pack("!BBHHHBBH4s4s",
-                         0x45, 0, total, 0x1234, 0x4000, 64, 6, 0,
-                         socket.inet_aton("127.0.0.1"), socket.inet_aton("127.0.0.1"))
-        frame = ip + tcp + payload
-        sec = int(ts)
-        usec = int((ts - sec) * 1e6)
-        self.f.write(struct.pack("<IIII", sec, usec, len(frame), len(frame)))
-        self.f.write(frame)
-        self.f.flush()
+        with self.lock:
+            tcp = struct.pack("!HHIIBBHHH",
+                              src_port, dst_port, seq, 0,          # sport dport seq ack
+                              5 << 4,                              # data offset 5 words
+                              0x18,                                # PSH|ACK
+                              8192, 0, 0)                          # window, cksum=0, urg
+            total = 20 + len(tcp) + len(payload)
+            ip = struct.pack("!BBHHHBBH4s4s",
+                             0x45, 0, total, 0x1234, 0x4000, 64, 6, 0,
+                             socket.inet_aton("127.0.0.1"), socket.inet_aton("127.0.0.1"))
+            frame = ip + tcp + payload
+            sec = int(ts)
+            usec = int((ts - sec) * 1e6)
+            self.f.write(struct.pack("<IIII", sec, usec, len(frame), len(frame)))
+            self.f.write(frame)
+            self.f.flush()
 
 
 def relay(src, dst, writer, sport, dport, seq_box, tag):

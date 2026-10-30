@@ -54,9 +54,9 @@ bytes.
 ## Rebuild & rerun
 
     cd rig
-    for v in upstream e484c2c8 guarded-drain; do
-      gcc -O1 -g -Wall -DHAVE_CONFIG_H -o drv_$v harness.c vpcd-$v.c lock.c -I. -lpthread
-    done
+    gcc -O1 -g -Wall -DHAVE_CONFIG_H -o drv_upstream     harness.c vpcd-upstream-93286a90.c lock.c -I. -lpthread
+    gcc -O1 -g -Wall -DHAVE_CONFIG_H -o drv_e484c2c8     harness.c vpcd-e484c2c8.c        lock.c -I. -lpthread
+    gcc -O1 -g -Wall -DHAVE_CONFIG_H -o drv_guarded-drain harness.c vpcd-guarded-drain.c  lock.c -I. -lpthread
     ./run_scenario.sh <name> <upstream|e484c2c8|guarded-drain> <spec|deviant|zeroack> <idx>
     # (guarded-drain: VPCD_DRAIN_MS=<ms> to vary the window)
 
