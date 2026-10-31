@@ -91,6 +91,14 @@ pub fn main() {
     esp_idf_hal::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
     crate::log_reset_reason();
+    // Serve-proven OTA validity gate (#494 audit item M): with
+    // CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE compiled into the
+    // bootloader, a freshly OTA-booted image must prove itself before
+    // the next reset or it reverts. Install the platform mark-valid
+    // call NOW (before serving); the evidence fires later — first
+    // successful card transaction (workflow.rs) or 2xx REST response
+    // (rest.rs), never boot itself.
+    crate::ota_validity::arm_platform();
 
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,

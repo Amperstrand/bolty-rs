@@ -964,3 +964,63 @@ locks do not cover state that outlives the session; only hardware-read
 audits (#209's bare-CLI gap is the same class) catch it. Restoration
 duty: any experiment that writes reader NVM restores defaults before
 releasing the place, or uses a transparent session instead.
+
+## B34 — the 2026-10-26/28 hardware-incident wave: three latch classes and the levers that now exist (2026-10-31)
+
+Three days, three hardware-latch failures, three DIFFERENT recovery
+levers — the pattern is the lesson: **state that lives in a component
+your resets don't touch survives your resets**.
+
+1. **m5stick MFRC522 brownout latch (Oct 26 04:55)** — the reader
+   vanished from I2C across every ESP32 POWERON reset because the
+   AXP192 (a separate chip, VBUS-powered) never dropped the Grove 5V
+   rail. Lever: the fw `grove off/on` console command (AXP192 EXTEN
+   bit cycle, PR-landed with the bench fw) — remote, no hands. The
+   reader revived and SURVIVED the next bench event without re-latching.
+2. **nucula-c3 USB-Serial/JTAG TX→RX loopback latch (Oct 28 evening,
+   issue #245)** — the peripheral echoes its own TX into RX; survives
+   chip resets, flash erase, and USB bus re-enumeration (all
+   VBUS-powered state). Only a VBUS drop (unplug/replug) cures it.
+   Diagnostic tell: console commands come back as
+   `unknown command: <binary garbage><your command>` — RX echo, not fw
+   TX. Lever: none remote — 5 seconds of owner hands.
+3. **Daemon-reopen DTR reset storms** — every bolty-console restart
+   pulses DTR/RTS in a pyserial sequence the C3 reads as
+   USB_UART_CHIP_RESET; a wedged device turns the crash-restart loop
+   into a 6-second-cadence board-reset storm (38 resets observed).
+   Levers (landed): same-fd stall retry in bolty-console +
+   StartLimitIntervalSec/Burst on the c3 unit + the flight recorder
+   (dated ms-stamped ring snapshots to /root/bench/incidents/ on any
+   reset banner / panic signature / garbage line — this is now the
+   primary forensic record, NOT journal archaeology).
+
+Also from this wave: the Oct 26 "console garbage" first read as fw TX;
+it was RX loopback echo. Check WHICH DIRECTION the bytes travel before
+theorizing about emitters. And: bench events cluster at ~03:30–04:55
+AM three nights running (Oct 26/27/28) — if something shares that
+window's timer, it is worth an owner look.
+
+## B35 — the global /root/.cargo-target: worktree builds lie about WHERE (2026-10-31)
+
+`~/.cargo/config.toml` sets a host-global `target-dir = /root/.cargo-target`:
+every worktree's build lands in ONE shared directory. Two consequences,
+both bitten this week: (1) a "worktree-local" binary is a myth — always
+`strings`/mtime-verify the artifact before a live test (a stale
+bolty-cli from another worktree silently invalidated one interop run);
+(2) parallel builds from different worktrees share fingerprints and can
+evict each other's esp-idf-sys caches. This is the B30
+(silent-wrong-firmware) class's host-side twin: same rule, same cure —
+verify the artifact, not the command's exit status. `build.sh` in
+apps/bolty-esp32 already pins a repo-local CARGO_TARGET_DIR; HOST
+builds have no such guard.
+
+## B36 — cargo tree --invert is BLIND to target-gated deps without --target all (2026-10-31)
+
+`cargo tree --workspace -e normal --invert rand_core@0.9.5` printed
+NOTHING for a dependency that demonstrably exists in the lock — its
+consumers (stm32f4xx-hal → bolty-stm32) are target-gated, and plain
+--invert resolves only the host target. This is how rand_core went
+missing from the dependency-duplicates nine-base triage (#181, row now
+added with evidence). Rule: duplicate/duplicate-triage evidence
+commands must include `--target all`, or target-gated forks silently
+drop out of the decision record.

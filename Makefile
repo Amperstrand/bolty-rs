@@ -7,6 +7,8 @@
 #                         auto-restores; 3-4 min; needs both readers)
 #   make difftest-quick — gem capture + diff only (no fuzz category, cached
 #                         ACR golden; ~60-90s)
+#   make difftest-acr   — ACR capture + diff vs committed golden only (no
+#                         stick/ccid-mode requirement; sanity after pin bumps)
 #   make test-all       — everything above in order
 #   make status         — one-glance rig health
 #
@@ -19,7 +21,7 @@
 # ensure_blank() for rerun-safety.
 # History: every run appends to results/history.jsonl.
 
-.PHONY: test test-hil test-hil-lg difftest difftest-quick test-all status report labgrid-place hil-state-places
+.PHONY: test test-hil test-hil-lg difftest difftest-quick difftest-acr test-all status report labgrid-place hil-state-places
 
 HIL_TESTS := tools/hil/tests
 ALLURE_RESULTS := tools/hil/results/allure
@@ -83,6 +85,21 @@ difftest:
 # sanity check, not a test of the thing under test).
 difftest-quick:
 	cd tools/hil/difftest && python3 e2e.py --phase apdu --quick
+
+# Stick-free differential: ACR capture + diff vs committed golden only —
+# no GemPCTwin/ccid-mode requirement (sanity after pin bumps/dependency
+# changes while the M5Stick runs another role).
+difftest-acr:
+	cd tools/hil/difftest && python3 e2e.py --phase apdu --acr-only
+
+# Stateful-model variant: answers COMPUTED by vpicc_model (57/57 golden).
+difftest-vpicc-model:
+	cd tools/hil/difftest && python3 check_model_vs_golden.py && python3 -m pytest test_vpicc_model.py -v --timeout=380
+
+# Zero-hardware golden replay: the recorded NTAG424 answers via vpcd
+# (requires pcscd + the vpcd-boltcard reader.conf entry, port 35963).
+difftest-vpicc:
+	cd tools/hil/difftest && python3 -m pytest test_vpicc_golden.py -v --timeout=300
 
 test-all: test test-hil difftest
 	@echo ""

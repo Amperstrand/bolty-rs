@@ -1,13 +1,40 @@
-# Name,   Type, SubType, Offset,  Size, Flags
+# Name,   Type, SubType,  Offset,  Size,    Flags
+# FROZEN data rows — do NOT move or resize: NVS @0x9000/0x6000 carries the
+# provisioned credentials + OTA pubkey (bolty #144) and shares the flash
+# with other bench images (role-switch co-tenancy); phy_init and otadata
+# sit at their long-standing offsets so existing otadata artifacts
+# (tools/hil/overnight/otadata-ota0.bin) keep landing where the
+# bootloader looks for them.
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 otadata,  data, ota,     0x10000, 0x2000,
-factory,  app,  factory, 0x20000, 0x1E0000,
-ota_0,    app,  ota_0,   0x200000,0x1E0000,
-# Crash forensics (ccid-firmware-rs #494 audit adoption; mirrors the
-# partitions-ota.csv coredump row, ccid issue #64): ESP-IDF
-# coredump-to-flash target partition at the SAME offset/size as the
-# canonical ccid layout — 0x3F0000..0x400000, the last 64 KB of the 4 MB
-# flash, past both app slots (factory ends 0x200000, ota_0 ends 0x3E0000).
-# Activated by CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH in sdkconfig.defaults.
+# Dual-bank OTA (ccid-firmware-rs #494 audit adoption, item M): factory
+# shrinks 0x1E0000 -> 0x150000 and the freed space becomes ota_1, giving
+# power-fail-safe A/B updates — the running image is never the write
+# target, and a bad OTA reverts instead of needing serial recovery
+# (pairs with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE in the sdkconfigs).
+# Size math (4 MB flash, all rows 0x10000-aligned):
+#   factory 0x20000..0x170000 (1344K) — serial-flash target, holds the
+#     full canonical m5stick build (~1277K today, ~67K headroom)
+#   ota_0   0x170000..0x2B0000 (1280K) — OTA slot A / role-switch ccid
+#     seat (ccid image ~280K)
+#   ota_1   0x2B0000..0x3F0000 (1280K) — OTA slot B (rollback bank)
+#   -> ends exactly at the coredump row below; no gaps.
+# NOTE the role-switch provisioning offsets: ota_0 moves from 0x200000 to
+# 0x170000 — tools/hil/overnight/role_switch.py derives the offset from
+# THIS file; a stick provisioned under the old table must be
+# re-provisioned (merged-image reflash + ccid app re-write) before the
+# otadata fast path selects ota_0 again — bench-gated deployment, NOT
+# part of the software change.
+# TAKES EFFECT AT NEXT FLASH: a partition-table change rides with the
+# next `build.sh --flash` / merged-image write; until a board is
+# reflashed it keeps its old table and the rollback knob stays
+# inert-but-correct.
+factory,  app,  factory, 0x20000, 0x150000,
+ota_0,    app,  ota_0,   0x170000,0x140000,
+ota_1,    app,  ota_1,   0x2B0000,0x140000,
+# FROZEN (bolty #239, ccid issue #64): ESP-IDF coredump-to-flash target
+# partition at the SAME offset/size as the canonical ccid layout — last
+# 64 KB of the 4 MB flash, past both OTA slots. Activated by
+# CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH in sdkconfig.defaults.
 coredump, data, coredump, 0x3F0000, 0x10000,
