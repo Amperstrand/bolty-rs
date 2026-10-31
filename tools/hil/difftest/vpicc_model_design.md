@@ -1,7 +1,8 @@
 # vpicc stateful NTAG424 model — design (rung plan)
 
-Status: DESIGN (2026-10-31, follows PR #257's replay chassis). Not yet
-implemented; this file is the plan the implementation follows.
+Status: RUNG 1 IMPLEMENTED (2026-10-31) — vpicc_model.py answers 57/57
+golden exchanges byte-exact (offline gate: check_model_vs_golden.py; live
+pcsc round trip: test_vpicc_model.py). Rung 2 remains design-only.
 
 ## Why
 
