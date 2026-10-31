@@ -66,15 +66,21 @@ class GoldenVpicc(threading.Thread):
     daemon=True; .stop() ends the reconnect loop. ``answered_probe`` is set
     when the first ATR control has been served (readiness signal).
     ``mismatches`` records unknown C-APDUs (hex strings) for assertions.
+
+    ``answerer`` (optional): any object with ``.answer(capdu) -> bytes``
+    replaces the golden-queue lookup — this is how vpicc_model.ModelVpicc
+    plugs in (stateful rules instead of canned queues).
     """
 
     def __init__(self, host: str, port: int, atr: bytes,
-                 queues: dict[bytes, deque[bytes]]):
+                 queues: dict[bytes, deque[bytes]] | None = None,
+                 answerer=None):
         super().__init__(daemon=True)
         self.host = host
         self.port = port
         self.atr = atr
-        self.queues = queues
+        self.queues = queues or {}
+        self.answerer = answerer
         self._stop = threading.Event()
         self.apdus_seen: list[bytes] = []
         self.answered_probe = threading.Event()
@@ -127,6 +133,9 @@ class GoldenVpicc(threading.Thread):
             # OFF/ON: no reply (see module docstring)
             return
         self.apdus_seen.append(msg)
+        if self.answerer is not None:
+            self._send(sock, self.answerer.answer(msg))
+            return
         q = self.queues.get(msg)
         if q:
             self._send(sock, q.popleft())
