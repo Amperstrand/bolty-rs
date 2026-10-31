@@ -175,6 +175,15 @@ def test_place_guard_uses_reservation(monkeypatch, tmp_path):
     monkeypatch.setattr(bo, "reserve_and_acquire_place", fake_reserve)
     monkeypatch.setattr(bo, "cancel_reservation", fake_cancel)
 
+    class _R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        bo, "_lg_client", lambda place, *a, **kw: (calls.append(("release", place)), _R())[1]
+    )
+
     cycle = make_cycle(tmp_path, dry_run=False)
     with nc.place_guard(cycle, "nucula-c3"):
         calls.append(("work",))

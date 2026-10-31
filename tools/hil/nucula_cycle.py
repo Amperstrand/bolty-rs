@@ -370,7 +370,12 @@ def place_guard(cycle: Cycle, place_name: str):
     # #176 item 6: QUEUE, don't race — reserve --wait puts contended places
     # in a FIFO reservation queue (AGENTS.md labgrid canon) instead of the
     # old acquire-retry loop that could starve a queued lane forever.
-    from hil.bench_own import BenchOwnershipError, cancel_reservation, reserve_and_acquire_place
+    from hil.bench_own import (
+        BenchOwnershipError,
+        _lg_client,
+        cancel_reservation,
+        reserve_and_acquire_place,
+    )
     token = ""
     try:
         token = reserve_and_acquire_place(
@@ -383,12 +388,19 @@ def place_guard(cycle: Cycle, place_name: str):
     try:
         yield
     finally:
-        subprocess.run(
-            ["labgrid-client", "-x", COORDINATOR, "-p", place_name, "release"],
-            capture_output=True, timeout=30,
-        )
+        # #176 review: release through the SAME coordinator the
+        # acquisition used (BOLTY_LG_COORDINATOR-aware _lg_client), not a
+        # hard-coded one — otherwise a configured coordinator leaves the
+        # actually-acquired place held, blocking later batches.
+        r = _lg_client(place_name, "release")
+        if r.returncode == 0:
+            _audit(f"released place {place_name}")
+        else:
+            _audit(
+                f"place release FAILED ({(r.stderr or r.stdout).strip()[:120]}) "
+                f"— run labgrid-client -p {place_name} release manually"
+            )
         cancel_reservation(token, log=lambda m: print(f"[place] {m}"))
-        _audit(f"released place {place_name}")
 
 
 @contextmanager
