@@ -30,6 +30,11 @@ static BANNER_WRITTEN: AtomicBool = AtomicBool::new(false);
 /// One CLOCK_STEP_BACKWARD note per process (flag, not per-entry spam).
 static CLOCK_STEP_NOTED: AtomicBool = AtomicBool::new(false);
 
+/// Issue #210 (review follow-up): the last timestamp THIS process stamped
+/// (0 = none yet). Mid-process backward steps that remain above process
+/// start are only visible against this, not against PROCESS_START_MS.
+static LAST_STAMP_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Test hook: when non-zero, [`now_epoch_ms`] reports this instead of the
 /// real clock (issue #210 tests simulate backward clock steps).
 #[cfg(test)]
@@ -200,20 +205,30 @@ fn timestamp() -> String {
     let now = now_epoch_ms();
     // Issue #210: a backward clock step mid-process (NTP correction, host
     // resync) would interleave pre-step and post-step timestamps from THIS
-    // pid with no marker. Note it once, loudly.
-    if now + 1000 < *PROCESS_START_MS && !CLOCK_STEP_NOTED.swap(true, Ordering::Relaxed) {
+    // pid with no marker. Note it once, loudly. The reference is the
+    // HIGHER of process start and our own last stamp, so both a step below
+    // process start and an ordinary mid-process correction (still above
+    // start) are caught.
+    let prev = LAST_STAMP_MS.load(Ordering::Relaxed);
+    let reference = if prev != 0 {
+        std::cmp::max(u128::from(prev), *PROCESS_START_MS)
+    } else {
+        *PROCESS_START_MS
+    };
+    if now + 1000 < reference && !CLOCK_STEP_NOTED.swap(true, Ordering::Relaxed) {
         let path = audit_log_path();
         write_session_banner(&path);
         write_raw(
             &path,
             &format!(
                 "[{now}] EVENT  CLOCK_STEP_BACKWARD delta_ms={} \
-                 (process start was {}; entries above/below may straddle the step)",
-                *PROCESS_START_MS - now,
-                *PROCESS_START_MS,
+                 (reference point {}; entries above/below may straddle the step)",
+                reference - now,
+                reference,
             ),
         );
     }
+    LAST_STAMP_MS.store(u64::try_from(now).unwrap_or(u64::MAX), Ordering::Relaxed);
     format!("{now}")
 }
 
@@ -527,8 +542,9 @@ mod security_tests {
 #[cfg(test)]
 mod issue210_tests {
     use super::{
-        AUDIT_TEST_MUTEX, CLOCK_OVERRIDE_MS, PROCESS_START_MS, log_event,
-        reset_audit_log_path_for_test, reset_banner_for_test, set_audit_log_path, wall_utc,
+        AUDIT_TEST_MUTEX, CLOCK_OVERRIDE_MS, CLOCK_STEP_NOTED, LAST_STAMP_MS, PROCESS_START_MS,
+        log_event, reset_audit_log_path_for_test, reset_banner_for_test, set_audit_log_path,
+        wall_utc,
     };
     use std::io::{Read, Write};
     use std::path::PathBuf;
@@ -643,6 +659,8 @@ mod issue210_tests {
         let path = fresh_path("clockstep");
         set_audit_log_path(path.clone());
         reset_banner_for_test();
+        CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
+        LAST_STAMP_MS.store(0, Ordering::Relaxed);
 
         // Simulate the host clock stepping 5000 ms behind process start.
         let stepped = u64::try_from(*PROCESS_START_MS)
@@ -664,6 +682,50 @@ mod issue210_tests {
         assert_eq!(marks, 1, "flag fires exactly once: {content:?}");
 
         let _ = std::fs::remove_file(&path);
+        CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
+        LAST_STAMP_MS.store(0, Ordering::Relaxed);
+        reset_audit_log_path_for_test();
+    }
+
+    #[test]
+    fn midprocess_backward_step_above_start_still_flags() {
+        // Review follow-up: a correction that stays LATER than process
+        // start must also be flagged (the old process-start-only check
+        // missed ordinary mid-process NTP corrections).
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
+        let path = fresh_path("clockstep2");
+        set_audit_log_path(path.clone());
+        reset_banner_for_test();
+        CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
+        LAST_STAMP_MS.store(0, Ordering::Relaxed);
+
+        let ps = u64::try_from(*PROCESS_START_MS).unwrap_or(0);
+        // First stamp: one minute into the process (above start).
+        CLOCK_OVERRIDE_MS.store(ps + 60_000, Ordering::Relaxed);
+        log_event("entry one minute into the process");
+        // Then a 5 s backward correction, still above process start.
+        CLOCK_OVERRIDE_MS.store(ps + 55_000, Ordering::Relaxed);
+        log_event("entry after mid-process correction");
+        CLOCK_OVERRIDE_MS.store(0, Ordering::Relaxed);
+
+        let content = read_audit(&path);
+        assert!(
+            content.contains("CLOCK_STEP_BACKWARD"),
+            "mid-process step above start must be flagged: {content:?}"
+        );
+        let marks = content
+            .lines()
+            .filter(|l| l.contains("CLOCK_STEP_BACKWARD"))
+            .count();
+        assert_eq!(marks, 1, "flag fires exactly once: {content:?}");
+        assert!(
+            content.contains("delta_ms=5000"),
+            "delta must reference the previous stamp: {content:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
+        LAST_STAMP_MS.store(0, Ordering::Relaxed);
         reset_audit_log_path_for_test();
     }
 
