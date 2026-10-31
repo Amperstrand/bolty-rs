@@ -33,9 +33,13 @@ pub(crate) fn auth_failure_count() -> u32 {
 /// Returns `true` when SDM has at least one active feature (PICC data or
 /// file-read MAC).
 ///
-/// After `wipe()`, `Sdm::disabled()` leaves a `Some(Sdm{...})` shell with
-/// `picc_data == None` and `file_read == None`.  A structural `sdm.is_some()`
-/// check would treat that as "SDM active" and mis-classify the card.
+/// Since the #232 migration, `wipe()` clears SDM to the factory shape
+/// (`without_sdm()`: enable bit CLEAR, no SDM block), so a wiped card
+/// decodes `sdm == None`. The functional check remains for cards wiped
+/// by OLDER bolty (or third-party tools) where `Sdm::disabled()` left a
+/// `Some(Sdm{...})` shell with `picc_data == None` and `file_read ==
+/// None` — a structural `sdm.is_some()` check would mis-classify those
+/// as "SDM active".
 pub(crate) fn is_sdm_functionally_active(sdm: Option<&bolty_ntag::Sdm>) -> bool {
     sdm.is_some_and(|s| !matches!(s.picc_data(), PiccData::None) || s.file_read().is_some())
 }

@@ -360,8 +360,40 @@ impl FileSettingsUpdate {
     }
 
     /// Enable Secure Dynamic Messaging with the given configuration.
+    ///
+    /// This sets the FileOption SDM enable bit (NT4H2421Gx §10.7.1,
+    /// Table 69) and encodes the SDM option/access/offset fields. Note
+    /// that `with_sdm(Sdm::disabled())` therefore still ENABLES SDM on
+    /// the wire — bit set, all mirroring/MAC off — which is exactly the
+    /// shape the bolt-card reference wipe sends (`refchangekey.js`
+    /// `FS_RESET`, locked byte-for-byte by
+    /// `change_file_settings_bolt_card_programmer_parity_fs_reset`).
+    /// It is not the factory-delivery state (§8.2.3: SDM disabled on all
+    /// files at delivery — enable bit clear). To CLEAR the enable bit,
+    /// use [`Self::without_sdm`].
     pub fn with_sdm(mut self, sdm: Sdm) -> Self {
         self.sdm = Some(sdm);
+        self
+    }
+
+    /// Clear Secure Dynamic Messaging entirely — the factory-delivery
+    /// shape (§8.2.3): the FileOption SDM enable bit is left CLEAR and no
+    /// SDM option/access/offset fields are encoded.
+    ///
+    /// This is the wipe-to-factory call. A read-modify-write flow starts
+    /// from the tag's current settings, which — on an SDM-enabled card —
+    /// decode to `sdm: Some(..)` and would otherwise keep the enable bit
+    /// set through [`FileSettingsView::into_update`]:
+    ///
+    /// ```ignore
+    /// let update = settings.into_update().without_sdm();
+    /// session.change_file_settings(transport, file, &update).await?;
+    /// ```
+    ///
+    /// Idempotent: calling it on an update that never had SDM configured
+    /// is a no-op.
+    pub fn without_sdm(mut self) -> Self {
+        self.sdm = None;
         self
     }
 }

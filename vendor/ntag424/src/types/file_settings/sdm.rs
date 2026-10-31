@@ -411,10 +411,17 @@ pub struct Sdm {
 impl Sdm {
     /// SDM fully disabled: no PICC data mirroring, no file-read MAC, no tamper status.
     ///
-    /// Use with [`crate::FileSettingsUpdate::with_sdm`] to clear SDM when wiping a card:
+    /// This is the all-options-off CONFIGURATION, not a factory clear:
+    /// passing it to [`crate::FileSettingsUpdate::with_sdm`] still sets
+    /// the FileOption SDM enable bit (§10.7.1) — the wire shape the
+    /// bolt-card reference wipe sends (`refchangekey.js` `FS_RESET`).
+    /// Behaviorally SDM is inert in this state, but
+    /// `get_file_settings` decodes it back as `sdm: Some(..)`, so
+    /// callers asserting a factory-fresh `sdm: None` after a wipe must
+    /// instead CLEAR SDM with [`crate::FileSettingsUpdate::without_sdm`]:
     ///
     /// ```ignore
-    /// let update = settings.into_update().with_sdm(Sdm::disabled());
+    /// let update = settings.into_update().without_sdm();
     /// session.change_file_settings(transport, file, &update).await?;
     /// ```
     pub const fn disabled() -> Self {
