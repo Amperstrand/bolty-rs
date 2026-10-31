@@ -92,6 +92,11 @@ difftest-quick:
 difftest-acr:
 	cd tools/hil/difftest && python3 e2e.py --phase apdu --acr-only
 
+# Zero-hardware golden replay: the recorded NTAG424 answers via vpcd
+# (requires pcscd + the vpcd-boltcard reader.conf entry, port 35963).
+difftest-vpicc:
+	cd tools/hil/difftest && python3 -m pytest test_vpicc_golden.py -v --timeout=300
+
 test-all: test test-hil difftest
 	@echo ""
 	@echo "╔════════════════════════════════════════╗"
