@@ -55,7 +55,7 @@ arm-none-eabi-gdb target/thumbv7em-none-eabihf/release/bolty-stm32
 ## Implementation TODO
 
 1. Initialize STM32 clocks (RCC — 180MHz sysclk)
-2. Initialize I2C1 peripheral (PB8 SCL, PB9 SDA, 100kHz)
+2. Initialize I2C1 peripheral (PB6 SCL, PB7 SDA — I2C1 alt map, 100kHz; NOT PB8/PB9, which are the onboard touch bus per PINOUT-nfc.md)
 3. Initialize USART1 (PA9 TX, PA10 RX, 115200 baud)
 4. Create `Mfrc522Transceiver::from_i2c(i2c, 0x28)`
 5. Port serial console from ESP32 (use UART instead of fd 0/1)

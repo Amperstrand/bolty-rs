@@ -55,6 +55,9 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
+# NOTE (Codex P2 on #128): profiles are workspace-global — this also
+# retains DWARF/symbols in other members' release artifacts (bolty-cli,
+# bolty-esp32). Accepted for now; revisit if release artifact size matters.
 # no `strip`: probe-rs locates the defmt-RTT control block via the ELF's
 # _SEGGER_RTT symbol — stripping the symtab makes `probe-rs run` silently
 # show no RTT output (found during the 2026-10-19 F469 bring-up; the flash
