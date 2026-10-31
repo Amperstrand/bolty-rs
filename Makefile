@@ -92,6 +92,10 @@ difftest-quick:
 difftest-acr:
 	cd tools/hil/difftest && python3 e2e.py --phase apdu --acr-only
 
+# Stateful-model variant: answers COMPUTED by vpicc_model (57/57 golden).
+difftest-vpicc-model:
+	cd tools/hil/difftest && python3 check_model_vs_golden.py && python3 -m pytest test_vpicc_model.py -v --timeout=380
+
 # Zero-hardware golden replay: the recorded NTAG424 answers via vpcd
 # (requires pcscd + the vpcd-boltcard reader.conf entry, port 35963).
 difftest-vpicc:
