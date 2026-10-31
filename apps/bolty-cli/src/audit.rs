@@ -26,12 +26,21 @@ pub fn set_audit_log_path(path: PathBuf) {
     }
 }
 
+fn default_audit_log_path() -> PathBuf {
+    #[cfg(test)]
+    {
+        std::env::temp_dir().join(format!("bolty-audit-unittest-{}.log", std::process::id()))
+    }
+    #[cfg(not(test))]
+    {
+        PathBuf::from("/tmp/bolty-audit.log")
+    }
+}
+
 fn audit_log_path() -> PathBuf {
     match AUDIT_LOG_PATH.read() {
-        Ok(guard) => guard
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("/tmp/bolty-audit.log")),
-        Err(_) => PathBuf::from("/tmp/bolty-audit.log"),
+        Ok(guard) => guard.clone().unwrap_or_else(default_audit_log_path),
+        Err(_) => default_audit_log_path(),
     }
 }
 
@@ -166,6 +175,33 @@ mod tests {
     use super::*;
     use bolty_core::provenance::KeyProvenance;
     use std::io::Read;
+
+    #[test]
+    fn default_test_path_is_not_the_shared_forensic_log() {
+        let _guard = AUDIT_TEST_MUTEX.blocking_lock();
+        reset_audit_log_path_for_test();
+
+        let p = audit_log_path();
+        assert_ne!(
+            p,
+            PathBuf::from("/tmp/bolty-audit.log"),
+            "#211 regression: unset test path must never resolve to the shared forensic log"
+        );
+
+        let _ = std::fs::remove_file(&p);
+        log_event("#211 default-path probe");
+        let mut content = String::new();
+        std::fs::File::open(&p)
+            .map(|mut f| f.read_to_string(&mut content))
+            .ok();
+        assert!(
+            content.contains("#211 default-path probe"),
+            "event should land in the per-process test log"
+        );
+
+        let _ = std::fs::remove_file(&p);
+        reset_audit_log_path_for_test();
+    }
 
     #[test]
     fn provenance_tag_emitted() {
