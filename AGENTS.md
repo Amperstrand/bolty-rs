@@ -706,6 +706,21 @@ The role-switch + restore is handled by the harness (restore-always).
 See docs/lessons-learned.md — append-only engineering log: rig facts (M5Stick pins, MFRC522 at 0x28), ESP-IDF sdkconfig traps, NTAG424 card-safety refinements (911E vs 91AE), and the byte-exact crypto port method.
 
 
+## Merge policy (owner directive 2026-10-31)
+
+**Amperstrand member repos** (verify membership: `gh api user/orgs`):
+agents MAY merge a PR when BOTH hold:
+1. review addressed — codex review clean, or every finding explicitly
+   addressed in-thread by the lane (fix pushed or reasoned dismissal);
+2. hardware-proven — the change has been demonstrated working on the
+   bench where applicable. Docs/CI-only/test-infra changes have no
+   hardware surface: CI green + review addressed suffices (note the
+   N/A in the merge comment). Never merge around a red check.
+
+**External projects and OpenTollGate repos are STRICTER**: no agent
+merges — owner-only, always (owner does the copy-paste/click). The
+2026-09-06 CHANNEL rule below still governs all posting.
+
 ## External posting (owner directive 2026-09-06 — CHANNEL rule)
 
 Agents never post on non-member repos — no `gh` writes (issues, PRs,
