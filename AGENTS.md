@@ -40,6 +40,36 @@ ccid-firmware-rs (ai-legion). Before any bench work with an NFC device:
 The M5Stack Atom + MFRC522 rig (bolty's primary target) is the `m5stick`
 place; the nucula (PN7160) is available for differential NFC work.
 
+### Bench-flock doctrine for bolty-cli (2026-10-31, #209 / PR #248)
+
+bolty-cli takes the cross-project bench flock
+(`/tmp/amperstrand-bench.lock`, tollgate-lab BenchLock's own path —
+holder info in the `key: value` shape both languages read) on every
+PHYSICAL-reader connect, and refuses loudly (holder pid/project named)
+when another session holds it. Consequences for harness authors:
+
+- **flock is per-open-fd**: a lock-holding parent MUST export
+  `BOLTY_SKIP_BENCH_LOCK=1` for its bolty-cli children or they refuse
+  against their own parent. `hil.bench_own` does this on BenchLock
+  acquisition; the pytest rig_lock conftest does it per session.
+- The `hil.BoltyCli` wrapper only passes the environment through — no
+  lock held means no skip; the child gates itself. Do not "help" it.
+- Virtual readers (vpcd/vPICC) never take the lock (no shared antenna);
+  cardless selection fast-fail happens before the gate by design.
+
+Seat health + RF-window state lives in `/root/bench/SEATS.md` on
+ai-legion (host-local by the raw-log rule) — check it before touching
+either host's hardware, and update it when you change a seat's state.
+The flight recorder (bolty-console daemons) auto-dumps incident
+snapshots to `/root/bench/incidents/` — dated, ms-stamped, and the
+primary forensic record for anything that touches the seats.
+
+### Host-build gotcha (lesson B35)
+
+`~/.cargo/config.toml` points ALL cargo builds (every worktree) at the
+global `/root/.cargo-target`. A "worktree-local" binary is a myth —
+verify the artifact (strings/mtime) before any live test.
+
 ## Spec Conformance (greatspectations)
 
 Spec-relevant code carries verbatim boltcard-spec quotes as `//` comments with
