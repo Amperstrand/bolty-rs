@@ -14,11 +14,17 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from vpicc_golden import GoldenVpicc  # noqa: E402
 from vpicc_model import ModelVpicc  # noqa: E402
+
+# Same environment class as test_vpicc_golden: real pcscd → vpcd (patched
+# Amperstrand driver) → vpicc round trip — bench hosts only, CI skips.
+pytestmark = pytest.mark.env_dependent
 
 GOLDEN = HERE / "results" / "golden_acr1252.json"
 VPICC_PORT = 35970  # table-card vpcd slot (patched driver)
