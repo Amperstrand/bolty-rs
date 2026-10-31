@@ -174,15 +174,24 @@ def reader_inventory() -> list[str]:
         return []
 
 
-def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
+def phase_apdu(golden_path: Path | None = None, quick: bool = False,
+               acr_only: bool = False) -> dict:
     """Phase 1: APDU differential testing against ACR1252 golden reference.
 
     quick=True skips the ACR golden re-capture (the committed golden is the
     reference) and the fuzz category, and trims repeat sleeps — gem capture +
     diff only (#74).
+
+    acr_only=True runs the ACR-self-consistency variant: capture from the
+    ACR1252 (quick-trimmed) and diff against the committed golden WITHOUT
+    requiring the GemPCTwin reader. This is the stick-free sanity path for
+    pin-bump/dependency changes (#95-class validations, t_8a294110): the
+    M5Stick stays in whatever role it runs, and the answer is "does the ACR
+    path still reproduce the recorded golden behavior".
     """
+    mode = " [QUICK]" if quick else (" [ACR-ONLY]" if acr_only else "")
     print("=" * 60)
-    print("PHASE: APDU Differential Testing" + (" [QUICK]" if quick else ""))
+    print(f"PHASE: APDU Differential Testing{mode}")
     print("=" * 60)
     t0 = time.perf_counter()
 
@@ -203,18 +212,19 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
     print(f"Readers: GemPCTwin={'yes' if has_gem else 'no'}, ACR1252={'yes' if has_acr else 'no'}")
 
     results = {"phase": "apdu", "timestamp": datetime.now(timezone.utc).isoformat(),
-               "quick": quick}
+               "quick": quick, "acr_only": acr_only}
     if SSH_HOST:
         results["host"] = SSH_HOST
 
     # Capture from ACR1252 (always available; sanity check vs committed golden)
-    if has_acr and not quick:
+    if has_acr and (acr_only or not quick):
         acr_out = RESULTS / "e2e_acr_capture.json"
-        print(f"\n--- Capturing from ACR1252 ---")
-        rc, out, got = run_reader_cmd(
-            ["python3", str(HERE / "capture.py"), "--reader", "PICC", "--output", str(acr_out)],
-            output=acr_out,
-        )
+        acr_cmd = ["python3", str(HERE / "capture.py"), "--reader", "PICC",
+                   "--output", str(acr_out)]
+        if quick or acr_only:
+            acr_cmd += ["--no-fuzz", "--repeat-sleep", "0.02"]
+        print(f"\n--- Capturing from ACR1252{' (no fuzz, 0.02s repeat sleep)' if (quick or acr_only) else ''} ---")
+        rc, out, got = run_reader_cmd(acr_cmd, output=acr_out)
         if rc == 0 and got:
             print(f"  Saved: {acr_out}")
             results["acr_capture"] = str(acr_out)
@@ -224,8 +234,9 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
     elif quick:
         print("\n--- Quick mode: skipping ACR re-capture (committed golden is the reference) ---")
 
-    # Capture from GemPCTwin (requires ccid mode)
-    if has_gem:
+    # Capture from GemPCTwin (requires ccid mode) — skipped entirely in
+    # acr_only: the whole point is a stick-free run.
+    if has_gem and not acr_only:
         gem_out = RESULTS / "e2e_gem_capture.json"
         gem_cmd = ["python3", str(HERE / "capture.py"), "--reader", "GemPCTwin",
                    "--output", str(gem_out)]
@@ -259,19 +270,24 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
                     "total": d["total_golden"],
                     "cards_match": d["cards_match"],
                 }
-    else:
+    elif not acr_only:
         print("\nGemPCTwin not visible (M5Stick not in ccid mode)")
         print("Run: python3 e2e.py --phase switch-ccid first")
 
     # Diff ACR capture vs golden too (sanity check)
-    if has_acr and not quick and "acr_capture" in results:
+    if has_acr and (acr_only or not quick) and "acr_capture" in results:
         acr_diff_out = RESULTS / "e2e_acr_vs_golden.json"
-        rc, out = run([
+        diff_cmd = [
             "python3", str(HERE / "diff.py"),
             "--golden", str(golden_path),
             "--test", str(results["acr_capture"]),
             "--output", str(acr_diff_out),
-        ])
+        ]
+        if acr_only:
+            diff_cmd.append("--skip-fuzz")
+        rc, out = run(diff_cmd)
+        if acr_only:
+            print(out)
         if acr_diff_out.exists():
             d = json.loads(acr_diff_out.read_text())
             results["acr_vs_golden"] = {
@@ -282,8 +298,14 @@ def phase_apdu(golden_path: Path | None = None, quick: bool = False) -> dict:
 
     elapsed = time.perf_counter() - t0
     results["elapsed_s"] = round(elapsed, 1)
-    results["status"] = "PASS" if results.get("diff", {}).get("mismatches", 99) == 0 else "FINDINGS"
-    print(f"\nElapsed: {elapsed:.1f}s ({'quick' if quick else 'full'} mode)")
+    if acr_only:
+        # The ACR-vs-golden diff IS the run's verdict (no gem diff happened).
+        results["status"] = "PASS" if results.get("acr_vs_golden", {}).get("mismatches", 99) == 0 else "FINDINGS"
+        mode_label = "acr-only"
+    else:
+        results["status"] = "PASS" if results.get("diff", {}).get("mismatches", 99) == 0 else "FINDINGS"
+        mode_label = "quick" if quick else "full"
+    print(f"\nElapsed: {elapsed:.1f}s ({mode_label} mode)")
     return results
 
 
@@ -469,6 +491,10 @@ def main(argv=None):
     parser.add_argument("--quick", action="store_true",
                         help="APDU phase: gem capture + diff only (skip ACR re-capture, "
                              "skip fuzz, 0.02s repeat sleeps)")
+    parser.add_argument("--acr-only", action="store_true",
+                        help="APDU phase: ACR capture + diff vs committed golden only — "
+                             "no GemPCTwin required (stick-free sanity path, e.g. after "
+                             "dependency pin bumps)")
     parser.add_argument("--yes", action="store_true",
                         help="Pre-approve the M5Stick role switches (#178 owner gate): "
                              "skips the interactive confirmation. Non-interactive runs "
@@ -499,7 +525,8 @@ def main(argv=None):
         all_results.append(phase_switch(target, assume_yes=args.yes))
     else:
         func = {
-            "apdu": lambda: phase_apdu(golden, quick=args.quick),
+            "apdu": lambda: phase_apdu(golden, quick=args.quick,
+                                       acr_only=args.acr_only),
             "bolty-acr": phase_bolty_acr,
             "bolty-diff": phase_bolty_diff,
             "unit-tests": phase_unit_tests,
