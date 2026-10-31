@@ -12,6 +12,7 @@ re-triage when a listed owner issue closes.
 | crypto-common | 0.1.6 / 0.2.1 | rides digest 0.10 / 0.11 | **defer** — collapses with digest | #109 |
 | cpufeatures | 0.2.17 / 0.3.0 | rides digest 0.10 / 0.11 | **defer** — collapses with digest | #109 |
 | getrandom | 0.2.17 / 0.3.4 | rides digest/rand-core 0.6 / 0.10 | **defer** — collapses with digest | #109 |
+| rand_core | 0.6.4 / 0.9.5 / 0.10.1 | 0.6 + 0.9: stm32f4xx-hal fork @ 05d999d → bolty-stm32 (target-gated — plain `--invert` shows nothing without `--target all`, which is why this row went missing at triage). 0.10: ntag424 vendor → rand 0.10 → firmware crates | **defer** — the 0.6/0.9 split is pinned by the hal fork (feed/retire lever); 0.10 collapses with the digest family's ntag424 refresh | #108 / #109 |
 | heapless | 0.8.0 / 0.9.2 | 0.8: mfrc522 fork @ e9ced1e (+ pn7160-nci @ f2a250b per ccid-firmware-rs). 0.9: bolty-core | **defer** — 0.8 is pinned by the mfrc522 fork; feed/retire first | #108 (+ ccid-firmware-rs#142) |
 | syn | 2.0.117 / 3.0.4 | 2: clap_derive/darling/enumset_derive (bolty-cli). 3: displaydoc → icu → idna → url → ureq (bolty-cli) | **accept** — proc-macro generational split, host build-time only, never in firmware graphs | — |
 | webpki-roots | ~~0.26.11 / 1.0.9~~ 1.0.10 only | was: ureq 2.12.1 → webpki-roots 0.26.11 → webpki-roots 1.0.9 (the 0.x crate wraps the 1.x crate) | **resolved** (2026-10-21) — ureq 3 migration (bolty-cli, host-only) removed the 0.26.x wrapper entirely; RUSTSEC-2026-0381 deny ignore dropped with it | — |
