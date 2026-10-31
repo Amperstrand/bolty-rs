@@ -182,7 +182,11 @@ def test_boltycli_reader_env_injection(monkeypatch):
     nc.BoltyCli(reader="Nucula").run("uid")
     assert captured["env"]["BOLTY_READER"] == "Nucula"
     nc.BoltyCli().run("uid")
-    assert captured["env"] is None
+    # #209: the wrapper now ALWAYS passes a concrete env dict (the child
+    # gates itself on the bench flock unless the parent exported the
+    # skip) — no reader pin just means no BOLTY_READER injection.
+    assert isinstance(captured["env"], dict)
+    assert "BOLTY_READER" not in captured["env"]
 
 
 def test_bench_lock_is_context_manager(tmp_path, monkeypatch):
