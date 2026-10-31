@@ -79,12 +79,76 @@ class BenchOwnership:
                 self.log(f"bench-own: BenchLock release FAILED ({exc})")
 
 
-def _lg_client(place: str, *args: str, timeout_s: float = 20):
+def _lg_client(place: str | None, *args: str, timeout_s: float = 20):
     coordinator = os.environ.get("BOLTY_LG_COORDINATOR", DEFAULT_COORDINATOR)
     return subprocess.run(
-        ["labgrid-client", "-x", coordinator, "-p", place, *args],
+        ["labgrid-client", "-x", coordinator, *([ "-p", place] if place else []), *args],
         capture_output=True, text=True, timeout=timeout_s,
     )
+
+
+def reserve_and_acquire_place(
+    place: str,
+    log=print,  # noqa: E702
+    wait_min: int = 15,
+) -> str:
+    """Queue, don't race (#176 item 6, AGENTS.md labgrid canon): create a
+    RESERVATION for the place and wait for it to be allocated (so a
+    contended place is a FIFO queue, not an acquire-retry race), then
+    acquire through the reservation token. Returns the token (caller
+    should cancel-reservation it after releasing the place).
+
+    Raises BenchOwnershipError on timeout/failure — fail closed.
+    """
+    _sign_identity()
+    import time as _time
+
+    deadline = _time.monotonic() + wait_min * 60
+    r = _lg_client(None, "reserve", "--wait", f"name={place}",
+                   timeout_s=max(20.0, wait_min * 60))
+    if r.returncode != 0:
+        raise BenchOwnershipError(
+            f"reserve --wait {place} failed: {(r.stderr or r.stdout).strip()[:200]}"
+        )
+    token = ""
+    for line in (r.stdout or "").splitlines():
+        # Reservation 'A0G7PF0BMM':\n  owner: ...\n  token: A0G7PF0BMM
+        if "token:" in line:
+            token = line.split("token:", 1)[1].strip()
+            break
+    if not token:
+        # reservation created but not yet allocated at command exit —
+        # wait for allocation separately
+        w = _lg_client(None, "wait", token, timeout_s=max(0.0, deadline - _time.monotonic()))
+        if w.returncode != 0:
+            _lg_client(None, "cancel-reservation", token)
+            raise BenchOwnershipError(
+                f"reservation {token} for {place} never allocated: "
+                f"{(w.stderr or w.stdout).strip()[:200]}"
+            )
+    log(f"bench-own: reservation {token} allocated for {place}; acquiring")
+    a = _lg_client(f"+{token}", "acquire")
+    if a.returncode != 0:
+        _lg_client(None, "cancel-reservation", token)
+        raise BenchOwnershipError(
+            f"acquire via reservation {token} failed: "
+            f"{(a.stderr or a.stdout).strip()[:200]}"
+        )
+    log(f"bench-own: labgrid place {place} acquired via reservation {token}")
+    return token
+
+
+def cancel_reservation(token: str, log=print) -> None:  # noqa: E702
+    """Best-effort reservation cleanup after the place is released."""
+    if not token:
+        return
+    r = _lg_client(None, "cancel-reservation", token)
+    if r.returncode == 0:
+        log(f"bench-own: reservation {token} cancelled")
+    else:
+        log(f"bench-own: cancel-reservation {token} FAILED "
+            f"({(r.stderr or r.stdout).strip()[:120]}) — reservations have a "
+            "server-side timeout, but tidy up if you see it linger")
 
 
 def _sign_identity() -> None:
