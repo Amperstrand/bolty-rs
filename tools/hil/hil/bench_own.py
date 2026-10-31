@@ -46,12 +46,24 @@ class BenchOwnership:
     place_inherited: bool = False
     bench_lock: object | None = None
     log: object = print  # injected in tests
+    # #209 review: prior BOLTY_SKIP_BENCH_LOCK value (None = was unset).
+    # The child bypass is scoped to the ownership lifetime; release()
+    # restores it so a later BoltyCli in this same process cannot bypass
+    # the gate after we no longer hold the flock.
+    skip_saved: str | None = None
+    skip_armed: bool = field(default=False, repr=False)
     _released: bool = field(default=False, repr=False)
 
     def release(self) -> None:
         if self._released:
             return
         self._released = True
+        if self.skip_armed:
+            self.skip_armed = False
+            if self.skip_saved is None:
+                os.environ.pop("BOLTY_SKIP_BENCH_LOCK", None)
+            else:
+                os.environ["BOLTY_SKIP_BENCH_LOCK"] = self.skip_saved
         # reverse order (AB-BA): place first, then the bench flock
         if self.place and not self.place_inherited:
             try:
@@ -180,6 +192,13 @@ def acquire_bench_ownership(
     except BenchLockHeldError as exc:
         raise BenchOwnershipError(f"BenchLock held by another session: {exc}") from exc
     log(f"bench-own: BenchLock taken (place {place} next)")
+    # #209: bolty-cli children take this same flock themselves on
+    # physical-reader connects; export the child-skip so they don't
+    # refuse against their own parent (flock is per-fd). Scoped to the
+    # ownership lifetime — release() restores the prior value.
+    own.skip_saved = os.environ.get("BOLTY_SKIP_BENCH_LOCK")
+    os.environ.setdefault("BOLTY_SKIP_BENCH_LOCK", "1")
+    own.skip_armed = True
 
     # 2. labgrid place — SECOND (network-visible exclusivity)
     _sign_identity()

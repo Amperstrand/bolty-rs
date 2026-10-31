@@ -40,6 +40,40 @@ ccid-firmware-rs (ai-legion). Before any bench work with an NFC device:
 The M5Stack Atom + MFRC522 rig (bolty's primary target) is the `m5stick`
 place; the nucula (PN7160) is available for differential NFC work.
 
+### Bench-flock doctrine for bolty-cli (2026-10-31, #209 / PR #248)
+
+bolty-cli takes the cross-project bench flock
+(`/tmp/amperstrand-bench.lock`, tollgate-lab BenchLock's own path —
+holder info in the `key: value` shape both languages read) on every
+PHYSICAL-reader connect, and refuses loudly (holder pid/project named)
+when another session holds it. **STATUS: pending PR #248 — until that
+lands, a bare bolty-cli does NOT take this lock; only harness-side
+locking (pytest rig_lock / hil.bench_own / nucula_cycle bench_lock)
+enforces exclusivity, so do not rely on a CLI-side refusal.**
+Consequences for harness authors:
+
+- **flock is per-open-fd**: a lock-holding parent MUST export
+  `BOLTY_SKIP_BENCH_LOCK=1` for its bolty-cli children or they refuse
+  against their own parent. `hil.bench_own` does this on BenchLock
+  acquisition; the pytest rig_lock conftest does it per session.
+- The `hil.BoltyCli` wrapper only passes the environment through — no
+  lock held means no skip; the child gates itself. Do not "help" it.
+- Virtual readers (vpcd/vPICC) never take the lock (no shared antenna);
+  cardless selection fast-fail happens before the gate by design.
+
+Seat health + RF-window state lives in `/root/bench/SEATS.md` on
+ai-legion (host-local by the raw-log rule) — check it before touching
+either host's hardware, and update it when you change a seat's state.
+The flight recorder (bolty-console daemons) auto-dumps incident
+snapshots to `/root/bench/incidents/` — dated, ms-stamped, and the
+primary forensic record for anything that touches the seats.
+
+### Host-build gotcha (lesson B35)
+
+`~/.cargo/config.toml` points ALL cargo builds (every worktree) at the
+global `/root/.cargo-target`. A "worktree-local" binary is a myth —
+verify the artifact (strings/mtime) before any live test.
+
 ## Spec Conformance (greatspectations)
 
 Spec-relevant code carries verbatim boltcard-spec quotes as `//` comments with
@@ -671,6 +705,21 @@ The role-switch + restore is handled by the harness (restore-always).
 
 See docs/lessons-learned.md — append-only engineering log: rig facts (M5Stick pins, MFRC522 at 0x28), ESP-IDF sdkconfig traps, NTAG424 card-safety refinements (911E vs 91AE), and the byte-exact crypto port method.
 
+
+## Merge policy (owner directive 2026-10-31)
+
+**Amperstrand member repos** (verify membership: `gh api user/orgs`):
+agents MAY merge a PR when BOTH hold:
+1. review addressed — codex review clean, or every finding explicitly
+   addressed in-thread by the lane (fix pushed or reasoned dismissal);
+2. hardware-proven — the change has been demonstrated working on the
+   bench where applicable. Docs/CI-only/test-infra changes have no
+   hardware surface: CI green + review addressed suffices (note the
+   N/A in the merge comment). Never merge around a red check.
+
+**External projects and OpenTollGate repos are STRICTER**: no agent
+merges — owner-only, always (owner does the copy-paste/click). The
+2026-09-06 CHANNEL rule below still governs all posting.
 
 ## External posting (owner directive 2026-09-06 — CHANNEL rule)
 

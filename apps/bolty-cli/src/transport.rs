@@ -13,6 +13,10 @@ pub struct PcscTransport {
     protocol: pcsc::Protocols,
     #[allow(dead_code)]
     ctx: pcsc::Context,
+    /// #209: the cross-project bench flock, held for the transport's
+    /// lifetime (drop releases). `None` guard for virtual readers and
+    /// BOLTY_SKIP_BENCH_LOCK children — see bench_lock.rs.
+    _bench_lock: crate::bench_lock::BenchLockGuard,
 }
 
 #[derive(Debug)]
@@ -20,6 +24,10 @@ pub enum PcscError {
     NoReaders,
     NoCardInReader(String),
     PinUnmatched(String),
+    /// #209: the bench flock is held by another session — the Display
+    /// text names the holder and the escape hatch. Physical-reader CLI
+    /// runs must refuse to race other lanes.
+    BenchLocked(String),
     Pcsc(pcsc::Error),
     Transmit(String),
 }
@@ -39,6 +47,7 @@ impl fmt::Display for PcscError {
             ),
             PcscError::Pcsc(e) => write!(f, "PCSC error: {e}"),
             PcscError::Transmit(msg) => write!(f, "transmit error: {msg}"),
+            PcscError::BenchLocked(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -148,6 +157,21 @@ impl PcscTransport {
             .map(|p| p.to_string())
             .or_else(|| std::env::var("BOLTY_READER").ok());
         let selected = select_reader(&names, effective_pin.as_deref())?;
+        // #209: physical readers share a real antenna with every other
+        // lane — take the bench flock before touching pcscd. Virtual
+        // readers (vpcd/vPICC) share nothing physical and skip it.
+        let bench_lock = if is_virtual(selected) {
+            crate::bench_lock::BenchLockGuard::inactive()
+        } else {
+            let reason = std::env::args()
+                .next()
+                .as_deref()
+                .and_then(|a| a.rsplit('/').next())
+                .unwrap_or("bolty-cli")
+                .to_string();
+            crate::bench_lock::acquire(&reason)
+                .map_err(|held| PcscError::BenchLocked(held.to_string()))?
+        };
         let reader_cstr = CString::new(selected).unwrap_or_default();
         let reader_name = selected.to_string();
 
@@ -172,6 +196,7 @@ impl PcscTransport {
             reader_name,
             protocol,
             ctx,
+            _bench_lock: bench_lock,
         })
     }
 
@@ -189,9 +214,17 @@ impl PcscTransport {
     pub fn power_cycle(self) -> Result<Self, PcscError> {
         let reader_cstr = std::ffi::CString::new(self.reader_name.as_str()).unwrap_or_default();
         let ctx = self.ctx;
+        // #209: keep the bench flock across the power cycle (destructure
+        // without dropping the guard).
+        let PcscTransport {
+            card,
+            reader_name: _,
+            protocol: _,
+            ctx: _,
+            _bench_lock,
+        } = self;
 
-        self.card
-            .disconnect(pcsc::Disposition::UnpowerCard)
+        card.disconnect(pcsc::Disposition::UnpowerCard)
             .map_err(|(_, e)| PcscError::from(e))?;
 
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -213,6 +246,7 @@ impl PcscTransport {
             reader_name: reader_cstr.to_string_lossy().to_string(),
             protocol,
             ctx,
+            _bench_lock,
         })
     }
 }

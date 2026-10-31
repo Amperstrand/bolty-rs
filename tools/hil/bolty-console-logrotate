@@ -1,0 +1,14 @@
+# bolty console journals — the flight-recorder daemon appends forever
+# (junk-tag frame spray can be chatty: ~3.5 MB in 4 days on the c3 seat).
+# copytruncate because bolty-console.py holds the fd open; the daemon's
+# in-memory ring and incident snapshots (/root/bench/incidents/) are the
+# forensic record — these files are the long-term tail only.
+/root/.bolty/console.log /root/.bolty/console-c3.log {
+    weekly
+    rotate 4
+    size 25M
+    missingok
+    notifempty
+    compress
+    copytruncate
+}

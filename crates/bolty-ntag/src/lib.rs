@@ -390,7 +390,13 @@ pub async fn burn<T: Transport>(
 
     let (settings, s) = session.get_file_settings(transport, File::Ndef).await?;
     let mut session = if settings.sdm.is_some() {
-        let update = settings.into_update().with_sdm(Sdm::disabled());
+        // Issue #232: without_sdm() — the §8.2.3 factory-clear delivery
+        // shape (FileOption SDM enable bit CLEAR, no SDM block), so a
+        // wiped card decodes back as sdm: None. The old
+        // with_sdm(Sdm::disabled()) left the enable bit set with mirrors
+        // off: behaviorally inert, but get_file_settings decoded a
+        // Some(Sdm{..}) shell and the cleared state was unobservable.
+        let update = settings.into_update().without_sdm();
         s.change_file_settings(transport, File::Ndef, &update)
             .await?
     } else {
@@ -522,8 +528,10 @@ pub async fn wipe<T: Transport>(
     // BOLT_DET: 12. Restore the NDEF file settings to default values with `ChangeFileSettings`.
 
     let (settings, session) = session.get_file_settings(transport, File::Ndef).await?;
-    let update = FileSettingsUpdate::new(settings.comm_mode, factory_ndef_access_rights())
-        .with_sdm(Sdm::disabled());
+    // Issue #232: factory shape via without_sdm() (enable bit CLEAR, no
+    // SDM block) — see the wipe-path comment above.
+    let update =
+        FileSettingsUpdate::new(settings.comm_mode, factory_ndef_access_rights()).without_sdm();
     let mut session = session
         .change_file_settings(transport, File::Ndef, &update)
         .await?;

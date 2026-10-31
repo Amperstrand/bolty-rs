@@ -34,6 +34,7 @@ append to /tmp/bolty-audit.log; state in tools/hil/results/.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -414,9 +415,19 @@ def bench_lock(cycle: Cycle):
         raise Abort("tollgate-lab missing — refusing hardware with degraded "
                     "exclusivity (bolty-rs #85)") from e
     lock = acquire_bench_lock("amperstrand-bench", project="nucula-cycle")
+    # #209: this process holds the bench flock — bolty-cli children spawned
+    # by the visit must skip their own flock (flock is per-open-fd; a child
+    # would otherwise refuse against this, the holding, parent). Scoped to
+    # the hold: the prior value is restored on exit.
+    saved_skip = os.environ.get("BOLTY_SKIP_BENCH_LOCK")
+    os.environ["BOLTY_SKIP_BENCH_LOCK"] = "1"
     try:
         yield lock
     finally:
+        if saved_skip is None:
+            os.environ.pop("BOLTY_SKIP_BENCH_LOCK", None)
+        else:
+            os.environ["BOLTY_SKIP_BENCH_LOCK"] = saved_skip
         lock.release()
 
 

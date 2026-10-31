@@ -319,6 +319,70 @@ mod tests {
     }
 
     #[test]
+    fn with_sdm_disabled_still_sets_enable_bit() {
+        // Wire truth locked by the refchangekey.js FS_RESET parity test:
+        // with_sdm(Sdm::disabled()) keeps the FileOption SDM bit SET
+        // (here 0x40) and encodes the SDM block — options 0x01 (ASCII
+        // only), access 0xFFFF, no offsets. It is NOT a factory clear.
+        let patch =
+            FileSettingsUpdate::new(CommMode::Plain, std_access_rights()).with_sdm(Sdm::disabled());
+        let mut buf = [0u8; MAX_CHANGE_FILE_SETTINGS_LEN];
+        let n = patch.encode(&mut buf).expect("encode");
+        assert_eq!(&buf[..n], &[0x40, 0x00, 0xE0, 0x01, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn without_sdm_clears_enable_bit_and_omits_sdm_fields() {
+        // Factory-delivery shape (§8.2.3): enable bit CLEAR, no SDM
+        // block — FileOption + AccessRights only. Also drops an SDM
+        // configuration set earlier in the chain (the wipe flow).
+        let sdm = Sdm::try_new(
+            PiccData::Plain(PlainMirror::Uid { uid: Offset(0x20) }),
+            None,
+            None,
+            CryptoMode::Aes,
+        )
+        .unwrap();
+        let cleared = FileSettingsUpdate::new(CommMode::Plain, std_access_rights())
+            .with_sdm(sdm)
+            .without_sdm();
+        let mut buf = [0u8; MAX_CHANGE_FILE_SETTINGS_LEN];
+        let n = cleared.encode(&mut buf).expect("encode");
+        assert_eq!(n, 3);
+        assert_eq!(&buf[..n], &[0x00, 0x00, 0xE0]);
+        // Idempotent: without_sdm on an SDM-free update is a no-op.
+        let fresh = FileSettingsUpdate::new(CommMode::Plain, std_access_rights()).without_sdm();
+        assert_eq!(
+            fresh,
+            FileSettingsUpdate::new(CommMode::Plain, std_access_rights())
+        );
+    }
+
+    #[test]
+    fn read_modify_write_wipe_clears_decoded_sdm() {
+        // A decoded SDM-enabled view keeps its enable bit through
+        // into_update (RMW); without_sdm is the explicit factory-clear
+        // on top of it — the flow the Sdm::disabled() docstring used to
+        // teach wrongly (issue #11).
+        let fs = FileSettingsView::decode(AN12196_GET_FS_PAYLOAD).expect("decode");
+        assert!(fs.sdm.is_some());
+        let mut buf = [0u8; MAX_CHANGE_FILE_SETTINGS_LEN];
+        let kept = fs.into_update();
+        kept.encode(&mut buf).expect("encode");
+        assert_eq!(buf[0] & 0x40, 0x40, "RMW preserves the enable bit");
+        let fs2 = FileSettingsView::decode(AN12196_GET_FS_PAYLOAD).expect("decode");
+        let n_cleared = fs2
+            .into_update()
+            .without_sdm()
+            .encode(&mut buf)
+            .expect("encode");
+        assert_eq!(n_cleared, 3);
+        // FileOption 0x00 (Plain, SDM bit cleared) + the DECODED access
+        // rights (EE EE from the AN12196 view — into_update preserves them).
+        assert_eq!(&buf[..n_cleared], &[0x00, 0xEE, 0xEE]);
+    }
+
+    #[test]
     fn read_ctr_limit_sentinel_decodes_as_none() {
         // SDM with read_ctr_limit_enabled=1 but value = 0x00FF_FFFF (sentinel = unlimited).
         // Uses Encrypted PICCData with Both content and limit enabled.
