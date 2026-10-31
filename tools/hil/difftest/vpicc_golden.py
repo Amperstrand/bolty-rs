@@ -128,6 +128,10 @@ class GoldenVpicc(threading.Thread):
     def _handle(self, sock, msg: bytes) -> None:
         if len(msg) == 1:
             if msg[0] in (0x02, 0x04):
+                # Card reset = new session: drop any in-flight handshake.
+                reset = getattr(self.answerer, "reset", None)
+                if reset:
+                    reset()
                 self._send(sock, self.atr)
                 self.answered_probe.set()
             # OFF/ON: no reply (see module docstring)

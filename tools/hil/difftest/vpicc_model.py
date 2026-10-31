@@ -57,6 +57,7 @@ VALID_FIDS = {bytes.fromhex("3F00"): "MF", bytes.fromhex("E103"): "CC",
 # The bytes the card served for in-window CC reads (Le-truncated on serve).
 READ_WINDOW_CONTENT = bytes.fromhex("004fd1014b5504626f6c7463617264")
 READ_BUDGET = 3  # successful content reads before the 6985 wall
+GOLDEN_UID = bytes.fromhex("04c474fa967380")  # golden get_uid (FFCA reaches the card over vpcd)
 # (full + partial + no_select served content; stress x10 then 6985)
 
 SW = {"ok": b"\x90\x00", "lc": b"\x67\x00", "ins": b"\x6d\x00",
@@ -78,6 +79,12 @@ def answer(state: Ntag424State, capdu: bytes) -> bytes:
     if len(capdu) < 4:
         return SW["lc"]  # unparseable -> the capture's uniform default
     cla, ins, p1, p2 = capdu[0], capdu[1], capdu[2], capdu[3]
+
+    if cla == 0xFF and ins == 0xCA:
+        # GET-UID pseudo-APDU: reader-side on the ACR, but over vpcd it IS
+        # forwarded to the card (bench-verified 2026-10-31) — serve the
+        # golden UID so host tools display it (golden: get_uid).
+        return GOLDEN_UID + SW["ok"]
     body = capdu[4:]
     lc = body[0] if body else 0
     data = body[1:1 + lc] if lc else b""
@@ -131,12 +138,31 @@ def answer(state: Ntag424State, capdu: bytes) -> bytes:
 
 
 class ModelVpicc:
-    """Answerer adapter: plug into GoldenVpicc via ``answerer=``."""
+    """Answerer adapter: plug into GoldenVpicc via ``answerer=``.
+
+    Rung 2: CLA-90 security commands (AuthenticateEV2) are answered by the
+    AuthEngine (card-side handshake, AN12196-pinned); everything else by
+    the pre-auth rules. An engine per ModelVpicc = one handshake context.
+    """
 
     def __init__(self) -> None:
         self.state = Ntag424State()
+        try:
+            from vpicc_model_auth import AuthEngine
+            self.auth = AuthEngine()
+        except ImportError:  # pycryptodome absent -> pre-auth only
+            self.auth = None
         self.seen: deque[bytes] = deque(maxlen=64)
+
+    def reset(self) -> None:
+        """Card reset (ATR probe): drop any in-flight handshake."""
+        if self.auth is not None:
+            self.auth.pending = None
 
     def answer(self, capdu: bytes) -> bytes:
         self.seen.append(capdu)
+        if self.auth is not None and capdu[:1] == b"\x90":
+            r = self.auth.answer(capdu)
+            if r:
+                return r
         return answer(self.state, capdu)

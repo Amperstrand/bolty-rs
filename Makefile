@@ -92,6 +92,10 @@ difftest-quick:
 difftest-acr:
 	cd tools/hil/difftest && python3 e2e.py --phase apdu --acr-only
 
+# Offline auth gates: AN12196 vectors + in-process handshake (needs pycryptodome).
+difftest-vpicc-auth:
+	cd tools/hil/difftest && python3 -m pytest test_vpicc_auth_offline.py -v
+
 # Stateful-model variant: answers COMPUTED by vpicc_model (57/57 golden).
 difftest-vpicc-model:
 	cd tools/hil/difftest && python3 check_model_vs_golden.py && python3 -m pytest test_vpicc_model.py -v --timeout=380
