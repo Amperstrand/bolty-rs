@@ -18,10 +18,17 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from vpicc_golden import GoldenVpicc, load_queues  # noqa: E402
+
+# Drives a real pcscd → vpcd (patched Amperstrand driver) → vpicc round
+# trip: bench-host environment only. CI runners have no vpcd reader.conf
+# entry/driver — the existing env_dependent filter skips it there.
+pytestmark = pytest.mark.env_dependent
 
 GOLDEN = HERE / "results" / "golden_acr1252.json"
 VPICC_PORT = 35970  # table-card vpcd slot (reader.conf vpicc-table, PATCHED driver)
