@@ -90,3 +90,59 @@ def test_wrong_rndb_rejected():
     ct = _cbc_zero_iv_encrypt(FACTORY_KEY, os.urandom(16) + _rot_left(tampered))
     r2 = engine.answer(bytes([0x90, 0xAF, 0x00, 0x00, 0x20]) + ct + b"\x00")
     assert r2 == b"\x91\xae", f"expected 91AE auth-fail, got {r2.hex()}"
+
+
+def _h_full_write(engine, data: bytes) -> bytes:
+    """Host mirror of CommMode.FULL WriteData (crate write_data.rs)."""
+    from vpicc_model_auth import AuthEngine as _E
+    assert engine.session is not None
+    kenc, kmac = engine.session
+    ctr = engine.ctr
+    ti = engine.ti
+    # ISO 9797-1 method 2 padding
+    padded = bytearray(data + b"\x80")
+    while len(padded) % 16:
+        padded.append(0)
+    iv_block = bytearray(16)
+    iv_block[0:2] = b"\xa5\x5a"
+    iv_block[2:6] = ti
+    iv_block[6:8] = ctr.to_bytes(2, "little")
+    iv = _E and __import__("Crypto.Cipher.AES", fromlist=["AES"]).new(
+        kenc, __import__("Crypto.Cipher.AES", fromlist=["AES"]).MODE_ECB
+    ).encrypt(bytes(iv_block))
+    from Crypto.Cipher import AES as _AES
+    ct = _AES.new(kenc, _AES.MODE_CBC, iv=iv).encrypt(bytes(padded))
+    header = bytes([2, 0, 0, 0]) + len(data).to_bytes(3, "little")  # file 2
+    mac_full = __import__("vpicc_model_auth", fromlist=["_cmac"])._cmac(
+        kmac, bytes([0x8D]) + ctr.to_bytes(2, "little") + ti + header + ct)
+    mac_t = bytes(mac_full[2 * i + 1] for i in range(8))
+    lc = 7 + len(ct) + 8
+    return bytes([0x90, 0x8D, 0x00, 0x00, lc]) + header + ct + mac_t + b"\x00"
+
+
+def test_secure_write_roundtrip():
+    engine = AuthEngine(keys={0: FACTORY_KEY}, rnd_b=os.urandom(16))
+    r1 = engine.answer(bytes.fromhex("9071000005000300000000"))
+    assert r1[-2:] == b"\x91\xaf"
+    rnd_b = _cbc_zero_iv_decrypt(FACTORY_KEY, r1[:-2])
+    rnd_a = os.urandom(16)
+    ct = _cbc_zero_iv_encrypt(FACTORY_KEY, rnd_a + _rot_left(rnd_b))
+    r2 = engine.answer(bytes([0x90, 0xAF, 0x00, 0x00, 0x20]) + ct + b"\x00")
+    assert r2[-2:] == b"\x91\x00"
+    payload = bytes.fromhex("deadbeef") * 3  # 12B -> 16B padded
+    apdu = _h_full_write(engine, payload)
+    r = engine.answer(apdu)
+    assert r[-2:] == b"\x91\x00", f"write SW {r[-2:].hex()}"
+    assert len(r) == 10, "response must be MACt(8) + SW"
+    # engine applied the write and advanced the counter
+    assert engine.ctr == 1
+    fno, plain = engine.last_written
+    assert fno == 2 and plain[:len(payload)] == payload
+    # second write with a stale (replayed) counter must fail integrity
+    apdu2 = _h_full_write(engine, payload)  # engine.ctr now 1; mirror uses 1
+    # forge replay of the FIRST apdu (ctr 0 mac) -> engine at ctr 1 -> 911E
+    r2 = engine.answer(apdu)
+    assert r2 == b"\x91\x1e", f"replay must 911E, got {r2.hex()}"
+    # fresh correctly-counter'd write succeeds again
+    r3 = engine.answer(apdu2)
+    assert r3[-2:] == b"\x91\x00" and engine.ctr == 2

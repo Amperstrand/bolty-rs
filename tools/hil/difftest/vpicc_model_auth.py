@@ -89,6 +89,54 @@ class AuthEngine:
         self._rnd_b = rnd_b
         self.pending: tuple[bytes, bytes] | None = None  # (kx, rnd_b)
         self.session: tuple[bytes, bytes] | None = None  # (kenc, kmac)
+        self.ctr = 0
+
+    # ── secure-messaging helpers (crate: crypto/suite.rs §9.1.4/§9.1.9) ──
+
+    @staticmethod
+    def _truncate_mac(full: bytes) -> bytes:
+        """MSB-first even bytes (1,3,…,15) of the 16B CMAC."""
+        return bytes(full[2 * i + 1] for i in range(8))
+
+    def _iv(self, command: bool) -> bytes:
+        assert self.session is not None
+        label = b"\xa5\x5a" if command else b"\x5a\xa5"
+        block = bytearray(16)
+        block[0:2] = label
+        block[2:6] = self.ti
+        block[6:8] = self.ctr.to_bytes(2, "little")
+        return AES.new(self.session[0], AES.MODE_ECB).encrypt(bytes(block))
+
+    def _mac(self, data: bytes) -> bytes:
+        assert self.session is not None
+        return self._truncate_mac(_cmac(self.session[1], data))
+
+    def _secure_answer(self, capdu: bytes) -> bytes | None:
+        """CommMode.FULL secure messaging: verify cmd MACt, answer MACt."""
+        if self.session is None:
+            return b"\x91\x6d"  # not authenticated
+        ins = capdu[1]
+        body = capdu[5:-1]  # strip trailing Le
+        mac_in = bytes([ins]) + self.ctr.to_bytes(2, "little") + self.ti
+        # write_data FULL: header(7) || ct || MACt(8); the MAC covers
+        # everything before it.
+        if len(body) < 7 + 8:
+            return b"\x91\x7e"  # length error
+        payload, received = body[:-8], body[-8:]
+        expected = self._mac(mac_in + payload)
+        if expected != received:
+            return b"\x91\x1e"  # integrity error
+        # Decrypt the ciphertext (after the 7-byte header) for state.
+        ct = payload[7:]
+        if len(ct) % 16 == 0 and ct:
+            iv = self._iv(command=True)
+            plain = AES.new(self.session[0], AES.MODE_CBC, iv=iv).decrypt(ct)
+            self.last_written = (payload[0], plain)
+        next_ctr = (self.ctr + 1) & 0xFFFF
+        resp_mac = self._mac(
+            b"\x00" + next_ctr.to_bytes(2, "little") + self.ti)
+        self.ctr = next_ctr
+        return resp_mac + b"\x91\x00"
 
     def answer(self, capdu: bytes) -> bytes:
         """Return the R-APDU (data + SW) for a CLA-90 auth APDU.
@@ -110,6 +158,13 @@ class AuthEngine:
             # NonFirst part1 body: KeyNo at capdu[5] directly; First has
             # KeyNo first too (LenCap follows) — same extraction either way.
             return _cbc_zero_iv_encrypt(kx, rnd_b) + SW_AF
+
+        if self.session is not None and ins not in (0x71, 0x77):
+            # Authenticated: secure-messaging commands (0x8D-class and
+            # any other CLA-90 exchange post-auth) verify MACt + answer.
+            r = self._secure_answer(capdu)
+            if r is not None:
+                return r
 
         if ins == 0xAF and self.pending is not None:  # part 2
             kx, rnd_b = self.pending
