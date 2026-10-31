@@ -8,7 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTUP_TOOLCHAIN: stable
+  # #179: no workflow-level RUSTUP_TOOLCHAIN — rustup's documented env
+  # precedence made `stable` win over the pinned install below, so
+  # cargo install/audit/deny ran on the runner's mutable stable.
 
 jobs:
   audit:
