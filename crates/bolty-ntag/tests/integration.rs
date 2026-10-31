@@ -190,6 +190,17 @@ fn wipe_restores_factory_keys_and_zeros_ndef() {
         "NDEF should be empty (NLEN=0)"
     );
     assert_eq!(transport.keys()[0], FACTORY_KEY);
+    // Issue #232: the wipe must deliver the §8.2.3 FACTORY shape —
+    // FileOption SDM enable bit CLEAR, no SDM block — so a post-wipe
+    // GetFileSettings decodes sdm == None (previously
+    // with_sdm(Sdm::disabled()) left a Some(Sdm{..}) shell that made
+    // the promised cleared state unobservable).
+    let settings = ntag424::types::FileSettingsView::decode(transport.file_settings()).unwrap();
+    assert!(
+        settings.sdm.is_none(),
+        "post-wipe file settings must decode sdm: None, got: {:?}",
+        settings.sdm
+    );
 }
 
 #[test]
@@ -268,16 +279,18 @@ fn wipe_restores_factory_access_rights() {
     // access rights (audit A4 finding F3).
     assert_eq!(settings.access_rights, factory_access_rights());
 
-    // Byte-exact wire pin (audit adjudication D1): the resulting file
-    // settings carry AR wire bytes E0 EE, and the wipe ChangeFileSettings
-    // payload (file_option 40 | AR E0 EE | SDMOptions 01 | SDMAR FFFF) is
-    // byte-identical to TSX resetFileSettings cmdData "40 E0EE 01 FFFF"
-    // (NTag424.tsx L365-385) — SDM flagged off with all mirror rights
-    // NoAccess. The two leading bytes are the immutable file_type/size
-    // header the patch cannot change.
+    // Byte-exact wire pin (audit adjudication D1, RE-ADJUDICATED for
+    // #232): the wipe ChangeFileSettings now delivers the §8.2.3 FACTORY
+    // shape — file_option 00 (SDM enable bit CLEAR) + AR E0 EE + size,
+    // with NO SDM block at all: `00 00 E0EE 000100`. The pre-#232 shape
+    // was byte-identical to TSX resetFileSettings "40 E0EE 01 FFFF"
+    // (SDM flagged ON, mirrors off) — behaviorally inert but decodable
+    // only as Some(Sdm{..}), so the cleared state was unobservable
+    // (#232). Post-wipe GetFileSettings now decodes sdm: None, and the
+    // blob is byte-identical to a factory card's default settings.
     assert_eq!(
         transport.file_settings(),
-        &[0x00, 0x40, 0xE0, 0xEE, 0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF]
+        &[0x00, 0x00, 0xE0, 0xEE, 0x00, 0x01, 0x00]
     );
 }
 

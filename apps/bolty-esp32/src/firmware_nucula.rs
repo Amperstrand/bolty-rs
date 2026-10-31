@@ -226,6 +226,13 @@ pub fn main() {
     esp_idf_hal::sys::link_patches();
     EspLogger::initialize_default();
     crate::log_reset_reason();
+    // Serve-proven OTA validity gate (#494 audit item M): the nucula is
+    // THE OTA seat (:3232 push server) — a freshly pushed image runs
+    // pending-verify under a rollback-enabled bootloader and reverts on
+    // the next reset unless it proves itself. Evidence on this frontend
+    // = a successful card op over the console (poll/uid/inspect below),
+    // never boot itself.
+    crate::ota_validity::arm_platform();
 
     let peripherals = match Peripherals::take() {
         Ok(peripherals) => peripherals,
@@ -407,6 +414,9 @@ fn handle_line(
                             uid_hex(reader.uid()),
                             reader.atr().len()
                         ));
+                        // OTA validity evidence (#494 item M): a completed
+                        // ISO-DEP activation through the PN7160 stack.
+                        crate::ota_validity::note_serve_evidence("nucula-poll");
                     }
                     Err(err) => console.fail(&format!("no card / power-on failed: {err:?}")),
                 },
@@ -421,6 +431,7 @@ fn handle_line(
                         console.fail("no card on antenna");
                     } else {
                         console.ok(&format!("uid={}", uid_hex(reader.uid())));
+                        crate::ota_validity::note_serve_evidence("nucula-uid");
                     }
                 }
                 None => console.fail("nfc unavailable"),
@@ -484,6 +495,10 @@ fn handle_line(
                                 };
                                 let _ = write!(sdm, "sdm={label}");
                                 console.line(sdm.as_str());
+                                // OTA validity evidence (#494 item M): a
+                                // completed safe-inspect round-trip
+                                // (activation + NDEF read + SDM assessment).
+                                crate::ota_validity::note_serve_evidence("nucula-inspect");
                             }
                             Err(err) => console.fail(&format!("inspect failed: {err:?}")),
                         }

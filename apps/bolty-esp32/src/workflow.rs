@@ -1,5 +1,6 @@
 use crate::{
     commands::Command,
+    ota_validity,
     service::{BoltyService, WorkflowResult},
 };
 use bolty_core::config::BoltyConfig;
@@ -52,21 +53,49 @@ pub fn dispatch_command<S: BoltyService>(
             if !config.force_unsafe && !lnurl.as_str().contains("{mac}") {
                 return workflow_error("lnurl missing {mac} SDM template marker");
             }
-            service.burn(
+            let result = service.burn(
                 config.pending_issuer.as_ref(),
                 config.pending_keys.as_ref(),
                 lnurl.as_str(),
-            )
+            );
+            note_card_transaction("burn", &result);
+            result
         }
-        Command::Wipe => service.wipe(config.pending_issuer.as_ref(), config.pending_keys.as_ref()),
+        Command::Wipe => {
+            let result = service.wipe(config.pending_issuer.as_ref(), config.pending_keys.as_ref());
+            note_card_transaction("wipe", &result);
+            result
+        }
         // KeyVer shares Inspect's authenticated path (which reads all key
         // versions via check_key_versions); previously it was a silent no-op
         // that reported success without touching the card.
-        Command::KeyVer | Command::Inspect => match service.inspect() {
-            Ok(_) => WorkflowResult::Success,
-            Err(err) => err,
-        },
-        Command::Check => service.check_blank(),
+        Command::KeyVer | Command::Inspect => {
+            let result = match service.inspect() {
+                Ok(_) => WorkflowResult::Success,
+                Err(err) => err,
+            };
+            note_card_transaction("inspect", &result);
+            result
+        }
+        Command::Check => {
+            let result = service.check_blank();
+            note_card_transaction("check", &result);
+            result
+        }
+    }
+}
+
+/// Serve evidence for the OTA validity gate (#494 audit item M): a
+/// card transaction that completed with Success through the full
+/// reader→card→verify stack — the shared choke point for the console,
+/// REST handlers and the job runner, all of which dispatch through
+/// [`dispatch_command`]. Staging commands (keys/issuer/url) and stubs
+/// never reach here: they return Success without touching a card and
+/// prove nothing about the image. Inert while the gate is unarmed
+/// (host tests, builds without the rollback knob).
+fn note_card_transaction(source: &'static str, result: &WorkflowResult) {
+    if matches!(result, WorkflowResult::Success) {
+        ota_validity::note_serve_evidence(source);
     }
 }
 
