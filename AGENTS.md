@@ -46,7 +46,11 @@ bolty-cli takes the cross-project bench flock
 (`/tmp/amperstrand-bench.lock`, tollgate-lab BenchLock's own path —
 holder info in the `key: value` shape both languages read) on every
 PHYSICAL-reader connect, and refuses loudly (holder pid/project named)
-when another session holds it. Consequences for harness authors:
+when another session holds it. **STATUS: pending PR #248 — until that
+lands, a bare bolty-cli does NOT take this lock; only harness-side
+locking (pytest rig_lock / hil.bench_own / nucula_cycle bench_lock)
+enforces exclusivity, so do not rely on a CLI-side refusal.**
+Consequences for harness authors:
 
 - **flock is per-open-fd**: a lock-holding parent MUST export
   `BOLTY_SKIP_BENCH_LOCK=1` for its bolty-cli children or they refuse
