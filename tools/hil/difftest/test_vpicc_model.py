@@ -20,6 +20,13 @@ sys.path.insert(0, str(HERE))
 from vpicc_golden import GoldenVpicc  # noqa: E402
 from vpicc_model import ModelVpicc  # noqa: E402
 
+import pytest
+
+# Same discipline as test_vpicc_golden (#259): drives a real pcscd → vpcd
+# round trip — bench-host only; CI runners lack the vpcd reader.conf
+# entry/driver, and the env_dependent filter skips it there.
+pytestmark = pytest.mark.env_dependent
+
 GOLDEN = HERE / "results" / "golden_acr1252.json"
 VPICC_PORT = 35970  # table-card vpcd slot (patched driver)
 READER_NAMES = {"vPICC table card"}
