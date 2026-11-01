@@ -122,7 +122,7 @@ Every field below was read from the pinned checkout, not assumed.
 
 ### ntag424 — `MIT OR Apache-2.0` (jannschu upstream)
 
-- `Cargo.toml` @ `afb7238`: `license = "MIT OR Apache-2.0"`
+- `Cargo.toml` @ `02f23f5` (current pin; re-verified 2026-10-31 — unchanged by the #120 docs/test-only bump): `license = "MIT OR Apache-2.0"`
 - Repo root: `LICENSES/MIT.txt` + `LICENSES/Apache-2.0.txt` (REUSE
   layout) + `LICENSING.md`
 - `repository = "https://codeberg.org/jannschu/ntag424"`
