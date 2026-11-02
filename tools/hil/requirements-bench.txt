@@ -11,3 +11,4 @@ pytest-rerunfailures>=14
 pytest-json-report>=1.5
 allure-pytest>=2.13
 pyscard>=2.0
+pyserial>=3.5
