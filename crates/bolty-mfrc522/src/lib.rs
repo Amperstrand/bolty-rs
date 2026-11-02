@@ -127,6 +127,11 @@ impl<'a, I2C: I2c> Mfrc522Transport<'a, I2C> {
 
         let mut session = PcdSession::from_ats(&ats, None, true);
         session.set_fsc(core::cmp::min(ats.format.fsci.fsc(), 64));
+        // `from_ats` defaults the receive ceiling (fsd) to the CARD's FSCI —
+        // not a limit this reader announced. We connected with Fsdi::Fsd64
+        // and the MFRC522 FIFO is 64 bytes, so clamp the receive side to
+        // the same ceiling as the send side (Codex P2 r4305906310 on #105).
+        session.set_fsd(core::cmp::min(ats.format.fsci.fsc(), 64));
 
         let fwt_ms = frame_wait_time_ms(&ats);
         transceiver.set_timeout_ms(fwt_ms).map_err(Error::Mfrc522)?;
