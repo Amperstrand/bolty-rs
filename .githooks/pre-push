@@ -2,6 +2,26 @@
 # Firmware-build gate: the pre-commit suite checks host crates only —
 # bolty-esp32 breakages (feature/cfg issues) must be caught before push.
 set -euo pipefail
+# Path filter: pushes that touch no firmware surface skip the ~minutes
+# + GB esp32 build (docs/tools-only changes; CI's esp32 lanes re-run the
+# same gate on every PR regardless). Fail-safe: unknown/empty range, new
+# branches, or any matching file → run the gate.
+GATE_SURFACES='(^|/)(crates|apps|vendor)/|Cargo\.(toml|lock)|Cargo\.config|sdkconfig|partitions|\.rs$|/build\.sh$|\.githooks/'
+push_range=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ -n "$local_sha" ] || continue
+    if [ -z "$remote_sha" ] || [[ $remote_sha =~ ^0+$ ]]; then
+        push_range=""  # new/null ref (all-zero sha): no baseline — run the gate
+        break
+    fi
+    push_range="$remote_sha..$local_sha"
+done
+if [ -n "$push_range" ]; then
+    if ! git diff --name-only "$push_range" | grep -qE "$GATE_SURFACES"; then
+        echo "pre-push: no firmware surfaces in $push_range — skipping the esp32 gate (CI re-runs it)."
+        exit 0
+    fi
+fi
 # 2026-10-18 incident: this gate's embuild step re-downloaded the ~2 GB
 # xtensa toolchain onto a 100%-full bench host and wedged every lane on it.
 # Require headroom for toolchain (~2 G) + extraction + build artifacts.
