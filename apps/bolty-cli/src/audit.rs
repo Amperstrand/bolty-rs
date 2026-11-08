@@ -4,6 +4,14 @@
 //! exchange to an audit file (default: `/tmp/bolty-audit.log`) for
 //! safety forensics and debugging. This ensures we can always trace
 //! exactly what was sent to the card and what it replied.
+//!
+//! Line-format contract: every entry this module writes starts with
+//! `[<epoch-ms>] `. The shared file is multi-writer and historical
+//! copies contain OUT-OF-BAND prose (reader tables, labgrid dumps
+//! appended by lane scripts) and glued same-line entries from
+//! unsynchronized parallel writers (issue #256). Readers must tolerate
+//! both — on the host side `tools/hil/hil/audit_log.py` is the
+//! tolerant parser.
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
