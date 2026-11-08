@@ -92,6 +92,10 @@ difftest-quick:
 difftest-acr:
 	cd tools/hil/difftest && python3 e2e.py --phase apdu --acr-only
 
+# LIVE auth gate: bolty-cli authenticates against the model (bench host only).
+difftest-vpicc-auth-live:
+	cd tools/hil/difftest && python3 -m pytest test_vpicc_auth_live.py -v --timeout=600
+
 # Offline auth gates: AN12196 vectors + in-process handshake (needs pycryptodome).
 difftest-vpicc-auth:
 	cd tools/hil/difftest && python3 -m pytest test_vpicc_auth_offline.py -v
