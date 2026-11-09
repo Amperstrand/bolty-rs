@@ -90,6 +90,11 @@ class AuthEngine:
         self.pending: tuple[bytes, bytes] | None = None  # (kx, rnd_b)
         self.session: tuple[bytes, bytes] | None = None  # (kenc, kmac)
         self.ctr = 0
+        # File contents served to authenticated FULL-mode reads. File 2
+        # (NDEF) carries the golden capture's read-window bytes; the
+        # write path updates this table (last_written).
+        self.files: dict[int, bytes] = {2: bytes.fromhex(
+            "004fd1014b5504626f6c7463617264")}
 
     # ── secure-messaging helpers (crate: crypto/suite.rs §9.1.4/§9.1.9) ──
 
@@ -98,14 +103,18 @@ class AuthEngine:
         """MSB-first even bytes (1,3,…,15) of the 16B CMAC."""
         return bytes(full[2 * i + 1] for i in range(8))
 
-    def _iv(self, command: bool) -> bytes:
+    def _iv_block(self, label: bytes, ctr: int) -> bytes:
         assert self.session is not None
-        label = b"\xa5\x5a" if command else b"\x5a\xa5"
         block = bytearray(16)
         block[0:2] = label
         block[2:6] = self.ti
-        block[6:8] = self.ctr.to_bytes(2, "little")
-        return AES.new(self.session[0], AES.MODE_ECB).encrypt(bytes(block))
+        block[6:8] = ctr.to_bytes(2, "little")
+        return bytes(block)
+
+    def _iv(self, command: bool) -> bytes:
+        return AES.new(self.session[0], AES.MODE_ECB).encrypt(
+            self._iv_block(b"\xa5\x5a" if command else b"\x5a\xa5",
+                           self.ctr))
 
     def _mac(self, data: bytes) -> bytes:
         assert self.session is not None
@@ -123,6 +132,34 @@ class AuthEngine:
         if len(body) < 7 + 8:
             return b"\x91\x7e"  # length error
         payload, received = body[:-8], body[-8:]
+        if ins == 0xAD:
+            # ReadData FULL (§9.1.10): command = header(7) + MACt (NO
+            # ciphertext); MAC covers AD||ctr||TI||header. Response =
+            # E(Kenc, padded-content) + MACt(00||nextCtr||TI||ct) + 9100,
+            # response IV uses the POST-INCREMENT counter (the crate
+            # advances on verify-then-decrypts with the advanced ctr).
+            expected = self._mac(mac_in + payload)
+            if expected != received:
+                return b"\x91\x1e"
+            fno, off, ln = payload[0], int.from_bytes(
+                payload[1:4], "little"), int.from_bytes(
+                payload[4:7], "little")
+            content = self.files.get(fno)
+            if content is None or off + ln > len(content):
+                return b"\x91\xbe"  # boundary error
+            pt = bytearray(content[off:off + ln])
+            pt.append(0x80)
+            while len(pt) % 16:
+                pt.append(0)
+            next_ctr = (self.ctr + 1) & 0xFFFF
+            iv = AES.new(self.session[0], AES.MODE_ECB).encrypt(
+                self._iv_block(b"\x5a\xa5", next_ctr))
+            ct = AES.new(self.session[0], AES.MODE_CBC, iv=iv).encrypt(
+                bytes(pt))
+            resp_mac = self._mac(
+                b"\x00" + next_ctr.to_bytes(2, "little") + self.ti + ct)
+            self.ctr = next_ctr
+            return ct + resp_mac + b"\x91\x00"
         expected = self._mac(mac_in + payload)
         if expected != received:
             return b"\x91\x1e"  # integrity error
@@ -132,6 +169,10 @@ class AuthEngine:
             iv = self._iv(command=True)
             plain = AES.new(self.session[0], AES.MODE_CBC, iv=iv).decrypt(ct)
             self.last_written = (payload[0], plain)
+            # strip ISO 9797-1 M2 padding and store into the file table
+            pad = plain.rfind(b"\x80")
+            if pad != -1 and set(plain[pad + 1:]) <= {0}:
+                self.files[payload[0]] = plain[:pad]
         next_ctr = (self.ctr + 1) & 0xFFFF
         resp_mac = self._mac(
             b"\x00" + next_ctr.to_bytes(2, "little") + self.ti)

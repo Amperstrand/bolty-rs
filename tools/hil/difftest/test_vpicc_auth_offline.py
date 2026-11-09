@@ -146,3 +146,77 @@ def test_secure_write_roundtrip():
     # fresh correctly-counter'd write succeeds again
     r3 = engine.answer(apdu2)
     assert r3[-2:] == b"\x91\x00" and engine.ctr == 2
+
+
+def _h_full_read(engine, fno: int, off: int, ln: int) -> bytes:
+    """Host mirror of CommMode.FULL ReadData (crate read_data.rs)."""
+    from Crypto.Cipher import AES as _AES
+    import vpicc_model_auth as m
+    assert engine.session is not None
+    kenc, kmac = engine.session
+    ctr, ti = engine.ctr, engine.ti
+    header = bytes([fno]) + off.to_bytes(3, "little") + ln.to_bytes(3, "little")
+    mac_full = m._cmac(kmac, bytes([0xAD]) + ctr.to_bytes(2, "little") + ti + header)
+    mac_t = bytes(mac_full[2 * i + 1] for i in range(8))
+    return bytes([0x90, 0xAD, 0x00, 0x00, 0x0F]) + header + mac_t + b"\x00"
+
+
+def _verify_read_response(engine, r: bytes, expect_len: int) -> bytes:
+    """Verify MACt, decrypt with post-increment IV, strip M2 padding."""
+    from Crypto.Cipher import AES as _AES
+    import vpicc_model_auth as m
+    assert engine.session is not None
+    kenc, kmac = engine.session
+    assert r[-2:] == b"\x91\x00", f"read SW {r[-2:].hex()}"
+    body = r[:-2]
+    ct, got_mac = body[:-8], body[-8:]
+    # host advanced already (its verify ran before decrypt) — engine too
+    next_ctr = engine.ctr
+    exp_full = m._cmac(kmac, b"\x00" + next_ctr.to_bytes(2, "little")
+                       + engine.ti + ct)
+    assert bytes(exp_full[2 * i + 1] for i in range(8)) == got_mac, "resp MACt"
+    iv_block = bytearray(16)
+    iv_block[0:2] = b"\x5a\xa5"
+    iv_block[2:6] = engine.ti
+    iv_block[6:8] = next_ctr.to_bytes(2, "little")
+    iv = _AES.new(kenc, _AES.MODE_ECB).encrypt(bytes(iv_block))
+    pt = _AES.new(kenc, _AES.MODE_CBC, iv=iv).decrypt(ct)
+    pad = pt.rfind(b"\x80")
+    assert pad == expect_len, f"padded len {pad} != {expect_len}"
+    return pt[:pad]
+
+
+def test_secure_read_roundtrip():
+    engine = AuthEngine(keys={0: FACTORY_KEY}, rnd_b=os.urandom(16))
+    r1 = engine.answer(bytes.fromhex("9071000005000300000000"))
+    rnd_b = _cbc_zero_iv_decrypt(FACTORY_KEY, r1[:-2])
+    rnd_a = os.urandom(16)
+    ct = _cbc_zero_iv_encrypt(FACTORY_KEY, rnd_a + _rot_left(rnd_b))
+    assert engine.answer(bytes([0x90, 0xAF, 0x00, 0x00, 0x20]) + ct + b"\x00")[-2:] == b"\x91\x00"
+
+    # read the golden NDEF record from file 2 (len = full content)
+    content = bytes.fromhex("004fd1014b5504626f6c7463617264")
+    apdu = _h_full_read(engine, 2, 0, len(content))
+    r = engine.answer(apdu)
+    got = _verify_read_response(engine, r, len(content))
+    assert got == content, "read content mismatch"
+    assert engine.ctr == 1  # auth establishes ctr=0 (§9.1.2); one read advances to 1
+
+    # write then read back (round-trip through the file table)
+    payload = bytes.fromhex("deadbeefcafe") * 2
+    w = _h_full_write(engine, payload)
+    assert engine.answer(w)[-2:] == b"\x91\x00"
+    apdu2 = _h_full_read(engine, 2, 0, len(payload))
+    got2 = _verify_read_response(engine, engine.answer(apdu2), len(payload))
+    assert got2 == payload, "write->read round-trip mismatch"
+
+    # boundary: read past EOF -> 91 BE
+    bad = _h_full_read(engine, 2, 0, 4096)
+    assert engine.answer(bad) == b"\x91\xbe"
+
+    # tampered command MAC -> 91 1E (and counter NOT advanced)
+    ctr_before = engine.ctr
+    tampered = _h_full_read(engine, 2, 0, 4)
+    tampered = tampered[:12] + bytes([tampered[12] ^ 1]) + tampered[13:]
+    assert engine.answer(tampered) == b"\x91\x1e"
+    assert engine.ctr == ctr_before
