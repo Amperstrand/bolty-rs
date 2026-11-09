@@ -1,8 +1,12 @@
 # vpicc stateful NTAG424 model — design (rung plan)
 
-Status: RUNG 1 IMPLEMENTED (2026-10-31) — vpicc_model.py answers 57/57
-golden exchanges byte-exact (offline gate: check_model_vs_golden.py; live
-pcsc round trip: test_vpicc_model.py). Rung 2 remains design-only.
+Status: LADDER COMPLETE (2026-11-09). Rung 1: stateful pre-auth
+(57/57 golden-exact). Rung 2: mutual AuthenticateEV2 — live-proven
+against bolty-cli/the ntag424 crate over pcsc→vpcd (AN12196-pinned).
+Rung 3: FULL-mode secure WriteData (replay → 911E proven). Rung 4
+(#277): FULL-mode secure ReadData with the live file table — the
+virtual card authenticates, writes, AND reads under the session.
+Post-auth error semantics (91BE boundary, 911E-no-advance) pinned.
 
 ## Why
 
