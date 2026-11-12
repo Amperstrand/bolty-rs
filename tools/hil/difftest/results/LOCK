@@ -1,0 +1,21 @@
+# Difftest golden reference-lock (ntag424 commit 02f23f5 pattern)
+#
+# The committed golden + generated fixtures are the regression oracle for
+# the 66/66 APDU differential (make difftest / difftest-quick). Git alone
+# does not protect them: a local edit or bad merge silently re-baselines
+# the diff. tools/hil/tests/test_difftest_golden_lock.py self-asserts the
+# sha256s below on every host-CI run.
+#
+# Provenance: captured from ACS ACR1252 Dual Reader PICC 00 00 against
+# NTAG424 04C474FA967380 (golden_acr1252.json, timestamp inside the file)
+# and card2 during the 2026-08-29 session; regenerated fixtures derive
+# via tools/hil/difftest/generate_tests.py.
+#
+# To deliberately re-baseline (new capture session): run the capture
+# phase (e2e.py --phase apdu --acr-only), verify the diff review, then
+# refresh these hashes and the provenance line ABOVE in the same commit.
+
+results/golden_acr1252.json sha256: f95148aec97e558de45947ce225bfed9e17b90302a833a20d818c3e29626118c
+results/golden_acr1252_card2.json sha256: 134597d67ecb60f77d1d03587087ce2b037fc978c1ba16fae2e4e7d0dd7aa301
+generated/test_golden_responses.py sha256: 945b6b841f3431626e3f6bd950c6adaef9f67e1cb316e8df405488e38fb3db19
+generated/golden_responses.h sha256: fa1ea4f4f8d2df1df66c87e7edba0446fadbe23cb49fe5a7c4dd2ce4b9b38df1
