@@ -1,4 +1,13 @@
 ## "#" lines are Jinja statements in this file (labgrid line_statement_prefix) — comment with "##" only.
+## ⚠️ RETIRED FOSSIL (2026-11-12 audit): this exporter config + its unit
+## (labgrid-exporter.service, still pointing at the dead .221 coordinator
+## and pre-re-home paths) predate the 2026-09-26 consolidation and the
+## 2026-10-25 ACR move to ai-legion-small. NO exporter serves these group
+## names today. Kept as the pattern reference for the
+## ACR1252-as-acquisition-token trick (docs/labgrid-bench-sharing.md) —
+## do NOT deploy. Live wiring: ai-legion-nfc (ccid-firmware-rs config) and
+## ai-legion-small-nfc (conwrt-bench deploy/exporter-nfc-small.yaml).
+##
 ## ACR1252 rides the ResourceEntry fallback: labgrid 26.0 has no exportable
 ## generic-USB class, and udev match dicts cannot cross the coordinator wire
 ## (flat MapValue protobuf). This entry is the acquisition/exclusivity token;
