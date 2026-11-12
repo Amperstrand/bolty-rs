@@ -311,6 +311,24 @@ def _acr_checkin(session, bench_lock=None) -> None:
         print("[acr-checkin] ACR1252 not listed by pcscd — hardware tests "
               "will skip via coupled_card_uid")
 
+    # Session-start bench-state artifact (wallet-matrix matrixctl pattern;
+    # audit follow-up #2): readers + ACR verdict + place context, so a run
+    # is self-describing when placement questions come up later. Fail-soft.
+    try:
+        from hil.bench_survey import survey, write_survey
+
+        data = survey(
+            acr_state=result.get("state"),
+            acr_detail=result.get("detail"),
+            place=os.environ.get("BOLTY_LG_PLACE"),
+        )
+        written = write_survey(data)
+        if written:
+            print(f"[bench-survey] {written.name}: "
+                  f"{len(data.get('readers', []))} reader(s)")
+    except Exception as exc:  # noqa: BLE001 — survey must never gate a session
+        print(f"[bench-survey] skipped ({exc!r})")
+
 
 def _lg_client_p(place: str, *args: str, timeout_s: float = 15):
     """labgrid-client against an explicit place (reservation tokens use
