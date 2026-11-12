@@ -52,6 +52,7 @@ try:
     from tollgate_lab import BenchLockHeldError, acquire_bench_lock
     from tollgate_lab.hardware import (
         PcscdDomainHeldError,
+        acquire_pcscd_disturbance,
         acquire_pcscd_reader,
     )
     _BENCH_LOCK_AVAILABLE = True
@@ -59,6 +60,7 @@ except ImportError:  # host CI collection — never drives hardware
     BenchLockHeldError = None
     PcscdDomainHeldError = None
     acquire_bench_lock = None
+    acquire_pcscd_disturbance = None
     acquire_pcscd_reader = None
     _BENCH_LOCK_AVAILABLE = False
 
@@ -206,7 +208,60 @@ def _wrap_pcscd_reader(bench_lock):
     return _BenchLockWithReader(bench_lock, reader_lock)
 
 
-def _acr_checkin(session) -> None:
+def _autoheal_pcscd_restart(bench_lock):
+    """Wedge autoheal is a pcscd-DOMAIN DISTURBANCE (B32/tollgate-lab
+    #15): other lanes' reader sessions must drain first, and our own
+    reader role must lift before the EX acquire (a second flock on the
+    same file from this process self-deadlocks). Refuses when a peer
+    reader does not drain within 30s — a wedged reader is ours to leave
+    wedged; a live cross-lane session is not ours to kill. Reinstalls
+    the reader role afterwards so teardown ordering stays intact."""
+    reader = getattr(bench_lock, "_reader", None)
+    if acquire_pcscd_disturbance is None:
+        # tollgate_lab absent (host CI): never reached on real sessions
+        # (rig_lock hard-fails first, #199) — refuse rather than restart.
+        print("[acr-checkin] autoheal REFUSED — pcscd domain unavailable")
+        return None
+    if reader is not None:
+        reader.release()
+        bench_lock._reader = None
+    try:
+        disturbance = acquire_pcscd_disturbance(
+            project="bolty-hil",
+            reason="acr wedge autoheal (BOLTY_ACR_AUTOHEAL)",
+            timeout_s=30,
+        )
+    except PcscdDomainHeldError as exc:
+        print(f"[acr-checkin] autoheal REFUSED — pcscd domain busy: {exc}")
+        if reader is not None:
+            _restore_reader_role(bench_lock)
+        return None
+    try:
+        return subprocess.run(
+            ["systemctl", "restart", "pcscd"],
+            capture_output=True, text=True, timeout=30,
+        )
+    finally:
+        disturbance.release()
+        if reader is not None:
+            _restore_reader_role(bench_lock)
+
+
+def _restore_reader_role(bench_lock):
+    """Re-acquire the SHARED reader role after a disturbance; a refusal
+    here means another disturbance appeared — the session cannot safely
+    continue driving pcscd readers, exit loudly (matches the initial
+    _wrap_pcscd_reader refusal semantics)."""
+    try:
+        bench_lock._reader = acquire_pcscd_reader(
+            project="bolty-hil",
+            reason="rig_lock: reader session (pcscd consumers)",
+        )
+    except PcscdDomainHeldError as exc:
+        pytest.exit(f"pcscd domain held after autoheal: {exc}", returncode=3)
+
+
+def _acr_checkin(session, bench_lock=None) -> None:
     """B29 rule 1 / B32 / B33: probe the ACR1252 the moment the session
     owns the bench. 'wedge' prints the heal ladder; the deep class is
     owner-replug (no switched hub on this bench — owner decision
@@ -223,10 +278,11 @@ def _acr_checkin(session) -> None:
     if result["state"] == "wedge":
         print(heal_hint())
         if os.environ.get("BOLTY_ACR_AUTOHEAL") == "1":
-            healed = subprocess.run(
-                ["systemctl", "restart", "pcscd"],
-                capture_output=True, text=True, timeout=30,
-            )
+            healed = _autoheal_pcscd_restart(bench_lock)
+            if healed is None:
+                print("[acr-checkin] wedge left as-is (domain-guarded "
+                      "autoheal refused)")
+                return
             time.sleep(3)
             result = probe_isolated()
             session.stash[ACR_STATE_KEY] = result["state"]
@@ -408,7 +464,7 @@ def rig_lock(request):
                    firmware=_fw_sha256())
 
     request.session.stash[RIG_HELD_KEY] = True
-    _acr_checkin(request.session)
+    _acr_checkin(request.session, bench_lock=bench_lock)
 
     # Shared disk hygiene (2026-09-11 ENOSPC incident): no-op with
     # headroom, conservative prunes without — tollgate_lab owns it. Only
