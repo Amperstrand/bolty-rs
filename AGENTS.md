@@ -123,7 +123,24 @@ this box was .218 in early docs, .221 now).
 | Host | What runs there | Why |
 |---|---|---|
 | `ai-legion-small` (Lenovo, GNOME, WiFi, mDNS `ai-legion-small.local`) | bolty-rs dev + esp toolchain; `proxy-healthcheck` timer; parallel AI-agent sessions; rotating Docker LN/regtest lab (CLN nodes, swapserver experiments); **ACR1252 bench reader** (place `ref-acr1252-small`, the ACR lane) | the working machine |
-| `ai-legion` (RTX 3080 box, `192.168.13.208`, mDNS `ai-legion.local`, SSH-only from outside) | archival Bitcoin full node (coldcardforensic project); labgrid coordinator (:20408); **m5stick + nucula-c3 HIL seats RE-HOMED HERE ~2026-10-25** (both `bolty-console*` services + `/run/bolty/*.sock` live here now — the ai-legion-small-rig exporter is dead; incident write-up: docs/hil-incident-2026-10-26-222.md) | heavy always-on-ish compute |
+| `ai-legion` (RTX 3080 box, `192.168.13.208`, mDNS `ai-legion.local`, SSH-only from outside) | archival Bitcoin full node (coldcardforensic project); labgrid coordinator (:20408); labgrid exporter host for the NFC bench (`ai-legion-nfc` group) | heavy always-on-ish compute |
+
+**SEAT TOPOLOGY UPDATE (2026-11-12 audit — supersedes the 2026-10-25
+"re-homed to ai-legion" note):** the boards physically live on
+**ai-legion-small** since the 2026-11-01 owner hands window
+(ccid-firmware-rs `exporter-ai-legion-nfc.yaml` carries the annotated
+phantoms): m5stick is socat-bridged back to ai-legion as
+`ai-legion-nfc/m5stick-usb` (data-only `/dev/m5stick-remote`, no
+DTR/RTS — flashing is small-side or OTA); the nucula C3's serial is
+exported by small as `ai-legion-small-nfc/nucula-c3/NetworkSerialPort`
+while the `nucula-c3` PLACE still matches `ai-legion-ccid/nucula/NetworkService`
+(re-point pending owner latch work — expect acquire contention with the
+`ccid-nucula` place). The `bolty-console*` units on ai-legion are
+accordingly STALE: `bolty-console.service` inactive since 2026-10-28,
+`bolty-console-c3.service` failed (device moved). Incident history:
+docs/hil-incident-2026-10-26-222.md. Verify with
+`tests/hardware/labgrid/bench_inventory.py` (ccid-firmware-rs) before
+bench work.
 | Cloudflare edge | `boltcardpoc.psbt.me` = edge-native HIL tap worker (Worker-style headers; routes deterministic-key anonymous taps — B12); DNS/proxying for `*.psbt.me` | edge = immune to lab-host outages |
 | **UNKNOWN — the gap** | `proxy.psbt.me` origin: Go boltcard + PostgreSQL + LND + `cloudflared` tunnel. DOWN since ≤2026-08-27 18:25 (530/err 1033, tunnel disconnected). Not on ai-legion-small (verified), not listening on ai-legion (verified) | undocumented host = bus factor 1 |
 

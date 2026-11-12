@@ -64,7 +64,7 @@ test-hil-lg:
 	  --json-report --json-report-file=tools/hil/results/hil-test-report.json \
 	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S) \
 	  --lg-env=tools/hil/labgrid-env.yaml \
-	  --lg-coordinator=192.168.13.221:20408
+	  --lg-coordinator=192.168.13.208:20408
 
 # Idempotent bolty-rig place (re)creation — run after coordinator restarts.
 labgrid-place:
