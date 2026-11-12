@@ -5,7 +5,7 @@
 # nothing").
 set -euo pipefail
 
-COORDINATOR="${LABGRID_COORDINATOR:-192.168.13.208:20408}"
+COORDINATOR="${LG_COORDINATOR:-192.168.13.208:20408}"
 
 lg() { labgrid-client -x "$COORDINATOR" "$@"; }
 

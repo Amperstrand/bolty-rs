@@ -1024,3 +1024,19 @@ missing from the dependency-duplicates nine-base triage (#181, row now
 added with evidence). Rule: duplicate/duplicate-triage evidence
 commands must include `--target all`, or target-gated forks silently
 drop out of the decision record.
+
+## 2026-11-12 — addendum to B25: coordinator address is .208 (canon), .221 remnants were live rot
+
+The 2026-09-26 consolidation moved the coordinator to
+192.168.13.208:20408 (ai-legion) — conwrt-bench
+docs/labgrid-coordination.md is the single source of truth. Found
+still pointing at the dead pre-consolidation .221 address on
+2026-11-12: `Makefile` `test-hil-lg` (`--lg-coordinator=.221` — a live
+broken target, could never reach the coordinator) and the retired
+local exporter unit. Also: the shell wrappers used the project-invented
+`LABGRID_COORDINATOR` env name instead of native `LG_COORDINATOR`
+(explicitly banned by the canon doc since 2026-09-26) — harmless while
+defaults agreed, but it is exactly how weeks-long .221 staleness hid.
+All three fixed same day; `make test-hil-lg` now targets .208 and the
+wrappers honor `LG_COORDINATOR`.
+
