@@ -161,7 +161,14 @@ def _sign_hold_identity(config):
                      cwd=REPO_ROOT).stdout.strip()
     except Exception:
         sha = "nogit"
-    os.environ["LG_USERNAME"] = f"bolty-hil~mark={'-'.join(markexpr.split())}~sha={sha}"
+    # est= is the conwrt-bench ETA convention (labgrid has no ETA field,
+    # issue #1415 upstream): the lock janitor reads it to flag stale holds.
+    # Default mirrors --reserve-timeout-min's 120m; a session that knows
+    # better exports LG_USERNAME itself (honored above).
+    est = max(1, config.getoption("reserve_timeout_min", 120))
+    os.environ["LG_USERNAME"] = (
+        f"bolty-hil~mark={'-'.join(markexpr.split())}~sha={sha}~est={est}m"
+    )
 
 
 def _wrap_pcscd_reader(bench_lock):

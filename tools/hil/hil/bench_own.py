@@ -163,7 +163,9 @@ def _sign_identity() -> None:
         ).stdout.strip()
     except Exception:
         sha = "nogit"
-    os.environ["LG_USERNAME"] = f"h1-burn-regression~sha={sha}"
+    # est= is the conwrt-bench ETA convention read by the lock janitor;
+    # 90m covers the deep try-key ladder worst case on one card.
+    os.environ["LG_USERNAME"] = f"h1-burn-regression~sha={sha}~est=90m"
 
 
 def acquire_bench_ownership(
