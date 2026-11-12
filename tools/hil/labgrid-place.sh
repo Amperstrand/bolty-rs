@@ -37,13 +37,36 @@ ensure_place() {
     lg -p "$place" show | sed -n '1,4p'
 }
 
+# drop_match <place> <match>
+# Removes a match that is KNOWN to have moved (2026-10-25 ACR retirement
+# from ai-legion-nfc). Without this, ensure_place would happily re-add
+# phantom matches to already-migrated places — a place carrying a match
+# with no live resource cannot acquire ("matches nothing"), so the
+# cleanup is required for idempotence, not cosmetic.
+drop_match() {
+    local place="$1" match="$2"
+    if lg -p "$place" show | grep -qxF "    $match"; then
+        lg -p "$place" del-match "$match"
+        echo "match $match REMOVED (moved/retired resource)"
+    fi
+}
+
 # Full rig (Phase-2 burn_cycle, difftest): stick serial + reference ACR.
-# Post-2026-09-26 consolidation resource names (this host's exporter).
+# 2026-11-12 audit: the ACR1252 physically lives on ai-legion-small since
+# 2026-10-25 — exported as ai-legion-small-nfc/acr1252/NetworkSmartcardReader
+# (formal exporter: labgrid-exporter-nfc-small.service on small, config
+# conwrt-bench/deploy/exporter-nfc-small.yaml). The old
+# ai-legion-nfc/ref-acr1252/USBDevice export is RETIRED — drop any stale
+# match before ensuring the live one.
+drop_match bolty-rig 'ai-legion-nfc/ref-acr1252/USBDevice'
 ensure_place bolty-rig \
     'ai-legion-nfc/m5stick-usb/SerialPort' \
-    'ai-legion-nfc/ref-acr1252/USBDevice'
+    'ai-legion-small-nfc/acr1252/NetworkSmartcardReader'
 
 # ACR-only leaf (#127): one-device-one-exclusion-domain. ACR-only suites
 # (make test-hil fast path, Phase-1) acquire this place and are no longer
-# blocked by stick-serial holders.
-ensure_place ref-acr1252 'ai-legion-nfc/ref-acr1252/USBDevice'
+# blocked by stick-serial holders. Same retirement cleanup as bolty-rig —
+# the coordinator's ref-acr1252 was already re-pointed by hand; running
+# this script must not resurrect the phantom on top of it.
+drop_match ref-acr1252 'ai-legion-nfc/ref-acr1252/USBDevice'
+ensure_place ref-acr1252 'ai-legion-small-nfc/acr1252/NetworkSmartcardReader'
