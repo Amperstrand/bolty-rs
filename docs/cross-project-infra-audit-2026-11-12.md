@@ -61,6 +61,15 @@ places/resources, SEATS.md). Canon for bench coordination: conwrt-bench
 
 ## Recommended follow-ups (not done this session)
 
+> **STATUS 2026-11-13:** items 1, 2, 4 and 6 are DONE — #287 (drift
+> audit in `make status`, bench-verified live), #288 (bench-state
+> survey artifact), cashu-nfc-matrix #7 + Amperstrand/nucula#48
+> (error_class family complete; #48 fork — owner merges), ccid-firmware-rs
+> #568 + tollgate-lab #36/#34 (pcscd domain codification + holder-record
+> lifecycle + restart-done event fix). Same-day also: #286 phantom-match
+> cleanup (bolty-rig re-acquirable), ccid #567 persistence-doc
+> correction. Items 3, 5 and 7 remain open.
+
 1. Port `bench_inventory.py`-style config-vs-coordinator drift auditing to
    bolty-rs (bolty has exporter YAML in-repo but no audit loop).
 2. bolty HIL: bench-state survey artifact (wallet-matrix matrixctl pattern)
