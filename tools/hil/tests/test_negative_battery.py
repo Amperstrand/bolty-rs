@@ -55,6 +55,19 @@ class TestNegativeBattery:
         actual = cli.uid()
         assert actual == uid
 
+        # Factory-blank cards have no provisioned key to reject: the
+        # all-zeros factory K0 is ACCEPTED (2026-11-13 bench finding:
+        # 04c474 came back from an overnight cycle blank, coupled to the
+        # ACR despite its GemPCTwin hint — placement/state are volatile).
+        # Wrong-key semantics are N/A until it is re-burned. A successful
+        # auth RESETS SeqFailCtr, so this probe costs no auth budget.
+        try:
+            cli.run("try-key", "--key", "0" * 32)
+            pytest.skip("coupled card is factory-blank (factory K0 accepted) "
+                        "— wrong-key rejection is N/A until re-burn")
+        except BoltyError:
+            pass  # factory key rejected: card is provisioned — test applies
+
         # wrong key: bolty-cli try-key with garbage → error
         with pytest.raises(BoltyError):
             cli.run("try-key", "--key", "f" * 32)
