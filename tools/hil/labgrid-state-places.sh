@@ -14,20 +14,25 @@
 set -euo pipefail
 
 COORDINATOR="${LG_COORDINATOR:-192.168.13.208:20408}"
-EXPORTER_NAME="${LABGRID_EXPORTER_NAME:-ai-legion-small}"
+## 2026-11-12 audit: live resource paths (labgrid-client resources). The
+## pre-re-home names (ai-legion-small/m5stick-serial, ai-legion-small/acr1252)
+## no longer exist — the stick serial is bridged to ai-legion as
+## ai-legion-nfc/m5stick-usb, and the ACR1252 physically lives on
+## ai-legion-small, exported as ai-legion-small-nfc/acr1252. Match strings
+## must be the full group/name/class as listed by `resources`.
 
-BOARD_PLACE() {  # $1 = token resource, $2 = match class, $3 = place suffix
-    local p="bolty-$3"
+BOARD_PLACE() {  # $1 = full match, $2 = place suffix
+    local p="bolty-$2"
     labgrid-client -x "$COORDINATOR" -p "$p" create 2>/dev/null || true
     labgrid-client -x "$COORDINATOR" -p "$p" \
-        add-match "${EXPORTER_NAME}/$1/$2" 2>/dev/null || true
+        add-match "$1" 2>/dev/null || true
     labgrid-client -x "$COORDINATOR" -p "$p" \
-        set-comment "state record for $3 (tags: firmware/test/owner/ts)" \
+        set-comment "state record for $2 (tags: firmware/test/owner/ts)" \
         2>/dev/null || true
 }
 
-BOARD_PLACE m5stick-serial NetworkSerialPort      m5stick
-BOARD_PLACE acr1252        NetworkSmartcardReader acr1252
+BOARD_PLACE 'ai-legion-nfc/m5stick-usb/SerialPort'                 m5stick
+BOARD_PLACE 'ai-legion-small-nfc/acr1252/NetworkSmartcardReader'   acr1252
 
 labgrid-client -x "$COORDINATOR" -p bolty-m5stick show | sed -n '1,4p'
 labgrid-client -x "$COORDINATOR" -p bolty-acr1252 show | sed -n '1,4p'

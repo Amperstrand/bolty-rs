@@ -130,6 +130,7 @@ status:
 	@timeout 8 python3 tools/hil/bolty-ctl.py PING 2>&1 | head -1 || echo "console: UNREACHABLE"
 	@python3 -c "from smartcard.System import readers; [print(f'  reader: {r}') for r in readers()]" 2>/dev/null || echo "  pcscd: no readers"
 	@./target/debug/bolty-cli uid 2>&1 | head -2 || echo "  card: not coupled"
+	@cd tools/hil && python3 -m hil.labgrid_drift
 	@echo "  labgrid: $(shell systemctl is-active labgrid-exporter 2>/dev/null || echo 'not-running')"
 	@echo "  console: $(shell systemctl is-active bolty-console 2>/dev/null || echo 'not-running')"
 	@echo "  lock: $$(python3 tools/hil/lock-status.py)"
