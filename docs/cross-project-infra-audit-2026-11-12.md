@@ -61,7 +61,19 @@ places/resources, SEATS.md). Canon for bench coordination: conwrt-bench
 
 ## Recommended follow-ups (not done this session)
 
-> **STATUS 2026-11-13:** items 1, 2, 3, 4 and 6 are DONE — #287 (drift
+> **STATUS 2026-11-13 (night update):** items 1, 2, 3, 4 and 6 are DONE;
+> item 5 is STARTED (rung-1 vpicc port landed in cashu-nfc-matrix #8 —
+> sha256-LOCKed vendor drop, 57/57 golden-exact offline gate; auth/secure
+> rungs + vpcd wiring remain). Additionally: the HIL session-start stack
+> (#283/#284/#287/#288) is HARDWARE-PROVEN (make test-hil green on
+> ai-legion-small 2026-11-13), the wrong-key battery now asserts the
+> try-key VERDICT (PR #293 — open pending the 2026-11-14 hardware session,
+> runbook docs/hil-runbook-2026-11-14.md), and the worker-side audit
+> delivered boltcard-cloudflareworker #83/#85 (exactly-once claims,
+> live-verified on production) + #87 (opt-in gate for the public key
+> endpoints — the #20-style decision is now a config flip). Item 7
+> unchanged: owner decisions (disk/opencode.db, worker key-endpoint
+> posture, nucula latch). — #287 (drift
 > audit in `make status`, bench-verified live), #288 (bench-state
 > survey artifact), #290 (off-host evidence: Allure→Blossom+Nostr-30078,
 > dry-run default), cashu-nfc-matrix #7 + Amperstrand/nucula#48
