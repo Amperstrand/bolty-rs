@@ -38,3 +38,50 @@ def test_model_vpicc_passthrough_injects():
     assert r1[-2:] == b"\x90\x00"
     out = card.answer(bytes.fromhex("00B000000F"))
     assert out == custom[:15] + b"\x90\x00"
+
+
+def _generic_type4_read(card, le_cc=15, le_ndef=0x20):
+    """A generic Type-4 reader ladder (wallet-matrix probe_acr shape)."""
+    assert card.answer(bytes.fromhex("00A4040007D276000085010100"))[-2:] == b"\x90\x00"
+    assert card.answer(bytes.fromhex("00A4000C02E103"))[-2:] == b"\x90\x00"
+    cc = card.answer(bytes([0x00, 0xB0, 0x00, 0x00, le_cc]))
+    assert cc[-2:] == b"\x90\x00"
+    assert card.answer(bytes.fromhex("00A4000C02E104"))[-2:] == b"\x90\x00"
+    return cc[:-2], card.answer(bytes([0x00, 0xB0, 0x00, 0x00, le_ndef]))
+
+
+def test_ndef_file_mode_reads_injected_message_like_silicon():
+    ndef = bytes.fromhex("d1012b550174657374")  # minimal URI record 'test'
+    card = ModelVpicc(ndef_file=ndef)
+    cc, ndef_read = _generic_type4_read(card)
+    assert cc == Ntag424State.CC_BYTES
+    body = ndef_read[:-2]
+    assert ndef_read[-2:] == b"\x90\x00"
+    # length prefix (2B BE) + message, offset-aware, Le-truncated
+    assert body == len(ndef).to_bytes(2, "big") + ndef
+
+
+def test_ndef_file_mode_offset_windows_and_eof():
+    ndef = b"\xaa" * 40
+    card = ModelVpicc(ndef_file=ndef)
+    card.answer(bytes.fromhex("00A4000C02E104"))
+    first = card.answer(bytes([0x00, 0xB0, 0x00, 0x00, 0x20]))
+    assert first[-2:] == b"\x90\x00" and len(first) == 0x20 + 2
+    # offset 0x20 -> second half (budget: 2 reads so far, 3 allowed)
+    second = card.answer(bytes([0x00, 0xB0, 0x00, 0x20, 0x20]))
+    assert second[-2:] == b"\x90\x00"
+    content = first[:-2] + second[:-2]
+    assert content == len(ndef).to_bytes(2, "big") + ndef
+    # past EOF -> 6A82
+    card2 = ModelVpicc(ndef_file=b"\x01")
+    card2.answer(bytes.fromhex("00A4000C02E104"))
+    eof = card2.answer(bytes([0x00, 0xB0, 0x00, 0x05, 0x10]))
+    assert eof[-2:] == b"\x6a\x82"
+
+
+def test_default_mode_quirks_unchanged_with_ndef_file_unset():
+    # offsets ignored + canned window: the pinned golden path
+    state = Ntag424State()
+    answer(state, bytes.fromhex("00A4000C02E103"))
+    r = answer(state, bytes.fromhex("00B000040F"))  # offset 0x04 ignored
+    assert r[:-2] == GOLDEN_WINDOW[:15]
