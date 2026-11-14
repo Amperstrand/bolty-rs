@@ -1,7 +1,10 @@
 [advisories]
 yanked = "deny"
 ignore = [
-    "RUSTSEC-2026-0190",  # anyhow unsound — no fix available, accepted risk
+    # (2026-11-14) RUSTSEC-2026-0190 ignore REMOVED: anyhow 1.0.103+
+    # shipped the downcast_mut fix — bolty-cli pin bumped =1.0.102 ->
+    # =1.0.104 (the "=<x> pin + advisory-driven bump" convention), so
+    # the old "no fix available, accepted risk" entry no longer applies.
     "RUSTSEC-2026-0110",  # bare-metal unmaintained — embedded ecosystem standard
     "RUSTSEC-2026-0173",  # proc-macro-error2 unmaintained — transitive dep
     # (2026-10-24) RUSTSEC-2026-0387 ignore REMOVED: ntag424 re-pinned
