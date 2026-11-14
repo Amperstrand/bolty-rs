@@ -66,11 +66,22 @@ SW = {"ok": b"\x90\x00", "lc": b"\x67\x00", "ins": b"\x6d\x00",
 
 
 class Ntag424State:
-    """Mutable model state (what the recorded card tracked)."""
+    """Mutable model state (what the recorded card tracked).
 
-    def __init__(self) -> None:
+    read_window_content: the bytes served for in-window content reads.
+    Default is the golden capture's canned CC/NDEF window; downstream
+    benches inject their own NDEF (e.g. a cashu request record) so the
+    model can stand in for THEIR card — behavior stays computed, only
+    FILE DATA is data (the design's own rule).
+    """
+
+    def __init__(self, read_window_content: bytes | None = None) -> None:
         self.selected: str | None = None
         self.reads_served = 0
+        self.read_window: bytes = (
+            READ_WINDOW_CONTENT if read_window_content is None
+            else read_window_content
+        )
 
 
 def answer(state: Ntag424State, capdu: bytes) -> bytes:
@@ -132,7 +143,7 @@ def answer(state: Ntag424State, capdu: bytes) -> bytes:
         if state.reads_served >= READ_BUDGET:
             return SW["cond"]
         state.reads_served += 1
-        return READ_WINDOW_CONTENT[:le] + SW["ok"]
+        return state.read_window[:le] + SW["ok"]
 
     return SW["ins"]
 
@@ -145,8 +156,8 @@ class ModelVpicc:
     the pre-auth rules. An engine per ModelVpicc = one handshake context.
     """
 
-    def __init__(self) -> None:
-        self.state = Ntag424State()
+    def __init__(self, read_window_content: bytes | None = None) -> None:
+        self.state = Ntag424State(read_window_content)
         try:
             from vpicc_model_auth import AuthEngine
             self.auth = AuthEngine()
