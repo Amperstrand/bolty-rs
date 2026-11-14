@@ -18,6 +18,10 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # espup queries the GitHub API
+  # 2026-11-13: the iso14443 git-dep clone failed a whole build leg once
+  # (#286 first run — `failed to clone into ~/.cargo/git/db/...`); cargo's
+  # default 3 net retries is thin on cold runners. 10 matches the class.
+  CARGO_NET_RETRY: "10"
 
 jobs:
   esp32-build:
