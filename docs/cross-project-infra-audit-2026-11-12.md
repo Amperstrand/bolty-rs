@@ -62,9 +62,11 @@ places/resources, SEATS.md). Canon for bench coordination: conwrt-bench
 ## Recommended follow-ups (not done this session)
 
 > **STATUS 2026-11-13 (night update):** items 1, 2, 3, 4 and 6 are DONE;
-> item 5 is STARTED (rung-1 vpicc port landed in cashu-nfc-matrix #8 —
-> sha256-LOCKed vendor drop, 57/57 golden-exact offline gate; auth/secure
-> rungs + vpcd wiring remain). Additionally: the HIL session-start stack
+> item 5 is COMPLETE (cashu-nfc-matrix #8/#9/#10/#11/#12: rungs 1-4
+> sha256-LOCKed vendor drops, offline gates, LIVE vpcd serving verified
+> on ai-legion, upstream injectable-NDEF + plain-read file model
+> (#298/#299), and the demonstrated payoff — their own probe_acr reads
+> a synthetic creqA from the virtual card, zero silicon). Additionally: the HIL session-start stack
 > (#283/#284/#287/#288) is HARDWARE-PROVEN (make test-hil green on
 > ai-legion-small 2026-11-13), the wrong-key battery now asserts the
 > try-key VERDICT (PR #293 — open pending the 2026-11-14 hardware session,
