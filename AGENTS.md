@@ -157,11 +157,11 @@ Diagnosis runbook for proxy outages:
 
 ### HIL rig quick facts (2026-09-02; full detail: docs/lessons-learned.md B24-B26)
 
-Next scheduled bench session: **docs/hil-runbook-2026-10-13.md** (phased —
-ACR-only work is safe while the stick runs nucula; stick reflash phases are
-owner-gated). Includes the bench-evidence task for the 2026-10-12 MFRC522
-dwell/activation-ladder port (`tests/test_activation_ladder.py`) and the
-BLE Phase-3 gate (the bt module dry-compiles on IDF v5.5.5 — lesson B31).
+Next scheduled bench session: **docs/hil-runbook-2026-11-14.md** (owner
+hardware session: card placement audit + re-burn + PR #293 verify, S20
+HCE battery, m5stick buttons, full difftest, nucula-c3 latch/re-point).
+Supersedes docs/hil-runbook-2026-10-13.md (that session's ACR-lane
+activation-ladder + BLE Phase-3 gates landed; B31).
 
 - Cross-project bench sharing via the shared labgrid coordinator (places:
   bolty-rig, microfips-bench, gm65-qr-loopback, nucula-rig) — topology,
