@@ -30,11 +30,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
       - name: Install cargo-audit
         run: cargo install cargo-audit
-      # RUSTSEC-2026-0381: webpki-roots 0.26.x has no fixed release (fix is
-      # the ureq-3 migration, done 2026-10-21 — flag removable once the
-      # lockfile rotation lands everywhere).
-      # RUSTSEC-2026-0387 ignore REMOVED (2026-10-24): the ntag424 re-pin
+      # (2026-10-24) RUSTSEC-2026-0387 ignore REMOVED: the ntag424 re-pin
       # (Amperstrand/ntag424#13) made originality verification an optional
       # feature — p224/crypto-bigint left bolty's dependency graph and
       # cargo audit runs clean without the flag.
-      - run: cargo audit --ignore RUSTSEC-2026-0381
+      # (2026-11-14) RUSTSEC-2026-0381 ignore flag REMOVED: the ureq-3
+      # lockfile rotation landed everywhere (webpki-roots 0.26.x is out of
+      # the graph; the flag's own "removable once the rotation lands" note
+      # came due). rustix 1.1.4 -> 1.1.6 (RUSTSEC-2026-0486) and anyhow
+      # =1.0.102 -> =1.0.104 (RUSTSEC-2026-0190) were cleared by patch
+      # bumps, so no --ignore flags remain.
+      - run: cargo audit
