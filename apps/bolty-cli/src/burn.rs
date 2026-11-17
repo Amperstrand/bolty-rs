@@ -663,31 +663,12 @@ mod tests {
 )]
 mod security_tests {
     use super::cmd_burn;
+    use crate::audit::setup_audit_isolation;
 
-    /// Acquire the global audit-log mutex and point the audit log at a fresh
-    /// temp file. Every test that runs `cmd_burn` must call this first: the
-    /// burn path writes to a process-global audit path, so without
-    /// serialization a concurrent audit-content test would see stray lines.
-    ///
-    /// The mutex is tokio's (await-safe): holding the guard across
-    /// `.await` in the async tests is sound.
-    macro_rules! setup_audit_isolation {
-        () => {{
-            let _guard = crate::audit::AUDIT_TEST_MUTEX.lock().await;
-            let mut path = std::env::temp_dir();
-            path.push(format!(
-                "bolty-security-burn-{}-{}.log",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0)
-            ));
-            let _ = std::fs::remove_file(&path);
-            crate::audit::set_audit_log_path(path.clone());
-            (_guard, path)
-        }};
-    }
+    // Each test below calls `setup_audit_isolation!()` (shared macro in
+    // `crate::audit`) first: `cmd_burn` writes to the process-global audit
+    // path, so without serialization a concurrent audit-content test would
+    // see stray lines.
 
     // SECURITY invariant: a URL lacking the {picc} placeholder must be rejected
     // before any card write occurs. Burning such a URL yields a card whose taps

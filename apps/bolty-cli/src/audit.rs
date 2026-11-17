@@ -104,6 +104,34 @@ pub fn reset_banner_for_test() {
     CLOCK_STEP_NOTED.store(false, Ordering::Relaxed);
 }
 
+/// Acquire the global audit-log mutex and point the audit log at a fresh
+/// temp file. Every test whose code path writes audit lines — directly or
+/// via a `cmd_burn`/`cmd_wipe` setup — must call this first: the audit
+/// path is a process-global, so an unserialized writer's lines land in
+/// whatever file the current mutex holder redirected the path to
+/// (issue #272). The mutex is tokio's (await-safe): holding the guard
+/// across `.await` in async tests is sound.
+#[cfg(test)]
+macro_rules! setup_audit_isolation {
+    () => {{
+        let _guard = $crate::audit::AUDIT_TEST_MUTEX.lock().await;
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "bolty-audit-isolated-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let _ = std::fs::remove_file(&path);
+        $crate::audit::set_audit_log_path(path.clone());
+        (_guard, path)
+    }};
+}
+#[cfg(test)]
+pub(crate) use setup_audit_isolation;
+
 /// RFC 3339 UTC from epoch millis, dependency-free (civil-from-days per
 /// Howard Hinnant's algorithm — the crate pins deps tightly, so no chrono).
 fn wall_utc(epoch_ms: u128) -> String {
@@ -198,7 +226,12 @@ fn write_raw(path: &std::path::Path, entry: &str) {
         .mode(0o600)
         .open(path)
     {
-        let _ = writeln!(f, "{entry}");
+        // Payload + newline in ONE write: `writeln!` on this unbuffered
+        // File is two write() syscalls, and a concurrent O_APPEND writer
+        // lands between them — glued same-line entries (the #256 lore;
+        // in-process test writers per #272). A single write_all keeps
+        // each line atomic for appenders.
+        let _ = f.write_all(format!("{entry}\n").as_bytes());
         let _ = f.flush();
     }
 }
