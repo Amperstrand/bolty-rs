@@ -9,6 +9,7 @@ Based on the H1 ACR lane negative battery (2026-10-27), wire-captured on
 real NTAG424 silicon. Silicon reference data: tools/hil/wire/
 negative-battery-findings.md.
 """
+import json
 import re
 
 import pytest
@@ -49,28 +50,24 @@ class TestNegativeBattery:
 
     def test_wrong_key_rejection_and_recovery(self, cli, registry,
                                                coupled_card_uid):
-        """Wrong-key auth → 91AE/6982; correct-key auth → success."""
+        """Wrong-key auth → 91AE reported as accepted=false; card survives."""
         uid = coupled_card_uid
         registry.require(uid, "read")
         actual = cli.uid()
         assert actual == uid
 
-        # Factory-blank cards have no provisioned key to reject: the
-        # all-zeros factory K0 is ACCEPTED (2026-11-13 bench finding:
-        # 04c474 came back from an overnight cycle blank, coupled to the
-        # ACR despite its GemPCTwin hint — placement/state are volatile).
-        # Wrong-key semantics are N/A until it is re-burned. A successful
-        # auth RESETS SeqFailCtr, so this probe costs no auth budget.
-        try:
-            cli.run("try-key", "--key", "0" * 32)
-            pytest.skip("coupled card is factory-blank (factory K0 accepted) "
-                        "— wrong-key rejection is N/A until re-burn")
-        except BoltyError:
-            pass  # factory key rejected: card is provisioned — test applies
-
-        # wrong key: bolty-cli try-key with garbage → error
-        with pytest.raises(BoltyError):
-            cli.run("try-key", "--key", "f" * 32)
+        # try-key exits 0 for ANY answered probe (accepted OR rejected —
+        # the tool answers "is this the key?"), so the verdict is the JSON
+        # output, never the exit code. assert on `accepted` instead: a
+        # garbage K0 must be rejected whether the card is provisioned
+        # (2026-10-26 silicon reference) or factory-blank (zeros is the
+        # real K0 there, ff...f still is not — 2026-11-13 bench finding:
+        # 04c474 came back blank on the ACR; #292's skip is superseded by
+        # this stronger assertion which covers both states).
+        out = cli.run("try-key", "--key", "f" * 32, "--json")
+        verdict = json.loads(out.strip().splitlines()[-1])
+        assert verdict.get("accepted") is False, verdict
+        assert verdict.get("reason") == "wrong_key", verdict
 
         # right key: uid still readable (card undamaged)
         assert cli.uid() == uid
