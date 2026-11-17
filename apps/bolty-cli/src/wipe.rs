@@ -390,6 +390,7 @@ where
 )]
 mod tests {
     use super::*;
+    use crate::audit::setup_audit_isolation;
     use bolty_core::crypto::aes_cmac;
     use bolty_core::picc::{PiccData, sdm_build_sv2};
 
@@ -512,6 +513,7 @@ mod tests {
 
     #[tokio::test]
     async fn raw_wipe_requires_confirm_uid() {
+        let (_guard, _path) = setup_audit_isolation!();
         let mut transport = raw_provisioned_transport(static_keyset()).await;
         let raw = static_keyset();
         let keys_before = *transport.keys();
@@ -542,6 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn raw_wipe_refuses_wrong_uid() {
+        let (_guard, _path) = setup_audit_isolation!();
         let mut transport = raw_provisioned_transport(static_keyset()).await;
         let raw = static_keyset();
         let wrong_uid = [0xAAu8; 7];
@@ -568,6 +571,7 @@ mod tests {
     // so the K0-only gate would leave a partially wiped card.
     #[tokio::test]
     async fn raw_wipe_refuses_wrong_slot_before_any_mutation() {
+        let (_guard, _path) = setup_audit_isolation!();
         let mut card_keys = static_keyset();
         card_keys[2] = [0x99u8; 16]; // the card's real K2 differs
         let mut transport = raw_provisioned_transport(card_keys).await;
@@ -616,6 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn raw_wipe_succeeds_with_verified_keyset() {
+        let (_guard, _path) = setup_audit_isolation!();
         let card_keys = static_keyset();
         let mut transport = raw_provisioned_transport(card_keys).await;
         let raw = static_keyset();
@@ -684,6 +689,7 @@ mod tests {
 
     #[tokio::test]
     async fn wipe_refuses_when_sdm_mac_mismatches() {
+        let (_guard, _path) = setup_audit_isolation!();
         let issuer_key = [0x42u8; 16];
         let mut transport = provisioned_with_sdm_p_c(&issuer_key, "deadbeefdeadbeef").await;
 
@@ -711,6 +717,7 @@ mod tests {
 
     #[tokio::test]
     async fn wipe_proceeds_when_sdm_pc_valid() {
+        let (_guard, _path) = setup_audit_isolation!();
         let issuer_key = [0x42u8; 16];
         let mut transport = crate::mock_transport::MockTransport::new();
         let url = "https://card.bolt.local/lnurl?p={picc:uid+ctr}&c={mac}";
@@ -771,6 +778,7 @@ mod tests {
     // verifies under the UID-diversified keys.
     #[tokio::test]
     async fn wipe_proceeds_when_sdm_pc_valid_privacy_card() {
+        let (_guard, _path) = setup_audit_isolation!();
         let issuer_key = [0x42u8; 16];
         let mut transport = crate::mock_transport::MockTransport::new();
         crate::burn::cmd_burn(
@@ -824,6 +832,7 @@ mod tests {
     // the UID-less path must not weaken the MAC gate.
     #[tokio::test]
     async fn wipe_refuses_when_privacy_card_mac_mismatches() {
+        let (_guard, _path) = setup_audit_isolation!();
         let issuer_key = [0x42u8; 16];
         let mut transport = crate::mock_transport::MockTransport::new();
         crate::burn::cmd_burn(
@@ -874,6 +883,7 @@ mod tests {
 
     #[tokio::test]
     async fn dry_run_preserves_provisioned_card_state() {
+        let (_guard, _path) = setup_audit_isolation!();
         let mut transport = crate::mock_transport::MockTransport::new();
 
         let issuer_key = [0u8; 16];
