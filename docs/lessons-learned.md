@@ -769,10 +769,19 @@ control endpoint — not a USB-level device loss.
 python3 -c "
 from smartcard.scard import *
 rc, ctx = SCardEstablishContext(SCARD_SCOPE_USER)
-rc, h, p = SCardConnect(ctx, 'ACS ACR1252 Dual Reader [ACR1252 Dual Reader PICC] 03 00',
+# (A2c #175 fix): SCardStatus returns the ATR as a Python LIST —
+# atr.hex() raised AttributeError and made the ladder misreport a healthy
+# reader as failed after every recovery step. Also: the hard-coded
+# '…PICC] 03 00' suffix breaks after pcscd re-enumeration — select the
+# reader by identity match instead of a pinned position.
+readers = list(SCardListReaders(ctx, [])[1])
+target = next((r for r in readers if 'ACR1252' in r and 'PICC' in r), None)
+if target is None:
+    raise SystemExit(f'ACR1252 PICC reader not found among: {readers}')
+rc, h, p = SCardConnect(ctx, target,
                         SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0|SCARD_PROTOCOL_T1)
 rc, rn, st, pr, atr = SCardStatus(h)
-print('connect+status:', SCardGetErrorMessage(rc), 'ATR:', atr.hex())
+print('connect+status:', SCardGetErrorMessage(rc), 'ATR:', bytes(atr).hex())
 SCardDisconnect(h, SCARD_LEAVE_CARD); SCardReleaseContext(ctx)"
 # 1. SHALLOW HEAL: end every session holding the reader, then
 systemctl restart pcscd        # then run the probe again

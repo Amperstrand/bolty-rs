@@ -29,6 +29,9 @@ ALLURE_RESULTS := tools/hil/results/allure
 test:
 	cargo test --workspace --exclude bolty-esp32
 	cargo fmt --check
+	# A2c #158: the vectors LOCK was opt-in (vectors-check target only) —
+	# an edited vectors.json without a LOCK bump passed normal validation.
+	@cd tests/fixtures/ntag424-vectors && awk '/^vectors.json sha256:/{print $$3"  "$$1}' LOCK | sha256sum -c -
 
 test-hil:
 	mkdir -p tools/hil/results
