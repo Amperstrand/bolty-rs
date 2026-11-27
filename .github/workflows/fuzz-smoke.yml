@@ -17,7 +17,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 3 * * *" # nightly: longer runs than PR smoke
+    - cron: "0 3 * * *" # nightly: longer runs than PR smoke (ccid CI moved to 02:47 — no collision)
 
 jobs:
   fuzz-smoke:

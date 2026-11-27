@@ -14,13 +14,13 @@ ignore = [
     # (2026-10-21) RUSTSEC-2026-0381 ignore REMOVED: bolty-cli migrated to
     # ureq 3 (rustls TLS, webpki-roots 1.x) — webpki-roots 0.26.x is out of
     # the graph (was the 0.26.11 facade over an already-patched 1.0.10).
-    # (2026-11-17) RustSec wave triage (2026-11-17 advisory wave sweep, ops #41):
-    # chrono 0.4.44 unmaintained (RUSTSEC-2026-0543): upstream archived, no
-    # maintained 0.4.x drop-in — carried transitively via esp-idf-sys's
-    # build-time crate, build-time-only (never linked into firmware or CLI
-    # binaries). Revisit when esp-idf-sys drops build-time or a maintained
-    # successor lands — do not carry past an esp-idf-sys bump that removes it.
-    "RUSTSEC-2026-0543",
+    # (removed 2026-11-27) chrono 0.4.44 / RUSTSEC-2026-0543: the ignore
+    # entry outlived the dependency — esp-idf-sys's build-time dropped
+    # chrono, so the advisory matched no crate and cargo-denny's
+    # unmatched-ignore check failed every PR (deny lane red since
+    # ~2026-11-18). The ignore entry is retired with this comment as its
+    # evidence trail (the 2026-11-17 triage: build-time-only, never
+    # linked into firmware).
 ]
 
 [licenses]
