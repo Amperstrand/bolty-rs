@@ -42,7 +42,7 @@ mfrc522-pcd = { workspace = true }
 bolty-mfrc522 = { path = "../../crates/bolty-mfrc522" }
 embedded-hal = "=1.0.0"
 embedded-svc = "=0.29.0"
-heapless = { version = "=0.9.2", default-features = false }
+heapless = { version = "=0.9.4", default-features = false }
 ntag424 = { workspace = true }
 iso14443 = { workspace = true }
 log = "=0.4.29"
