@@ -23,7 +23,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 6 * * 1" # weekly: local drift against the pinned spec bytes
+    - cron: "19 6 * * 1" # weekly: local drift against the pinned spec bytes
 
 env:
   # boltcard/boltcard docs @ 2026-08-19 (last upstream docs commit)
