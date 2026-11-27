@@ -17,10 +17,15 @@
 # from prose with a blank line. Quotes are verbatim incl. backticks and
 # upstream typos ("specfying" in CARD_PRIVACY:26 is pinned deliberately).
 #
-# Setup (one-time, local):
-#   git clone --depth=1 https://github.com/boltcard/boltcard.git spec
+# Setup (one-time, local) — PINNED to match CI (spec-quote-drift.yml;
+# A2c #158: floating-HEAD clones made local runs pass/fail on different
+# spec bytes than CI):
+#   SPEC_PIN=b8f11ecd63ce884eeaf0185d8ce1846960b64b5f   # boltcard/boltcard docs
+#   git clone https://github.com/boltcard/boltcard.git spec && \
+#       git -C spec fetch --depth=1 origin $SPEC_PIN && git -C spec checkout $SPEC_PIN
+#   GS_TOOL_PIN=272c171                                  # the Amperstrand fork
 #   uv venv .gs-env && uv pip install --python .gs-env/bin/python \
-#       git+https://github.com/Amperstrand/greatspectations.git@ai-experimental-slop
+#       git+https://github.com/Amperstrand/greatspectations.git@ai-experimental-slop#$GS_TOOL_PIN
 #
 # Run (from repo root):
 #   .gs-env/bin/python -m greatspectations check --config specquotes.toml \
