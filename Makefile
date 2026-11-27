@@ -39,8 +39,13 @@ test-hil:
 	# the full-rig match also reserves the stick serial, so any m5stick holder
 	# would block ACR sessions needlessly (#127). Needs coordinator-side leaf
 	# place (make labgrid-place creates it).
+	# (A2c #153) --reserve by default: the queue added by PR #94 was
+	# unreachable from this path (no --reserve meant _lg_acquire_or_exit
+	# hit the bench-lock refusal before any reservation). --reserve makes
+	# a contended place queue instead of instantly exiting; BOLTY_TEST_HIL_NOWAIT=1
+	# restores the old fail-fast behavior.
 	python3 -m pytest $(HIL_TESTS) -m "hardware and not role_switch" -v \
-	  --lg-place=ref-acr1252 \
+	  --lg-place=ref-acr1252 $(if $(BOLTY_TEST_HIL_NOWAIT),,--reserve) \
 	  --reruns 2 --reruns-delay 3 \
 	  --json-report --json-report-file=tools/hil/results/hil-test-report.json \
 	  --alluredir=$(ALLURE_RESULTS)/$$(date +%Y%m%d-%H%M%S)

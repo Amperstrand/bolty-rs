@@ -93,7 +93,12 @@ headers — the dry build answers it.
 The conftest inheritance port (fe17ea5) is bench-observable:
 
 ```bash
-labgrid-client -p bolty-rig acquire    # pre-acquire by hand
+# (A2c #152) The conftest signs every hold `bolty-hil~mark=…~sha=…~est=…`
+# (the conwrt-bench canon) and INHERITANCE matches on that identity: a
+# hand-acquired place under the shell-default LG_USERNAME mismatches and
+# the session refuses. Sign the manual hold the same way first:
+export LG_USERNAME="bolty-hil~manual-pre-acquire~sha=$(git rev-parse --short=7 HEAD)~est=30m"
+labgrid-client -p bolty-rig acquire    # pre-acquire by hand (signed)
 cd tools/hil && python3 -m pytest tests/test_burn_lock_wipe.py -m hardware -v
 # session must START (inherited place, no refusal) and must NOT release at
 # teardown: verify with `labgrid-client -p bolty-rig who` afterwards.
@@ -117,8 +122,12 @@ labgrid-client -p bolty-rig release    # manual release after
   NTAG paths — set aside); `test_bolty_acr` PASS, bolty-acr phase **4/4**
   commands (uid/inspect/diagnose/picc) — artifact refreshed 3/4 → 4/4.
   Transcript: /tmp/opencode/bolty-108-bench/*.log + /tmp/bolty-audit.log.
-  This is the Phase-1 ACR cycle covering the firmware-affecting #117
-  (FWT parse) merge per the device-release rule.
+  Phase-1 coverage NOTE (A2c #157, corrected 2026-11-27): the ACR1252
+  PC/SC path exercises the HOST-side Rust crates only — it executes NO
+  ESP32 firmware. The earlier 'covering the firmware-affecting #117'
+  claim was wrong: #117 (FWT parse) merge per the device-release rule
+  still PENDS its firmware-tier exercise (the owner-gated Phase-2 stick
+  test) — this cycle is host-crates evidence, not device evidence.
 - **ACR1252 UN-WEDGED**: the 2026-10-17 firmware-wedge (#101) did not
   reproduce — reader healthy through the full cycle and the rig round-trip
   below. Forensics record stands as the raw-usbfs hazard note.

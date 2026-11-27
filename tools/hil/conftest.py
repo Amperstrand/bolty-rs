@@ -42,27 +42,32 @@ from hil.acr_probe import cfg_heal_hint, heal_hint, probe_isolated
 from hil.bolty import DEFAULT_CONSOLE_CTL
 from hil.labgrid_state import note_rig_state
 
-# Guarded like the labgrid import (#82): GitHub host CI collects this
-# conftest with only pytest/pytest-timeout/cryptography installed, and
-# tollgate-lab depends on labgrid — a bare import would break the
-# collection gate. On the bench host it is installed; rig_lock fails
-# LOUDLY if a hardware run ever starts without it (silent degradation to
-# place/flock-only is exactly the #199 collision class this closes).
+# (A2c #171/1) Split imports: a single `except ImportError` over BOTH the
+# top-level tollgate_lab import and the .hardware submodule meant an
+# installed-but-older tollgate_lab (bench-lock API present, no hardware
+# submodule) cleared acquire_bench_lock/_BENCH_LOCK_AVAILABLE too — every
+# hardware test silently degraded to place/flock-only (the exact #199
+# collision class). Each import degrades only itself.
 try:
     from tollgate_lab import BenchLockHeldError, acquire_bench_lock
+    _BENCH_LOCK_AVAILABLE = True
+except ImportError:  # host CI collection — never drives hardware
+    BenchLockHeldError = None
+    acquire_bench_lock = None
+    _BENCH_LOCK_AVAILABLE = False
+
+try:
     from tollgate_lab.hardware import (
         PcscdDomainHeldError,
         acquire_pcscd_disturbance,
         acquire_pcscd_reader,
     )
-    _BENCH_LOCK_AVAILABLE = True
-except ImportError:  # host CI collection — never drives hardware
-    BenchLockHeldError = None
+    _PCSCD_DOMAIN_AVAILABLE = True
+except ImportError:  # older tollgate_lab: reader-role fallback, loud at use
     PcscdDomainHeldError = None
-    acquire_bench_lock = None
     acquire_pcscd_disturbance = None
     acquire_pcscd_reader = None
-    _BENCH_LOCK_AVAILABLE = False
+    _PCSCD_DOMAIN_AVAILABLE = False
 
 RESULTS_DIR = Path(__file__).parent / "results"
 LEDGER_PATH = RESULTS_DIR / "history.jsonl"
@@ -618,9 +623,17 @@ def pytest_sessionfinish(session, exitstatus):
         _lg_release_best_effort(session)
     token = session.stash.get(LG_RESERVE_TOKEN_KEY, None)
     if token:
-        subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,
-                        "cancel-reservation", token],
-                       capture_output=True, timeout=30)
+        # (A2c #154) best-effort, same policy as _lg_release_best_effort:
+        # a TimeoutExpired/OSError in the cancel used to escape here and
+        # convert a successful run into a teardown failure BEFORE the
+        # results-dir/ledger/Allure writes below. Log, never raise.
+        try:
+            subprocess.run(["labgrid-client", "-x", LABGRID_COORDINATOR,
+                            "cancel-reservation", token],
+                           capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"[conftest] reservation cancel best-effort failed "
+                  f"(token={token[:16]}…): {exc}", file=sys.stderr)
     RESULTS_DIR.mkdir(exist_ok=True)
     results = getattr(session, "hil_results", {})
     record = {
